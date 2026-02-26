@@ -44,11 +44,11 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-            <Zap className="h-5 w-5 text-primary-foreground" />
+          <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+            <Zap className="h-6 w-6 text-primary-foreground" />
           </div>
           {!collapsed && (
-            <span className="font-bold text-xl text-sidebar-foreground tracking-tight">
+            <span className="font-bold text-2xl text-sidebar-foreground tracking-tight">
               Rise Zap
             </span>
           )}
@@ -65,21 +65,21 @@ export function AppSidebar() {
                     asChild
                     disabled={item.disabled}
                     tooltip={collapsed ? item.title : undefined}
-                    className="h-11"
+                    className="h-12"
                   >
                     {item.disabled ? (
-                      <span className="flex items-center gap-4 opacity-40 cursor-not-allowed px-3 py-3 text-base">
-                        <item.icon className={`h-5 w-5 flex-shrink-0 ${item.color}`} />
+                      <span className="flex items-center gap-4 opacity-40 cursor-not-allowed px-3 py-3 text-[17px]">
+                        <item.icon className={`h-6 w-6 flex-shrink-0 ${item.color}`} />
                         {!collapsed && <span>{item.title}</span>}
                       </span>
                     ) : (
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
-                        className="flex items-center gap-4 px-3 py-3 rounded-md text-base text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                        className="flex items-center gap-4 px-3 py-3 rounded-md text-[17px] text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
                         activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                       >
-                        <item.icon className={`h-5 w-5 flex-shrink-0 ${item.color}`} />
+                        <item.icon className={`h-6 w-6 flex-shrink-0 ${item.color}`} />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
                     )}
