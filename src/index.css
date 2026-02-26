@@ -13,35 +13,35 @@
     --popover: 0 0% 100%;
     --popover-foreground: 220 20% 10%;
 
-    --primary: 0 85% 50%;
+    --primary: 220 80% 40%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 0 20% 95%;
+    --secondary: 220 20% 95%;
     --secondary-foreground: 220 20% 15%;
 
     --muted: 210 20% 96%;
     --muted-foreground: 215 15% 50%;
 
-    --accent: 0 50% 95%;
-    --accent-foreground: 0 85% 35%;
+    --accent: 220 50% 93%;
+    --accent-foreground: 220 80% 30%;
 
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 214 20% 91%;
     --input: 214 20% 91%;
-    --ring: 0 85% 50%;
+    --ring: 220 80% 40%;
 
     --radius: 0.625rem;
 
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 220 15% 30%;
-    --sidebar-primary: 0 85% 50%;
+    --sidebar-primary: 220 80% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 50% 95%;
-    --sidebar-accent-foreground: 0 85% 35%;
+    --sidebar-accent: 220 50% 93%;
+    --sidebar-accent-foreground: 220 80% 30%;
     --sidebar-border: 214 20% 93%;
-    --sidebar-ring: 0 85% 50%;
+    --sidebar-ring: 220 80% 40%;
 
     --success: 152 60% 42%;
     --success-foreground: 0 0% 100%;
@@ -59,7 +59,7 @@
     --popover: 220 18% 10%;
     --popover-foreground: 210 20% 92%;
 
-    --primary: 0 80% 55%;
+    --primary: 220 75% 50%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 220 15% 16%;
@@ -69,23 +69,23 @@
     --muted-foreground: 215 15% 55%;
 
     --accent: 220 15% 16%;
-    --accent-foreground: 0 70% 65%;
+    --accent-foreground: 220 65% 65%;
 
     --destructive: 0 62% 35%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 220 15% 18%;
     --input: 220 15% 18%;
-    --ring: 0 80% 55%;
+    --ring: 220 75% 50%;
 
     --sidebar-background: 220 18% 8%;
     --sidebar-foreground: 210 15% 75%;
-    --sidebar-primary: 0 80% 55%;
+    --sidebar-primary: 220 75% 50%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 220 15% 14%;
-    --sidebar-accent-foreground: 0 70% 65%;
+    --sidebar-accent-foreground: 220 65% 65%;
     --sidebar-border: 220 15% 15%;
-    --sidebar-ring: 0 80% 55%;
+    --sidebar-ring: 220 75% 50%;
 
     --success: 152 55% 38%;
     --success-foreground: 0 0% 100%;
