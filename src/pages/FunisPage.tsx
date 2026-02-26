@@ -91,6 +91,8 @@ export default function FunisPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string; type: "funnel" | "item"; itemId?: string } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newFunnelName, setNewFunnelName] = useState("");
 
   const selectedFunnel = funnels.find((f) => f.id === selected);
 
@@ -99,6 +101,15 @@ export default function FunisPage() {
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
     return `${min} min e ${sec}s`;
+  };
+
+  const handleAddFunnel = () => {
+    if (!newFunnelName.trim()) return;
+    const id = Date.now().toString();
+    setFunnels((prev) => [...prev, { id, name: newFunnelName.trim(), items: [] }]);
+    setSelected(id);
+    setNewFunnelName("");
+    setAddOpen(false);
   };
 
   return (
@@ -111,7 +122,7 @@ export default function FunisPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Buscar funil..." className="pl-9 h-9" />
             </div>
-            <Button className="w-full h-9 text-sm">
+            <Button className="w-full h-9 text-sm" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1" /> Adicionar
             </Button>
           </div>
@@ -172,10 +183,7 @@ export default function FunisPage() {
                 {selectedFunnel.items.map((item, idx) => {
                   const Icon = typeIcons[item.type];
                   return (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30"
-                    >
+                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30">
                       <span className="text-xs text-muted-foreground font-mono w-5">{idx + 1}</span>
                       <Badge variant="secondary" className="gap-1 text-xs">
                         <Icon className="h-3 w-3" />
@@ -204,6 +212,26 @@ export default function FunisPage() {
           )}
         </div>
       </div>
+
+      {/* Modal Adicionar Funil */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar funil</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Título</label>
+              <Input placeholder="Título do funil" value={newFunnelName} onChange={(e) => setNewFunnelName(e.target.value)} />
+              {!newFunnelName.trim() && <p className="text-xs text-destructive mt-1">Campo não pode ser vazio.</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
+            <Button onClick={handleAddFunnel} disabled={!newFunnelName.trim()}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit item modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
@@ -250,6 +278,7 @@ export default function FunisPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       <DeleteConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
