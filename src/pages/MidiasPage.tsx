@@ -6,6 +6,7 @@ import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { FileUploadZone } from "@/components/FileUploadZone";
 import {
   Dialog,
   DialogContent,
@@ -13,13 +14,19 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Trash2, Copy, Pencil, Heart, Image, Upload } from "lucide-react";
+import { Trash2, Copy, Pencil, Heart, Image } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const initialMidias: ListItem[] = [];
+interface MediaItem extends ListItem {
+  fileName?: string;
+  fileUrl?: string;
+  fileType?: string;
+}
+
+const initialMidias: MediaItem[] = [];
 
 export default function MidiasPage() {
-  const [midias, setMidias] = useState<ListItem[]>(initialMidias);
+  const [midias, setMidias] = useState<MediaItem[]>(initialMidias);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -28,6 +35,7 @@ export default function MidiasPage() {
   const [newCaption, setNewCaption] = useState("");
   const [singleView, setSingleView] = useState(false);
   const [editName, setEditName] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
   const selectedItem = midias.find((m) => m.id === selected);
@@ -41,14 +49,18 @@ export default function MidiasPage() {
   };
 
   const handleAdd = () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !uploadFile) return;
     const id = Date.now().toString();
-    setMidias((prev) => [...prev, { id, name: newName.trim() }]);
+    const fileUrl = URL.createObjectURL(uploadFile);
+    const fileType = uploadFile.type;
+    setMidias((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl, fileType }]);
     setSelected(id);
     setNewName("");
     setNewCaption("");
     setSingleView(false);
+    setUploadFile(null);
     setAddOpen(false);
+    toast({ title: "Mídia adicionada!" });
   };
 
   const openEdit = () => {
@@ -67,7 +79,7 @@ export default function MidiasPage() {
   const handleDuplicate = () => {
     if (!selectedItem) return;
     const id = Date.now().toString();
-    setMidias((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
+    setMidias((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
     setSelected(id);
     toast({ title: "Mídia duplicada" });
   };
@@ -77,13 +89,15 @@ export default function MidiasPage() {
     setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
   };
 
+  const isVideo = (type?: string) => type?.startsWith("video/");
+
   return (
     <MainLayout title="Mídias">
       <TwoColumnLayout
         items={midias}
         selectedId={selected}
         onSelect={setSelected}
-        onAdd={() => setAddOpen(true)}
+        onAdd={() => { setUploadFile(null); setNewName(""); setNewCaption(""); setAddOpen(true); }}
         searchPlaceholder="Buscar mídia..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
@@ -108,10 +122,21 @@ export default function MidiasPage() {
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-4">
-              <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
-                <Image className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">Preview da mídia</p>
-              </div>
+              {selectedItem.fileUrl ? (
+                <div className="w-full max-w-lg">
+                  {isVideo(selectedItem.fileType) ? (
+                    <video controls className="w-full rounded-lg" src={selectedItem.fileUrl} />
+                  ) : (
+                    <img src={selectedItem.fileUrl} alt={selectedItem.name} className="w-full rounded-lg object-contain max-h-[60vh]" />
+                  )}
+                  <p className="text-xs text-muted-foreground mt-2 text-center">{selectedItem.fileName}</p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
+                  <Image className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+                  <p className="text-sm text-muted-foreground">Nenhum arquivo de mídia</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -136,17 +161,19 @@ export default function MidiasPage() {
               <Textarea placeholder="Legenda da mídia" value={newCaption} onChange={(e) => setNewCaption(e.target.value)} rows={4} />
             </div>
             <div>
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
-                <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">Para inserir uma mídia, clique aqui ou arraste o arquivo para esta área.</p>
-                <p className="text-xs text-muted-foreground mt-1">Formatos aceitos: .png, .jpg, .mp4</p>
-              </div>
-              <p className="text-xs text-destructive mt-1">Campo obrigatório</p>
+              <FileUploadZone
+                accept=".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.avi"
+                acceptLabel='".png", ".jpg", ".gif", ".webp", ".mp4"'
+                file={uploadFile}
+                onFileChange={setUploadFile}
+                icon="image"
+              />
+              {!uploadFile && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim()}>Salvar</Button>
+            <Button onClick={handleAdd} disabled={!newName.trim() || !uploadFile}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

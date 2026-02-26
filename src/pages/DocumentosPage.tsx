@@ -4,6 +4,7 @@ import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Input } from "@/components/ui/input";
+import { FileUploadZone } from "@/components/FileUploadZone";
 import {
   Dialog,
   DialogContent,
@@ -11,19 +12,25 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Trash2, Copy, Pencil, Heart, FileText, Upload } from "lucide-react";
+import { Trash2, Copy, Pencil, Heart, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const initialDocs: ListItem[] = [];
+interface DocItem extends ListItem {
+  fileName?: string;
+  fileUrl?: string;
+}
+
+const initialDocs: DocItem[] = [];
 
 export default function DocumentosPage() {
-  const [docs, setDocs] = useState<ListItem[]>(initialDocs);
+  const [docs, setDocs] = useState<DocItem[]>(initialDocs);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [editName, setEditName] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
   const selectedItem = docs.find((m) => m.id === selected);
@@ -37,12 +44,15 @@ export default function DocumentosPage() {
   };
 
   const handleAdd = () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !uploadFile) return;
     const id = Date.now().toString();
-    setDocs((prev) => [...prev, { id, name: newName.trim() }]);
+    const fileUrl = URL.createObjectURL(uploadFile);
+    setDocs((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
     setSelected(id);
     setNewName("");
+    setUploadFile(null);
     setAddOpen(false);
+    toast({ title: "Documento adicionado!" });
   };
 
   const openEdit = () => {
@@ -61,7 +71,7 @@ export default function DocumentosPage() {
   const handleDuplicate = () => {
     if (!selectedItem) return;
     const id = Date.now().toString();
-    setDocs((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
+    setDocs((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
     setSelected(id);
     toast({ title: "Documento duplicado" });
   };
@@ -77,7 +87,7 @@ export default function DocumentosPage() {
         items={docs}
         selectedId={selected}
         onSelect={setSelected}
-        onAdd={() => setAddOpen(true)}
+        onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
         searchPlaceholder="Buscar documento..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
@@ -102,10 +112,24 @@ export default function DocumentosPage() {
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-4">
-              <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
-                <FileText className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">Preview do documento</p>
-              </div>
+              {selectedItem.fileUrl ? (
+                <div className="w-full max-w-md text-center space-y-3">
+                  <FileText className="h-16 w-16 mx-auto text-primary" />
+                  <p className="text-sm font-medium text-foreground">{selectedItem.fileName}</p>
+                  <a
+                    href={selectedItem.fileUrl}
+                    download={selectedItem.fileName}
+                    className="inline-block text-sm text-primary underline hover:text-primary/80"
+                  >
+                    Baixar documento
+                  </a>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
+                  <FileText className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+                  <p className="text-sm text-muted-foreground">Nenhum arquivo</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -119,18 +143,22 @@ export default function DocumentosPage() {
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
               <Input placeholder="Nome do documento" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              {!newName.trim() && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
             </div>
             <div>
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
-                <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">Para inserir o documento, clique aqui ou arraste o arquivo para esta área.</p>
-              </div>
-              <p className="text-xs text-destructive mt-1">Campo obrigatório</p>
+              <FileUploadZone
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                acceptLabel='".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".txt"'
+                file={uploadFile}
+                onFileChange={setUploadFile}
+                icon="document"
+              />
+              {!uploadFile && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim()}>Salvar</Button>
+            <Button onClick={handleAdd} disabled={!newName.trim() || !uploadFile}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
