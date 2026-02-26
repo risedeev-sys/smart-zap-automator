@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { FileUploadZone } from "@/components/FileUploadZone";
 import {
   Dialog,
   DialogContent,
@@ -12,15 +13,20 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Trash2, Copy, Pencil, Heart, Mic, Upload } from "lucide-react";
+import { Trash2, Copy, Pencil, Heart, Mic } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const initialAudios: ListItem[] = [
+interface AudioItem extends ListItem {
+  fileName?: string;
+  fileUrl?: string;
+}
+
+const initialAudios: AudioItem[] = [
   { id: "1", name: "Áudio de boas-vindas", favorite: false },
 ];
 
 export default function AudiosPage() {
-  const [audios, setAudios] = useState<ListItem[]>(initialAudios);
+  const [audios, setAudios] = useState<AudioItem[]>(initialAudios);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -29,6 +35,7 @@ export default function AudiosPage() {
   const [editName, setEditName] = useState("");
   const [forwarded, setForwarded] = useState(false);
   const [singleView, setSingleView] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
   const selectedItem = audios.find((m) => m.id === selected);
@@ -42,14 +49,17 @@ export default function AudiosPage() {
   };
 
   const handleAdd = () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !uploadFile) return;
     const id = Date.now().toString();
-    setAudios((prev) => [...prev, { id, name: newName.trim() }]);
+    const fileUrl = URL.createObjectURL(uploadFile);
+    setAudios((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
     setSelected(id);
     setNewName("");
     setForwarded(false);
     setSingleView(false);
+    setUploadFile(null);
     setAddOpen(false);
+    toast({ title: "Áudio adicionado!" });
   };
 
   const openEdit = () => {
@@ -68,7 +78,7 @@ export default function AudiosPage() {
   const handleDuplicate = () => {
     if (!selectedItem) return;
     const id = Date.now().toString();
-    setAudios((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
+    setAudios((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
     setSelected(id);
     toast({ title: "Áudio duplicado" });
   };
@@ -84,7 +94,7 @@ export default function AudiosPage() {
         items={audios}
         selectedId={selected}
         onSelect={setSelected}
-        onAdd={() => setAddOpen(true)}
+        onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
         searchPlaceholder="Buscar áudio..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
@@ -109,10 +119,18 @@ export default function AudiosPage() {
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-4">
-              <div className="w-full max-w-md bg-muted/50 rounded-lg p-6 text-center">
-                <Mic className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">Player de áudio (placeholder)</p>
-              </div>
+              {selectedItem.fileUrl ? (
+                <div className="w-full max-w-md space-y-3 text-center">
+                  <Mic className="h-12 w-12 mx-auto text-primary" />
+                  <p className="text-sm text-muted-foreground">{selectedItem.fileName}</p>
+                  <audio controls className="w-full" src={selectedItem.fileUrl} />
+                </div>
+              ) : (
+                <div className="w-full max-w-md bg-muted/50 rounded-lg p-6 text-center">
+                  <Mic className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+                  <p className="text-sm text-muted-foreground">Nenhum arquivo de áudio</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -139,17 +157,19 @@ export default function AudiosPage() {
               </div>
             </div>
             <div>
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
-                <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">Para inserir o áudio, clique aqui ou arraste o arquivo para esta área.</p>
-                <p className="text-xs text-muted-foreground mt-1">Formatos aceitos: ".ogg" e ".mp3"</p>
-              </div>
-              <p className="text-xs text-destructive mt-1">Campo obrigatório</p>
+              <FileUploadZone
+                accept=".ogg,.mp3,.wav,.m4a"
+                acceptLabel='".ogg", ".mp3", ".wav" e ".m4a"'
+                file={uploadFile}
+                onFileChange={setUploadFile}
+                icon="audio"
+              />
+              {!uploadFile && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim()}>Salvar</Button>
+            <Button onClick={handleAdd} disabled={!newName.trim() || !uploadFile}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
