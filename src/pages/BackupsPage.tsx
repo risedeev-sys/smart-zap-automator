@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -13,11 +14,124 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Upload, Download, AlertTriangle, FileJson } from "lucide-react";
+import { Upload, Download, AlertTriangle, FileJson, CheckCircle2 } from "lucide-react";
+import { useAssets } from "@/contexts/AssetsContext";
+import { useToast } from "@/hooks/use-toast";
 
 export default function BackupsPage() {
+  const { mensagens, setMensagens, audios, setAudios, midias, setMidias, documentos, setDocumentos, funnels, setFunnels, triggers, setTriggers } = useAssets();
+  const { toast } = useToast();
+
+  // Export state
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportAll, setExportAll] = useState(true);
+  const [exportName, setExportName] = useState("");
+  const [exportSections, setExportSections] = useState({
+    mensagens: true,
+    audios: true,
+    midias: true,
+    documentos: true,
+    funis: true,
+    gatilhos: true,
+  });
+
+  // Import state
+  const [replaceAll, setReplaceAll] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importSuccess, setImportSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Export ---
+  const openExportModal = () => {
+    setExportName(`backup-rise-zap-${new Date().toISOString().slice(0, 10)}`);
+    setExportAll(true);
+    setExportSections({ mensagens: true, audios: true, midias: true, documentos: true, funis: true, gatilhos: true });
+    setExportModalOpen(true);
+  };
+
+  const handleExport = () => {
+    const data: Record<string, unknown> = { version: 1, createdAt: new Date().toISOString() };
+
+    if (exportAll || exportSections.mensagens) data.mensagens = mensagens;
+    if (exportAll || exportSections.audios) data.audios = audios;
+    if (exportAll || exportSections.midias) data.midias = midias;
+    if (exportAll || exportSections.documentos) data.documentos = documentos;
+    if (exportAll || exportSections.funis) data.funis = funnels;
+    if (exportAll || exportSections.gatilhos) data.gatilhos = triggers;
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${exportName || "backup"}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setExportModalOpen(false);
+    toast({ title: "Backup exportado com sucesso!" });
+  };
+
+  // --- Import ---
+  const handleFileSelect = (file: File | null) => {
+    if (file && file.type === "application/json") {
+      setImportFile(file);
+      setImportSuccess(false);
+    } else if (file) {
+      toast({ title: "Arquivo inválido", description: "Selecione um arquivo .json", variant: "destructive" });
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importFile) return;
+
+    try {
+      const text = await importFile.text();
+      const data = JSON.parse(text);
+
+      if (data.mensagens) {
+        if (replaceAll) setMensagens(data.mensagens);
+        else setMensagens((prev) => [...prev, ...data.mensagens]);
+      }
+      if (data.audios) {
+        if (replaceAll) setAudios(data.audios);
+        else setAudios((prev) => [...prev, ...data.audios]);
+      }
+      if (data.midias) {
+        if (replaceAll) setMidias(data.midias);
+        else setMidias((prev) => [...prev, ...data.midias]);
+      }
+      if (data.documentos) {
+        if (replaceAll) setDocumentos(data.documentos);
+        else setDocumentos((prev) => [...prev, ...data.documentos]);
+      }
+      if (data.funis) {
+        if (replaceAll) setFunnels(data.funis);
+        else setFunnels((prev) => [...prev, ...data.funis]);
+      }
+      if (data.gatilhos) {
+        if (replaceAll) setTriggers(data.gatilhos);
+        else setTriggers((prev) => [...prev, ...data.gatilhos]);
+      }
+
+      setImportSuccess(true);
+      setImportFile(null);
+      toast({ title: "Backup importado com sucesso!" });
+    } catch {
+      toast({ title: "Erro ao importar", description: "O arquivo não é um backup válido.", variant: "destructive" });
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    handleFileSelect(file);
+  };
+
+  const toggleSection = (key: keyof typeof exportSections) => {
+    setExportSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   return (
     <MainLayout title="Backups">
@@ -35,14 +149,41 @@ export default function BackupsPage() {
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-foreground">Substituir todos os itens existentes</span>
-                <Switch />
+                <Switch checked={replaceAll} onCheckedChange={setReplaceAll} />
               </div>
 
-              <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer">
-                <Upload className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  Arraste seu arquivo <strong>.json</strong> aqui ou clique para selecionar
-                </p>
+              <div
+                className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
+                />
+                {importFile ? (
+                  <>
+                    <FileJson className="h-10 w-10 mx-auto text-primary mb-3" />
+                    <p className="text-sm font-medium text-foreground">{importFile.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Clique para trocar o arquivo</p>
+                  </>
+                ) : importSuccess ? (
+                  <>
+                    <CheckCircle2 className="h-10 w-10 mx-auto text-primary mb-3" />
+                    <p className="text-sm text-primary font-medium">Backup importado com sucesso!</p>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+                    <p className="text-sm text-muted-foreground">
+                      Arraste seu arquivo <strong>.json</strong> aqui ou clique para selecionar
+                    </p>
+                  </>
+                )}
               </div>
 
               <div className="flex items-start gap-2 p-3 rounded-md bg-warning/10 text-sm">
@@ -52,7 +193,7 @@ export default function BackupsPage() {
                 </p>
               </div>
 
-              <Button className="w-full">
+              <Button className="w-full" onClick={handleImport} disabled={!importFile}>
                 <Upload className="h-4 w-4 mr-2" /> Importar backup
               </Button>
             </CardContent>
@@ -71,7 +212,7 @@ export default function BackupsPage() {
                   Gere um backup completo em formato <strong>.json</strong> com todas as suas mensagens, áudios, mídias, documentos, funis e gatilhos.
                 </p>
               </div>
-              <Button className="w-full" onClick={() => setExportModalOpen(true)}>
+              <Button className="w-full" onClick={openExportModal}>
                 <Download className="h-4 w-4 mr-2" /> Gerar backup
               </Button>
             </CardContent>
@@ -89,21 +230,38 @@ export default function BackupsPage() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Nome do backup</label>
-              <Input defaultValue={`backup-rise-zap-${new Date().toISOString().slice(0, 10)}`} />
+              <Input value={exportName} onChange={(e) => setExportName(e.target.value)} />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-foreground">Exportar tudo</span>
               <Switch checked={exportAll} onCheckedChange={setExportAll} />
             </div>
             {!exportAll && (
-              <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md">
-                Seleção parcial será habilitada aqui (mensagens, áudios, mídias, documentos, funis, gatilhos).
+              <div className="space-y-2 p-3 bg-muted rounded-md">
+                <p className="text-xs text-muted-foreground mb-2">Selecione o que deseja exportar:</p>
+                {([
+                  ["mensagens", "Mensagens"],
+                  ["audios", "Áudios"],
+                  ["midias", "Mídias"],
+                  ["documentos", "Documentos"],
+                  ["funis", "Funis"],
+                  ["gatilhos", "Gatilhos"],
+                ] as const).map(([key, label]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`export-${key}`}
+                      checked={exportSections[key]}
+                      onCheckedChange={() => toggleSection(key)}
+                    />
+                    <label htmlFor={`export-${key}`} className="text-sm text-foreground cursor-pointer">{label}</label>
+                  </div>
+                ))}
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportModalOpen(false)}>Cancelar</Button>
-            <Button onClick={() => setExportModalOpen(false)}>
+            <Button onClick={handleExport}>
               <Download className="h-4 w-4 mr-1" /> Exportar backup
             </Button>
           </DialogFooter>
