@@ -97,19 +97,19 @@ export default function MensagensPage() {
       >
         {selectedItem && (
           <div className="flex flex-col h-full">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="font-semibold text-foreground">{selectedItem.name}</h3>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicate}><Copy className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={openEdit}><Pencil className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavorite}>
-                  <Heart className={`h-4 w-4 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
+            <div className="flex items-center justify-between p-5 border-b border-border">
+              <h3 className="font-semibold text-lg text-foreground">{selectedItem.name}</h3>
+              <div className="flex items-center gap-1.5">
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setDeleteOpen(true)}><Trash2 className="h-5 w-5 text-destructive" /></Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleDuplicate}><Copy className="h-5 w-5" /></Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={openEdit}><Pencil className="h-5 w-5" /></Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleFavorite}>
+                  <Heart className={`h-5 w-5 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
                 </Button>
               </div>
             </div>
-            <div className="flex-1 p-4">
-              <div className="whitespace-pre-wrap text-sm text-foreground bg-muted/50 rounded-lg p-4">
+            <div className="flex-1 p-5">
+              <div className="whitespace-pre-wrap text-base text-foreground bg-muted/50 rounded-lg p-5">
                 {selectedItem.content ?? ""}
               </div>
             </div>
