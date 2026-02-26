@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -87,6 +88,8 @@ const typeLabels = {
 export default function FunisPage() {
   const [selected, setSelected] = useState<string | null>("1");
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string } | null>(null);
 
   const selectedFunnel = mockFunnels.find((f) => f.id === selected);
 
@@ -151,7 +154,7 @@ export default function FunisPage() {
                   <h3 className="font-semibold text-foreground">{selectedFunnel.name}</h3>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setDeleteTarget({ title: "Excluir funil", name: selectedFunnel.name }); setDeleteOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8"><Copy className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -185,7 +188,7 @@ export default function FunisPage() {
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditModalOpen(true)}>
                         <Pencil className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: item.name }); setDeleteOpen(true); }}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
@@ -246,6 +249,13 @@ export default function FunisPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DeleteConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={deleteTarget?.title ?? "Excluir item"}
+        itemName={deleteTarget?.name}
+        onConfirm={() => setDeleteOpen(false)}
+      />
     </MainLayout>
   );
 }
