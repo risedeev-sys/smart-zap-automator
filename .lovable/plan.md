@@ -1,44 +1,71 @@
 
-# Importacao Completa de Funis com Assets Vinculados
 
-## Problema Atual
-Quando um backup e importado, os funis referenciam assets (mensagens, audios, midias, documentos) pelo `assetId`. Se os assets correspondentes nao forem importados juntos, os itens do funil aparecem como "(item removido)". Alem disso, ao adicionar (sem substituir), IDs duplicados podem causar conflitos.
+# Importar Backups do Zap Voice no Rise Zap
 
-## Solucao
+## Objetivo
+Permitir que o sistema de importacao reconheca automaticamente arquivos de backup do Zap Voice e converta os dados para o formato interno do Rise Zap.
 
-### 1. Remapeamento de IDs na importacao
-Ao importar sem a opcao "Substituir todos", os itens importados podem ter IDs iguais aos existentes. A solucao e gerar novos IDs unicos para todos os itens importados e atualizar as referencias internas (ex: `assetId` nos funis apontando para os novos IDs dos assets).
+## Mapeamento de Campos Identificado
 
-### 2. Validacao de integridade pos-importacao
-Apos processar o arquivo, verificar se todos os `assetId` referenciados pelos funis importados existem nos assets (importados + existentes). Exibir um aviso se houver assets faltando.
+### Categorias
+| Zap Voice | Rise Zap |
+|-----------|----------|
+| `messages` | `mensagens` |
+| `audios` | `audios` |
+| `medias` | `midias` |
+| `docs` | `documentos` |
+| `funnels` | `funis` |
+| `triggers` | `gatilhos` |
 
-### 3. Importacao inteligente de funis
-Quando o arquivo contem funis mas falta alguma categoria de assets referenciada, mostrar um toast de alerta informando quais categorias estao ausentes.
+### Campos dos Assets (mensagens, audios, midias, documentos)
+| Zap Voice | Rise Zap |
+|-----------|----------|
+| `id` | `id` |
+| `name` | `name` |
+| `isFavorite` | `favorite` |
 
-## Detalhes Tecnicos
+### Campos dos Funis
+| Zap Voice | Rise Zap |
+|-----------|----------|
+| `funnels[].id` | `funis[].id` |
+| `funnels[].name` | `funis[].name` |
+| `funnels[].isFavorite` | `funis[].favorite` |
+| `funnels[].itemsSequence` | `funis[].items` |
+| `itemsSequence[].itemId` | `items[].assetId` |
+| `itemsSequence[].type` ("message"/"media"/"audio"/"doc") | `items[].type` ("mensagem"/"midia"/"audio"/"documento") |
+| `itemsSequence[].delayBeforeSend` (milissegundos) | `items[].delayMin` + `items[].delaySec` |
+
+### Campos dos Gatilhos
+| Zap Voice | Rise Zap |
+|-----------|----------|
+| `triggers[].isEnabled` | `enabled` |
+| `triggers[].isFavorite` | `favorite` |
+| `triggers[].keywordRules` | `conditions` |
+| `triggers[].keywordRules[].type` | `conditions[].type` (ex: "contains" -> "contem") |
+| `triggers[].isCaseSensitive` | `ignoreCase` (invertido) |
+| `triggers[].funnelId` | `funnelName` (resolvido pelo nome do funil correspondente) |
+| `triggers[].millisecondsBeforeSend` | `delay` (convertido para texto legivel) |
+| `triggers[].sendToGroups` | `sendToGroups` |
+| `triggers[].sendToContacts` | `savedContactsOnly` (invertido) |
+
+## Implementacao
 
 ### Arquivo: `src/pages/BackupsPage.tsx`
 
-**Funcao `handleImport` reformulada:**
+Adicionar uma funcao `detectAndConvertZapVoice()` que:
 
-- Ler o JSON importado
-- Criar um mapa de remapeamento de IDs antigos para novos (usando `crypto.randomUUID()` ou `Date.now() + index`)
-- Para cada categoria de assets (mensagens, audios, midias, documentos):
-  - Gerar novos IDs para cada item
-  - Guardar o mapeamento `idAntigo -> idNovo`
-- Para funis:
-  - Gerar novos IDs para cada funil e cada `FunnelItem`
-  - Atualizar o `assetId` de cada `FunnelItem` usando o mapa de remapeamento
-- Para gatilhos:
-  - Gerar novos IDs
-  - Atualizar `funnelName` se necessario (ou migrar para `funnelId` no futuro)
-- Se `replaceAll` estiver ativo, substituir tudo diretamente (sem remapear, pois nao ha conflito)
-- Se `replaceAll` estiver desativado, usar os IDs remapeados e fazer append
-- Exibir toast de sucesso com resumo: "Importado: X mensagens, Y audios, Z midias, W documentos, N funis"
-- Se algum `assetId` de funil nao foi encontrado nos assets importados nem nos existentes, exibir aviso
+1. **Detecta o formato** - Verifica se o JSON contem campos do Zap Voice (`messages`, `medias`, `keywordRules` nos triggers, `itemsSequence` nos funnels)
+2. **Converte assets** - Mapeia `messages` para `mensagens`, `medias` para `midias`, `docs` para `documentos`, renomeia `isFavorite` para `favorite`
+3. **Converte funis** - Transforma `itemsSequence` em `items`, converte `itemId` para `assetId`, converte `delayBeforeSend` (ms) em `delayMin`/`delaySec`, mapeia tipos (`message` -> `mensagem`, `media` -> `midia`, `doc` -> `documento`)
+4. **Converte gatilhos** - Transforma `keywordRules` em `conditions`, resolve `funnelId` para `funnelName`, converte `millisecondsBeforeSend` para texto de delay, inverte `isCaseSensitive` para `ignoreCase`
 
-### Resultado esperado
-- Importar um backup com 10 mensagens, 5 midias e 2 funis traz exatamente tudo
-- Os funis importados apontam corretamente para os assets importados
-- Nenhum item aparece como "(item removido)" apos a importacao
-- Multiplas importacoes nao geram conflitos de ID
+A funcao e chamada dentro de `handleImport()` logo apos o `JSON.parse()`, antes de qualquer processamento. Se o formato for Zap Voice, os dados sao convertidos para o formato Rise Zap e o fluxo normal de importacao continua normalmente (incluindo remapeamento de IDs no modo append).
+
+### Fluxo do usuario
+1. Usuario seleciona o arquivo .json do Zap Voice
+2. Clica em "Importar backup"
+3. O sistema detecta automaticamente que e um backup do Zap Voice
+4. Converte os dados para o formato Rise Zap
+5. Importa normalmente (com ou sem substituicao)
+6. Exibe toast: "Backup do Zap Voice importado com sucesso! X mensagens, Y audios..."
+
