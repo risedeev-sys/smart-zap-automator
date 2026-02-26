@@ -3,7 +3,16 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
-import { Trash2, Copy, Pencil, Heart, Mic } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Trash2, Copy, Pencil, Heart, Mic, Upload } from "lucide-react";
 
 const initialAudios: ListItem[] = [
   { id: "1", name: "Áudio de boas-vindas", favorite: false },
@@ -13,6 +22,11 @@ export default function AudiosPage() {
   const [audios, setAudios] = useState<ListItem[]>(initialAudios);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [forwarded, setForwarded] = useState(false);
+  const [singleView, setSingleView] = useState(false);
+
   const selectedItem = audios.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -23,13 +37,24 @@ export default function AudiosPage() {
     }
   };
 
+  const handleAdd = () => {
+    if (!newName.trim()) return;
+    const id = Date.now().toString();
+    setAudios((prev) => [...prev, { id, name: newName.trim() }]);
+    setSelected(id);
+    setNewName("");
+    setForwarded(false);
+    setSingleView(false);
+    setAddOpen(false);
+  };
+
   return (
     <MainLayout title="Áudios">
       <TwoColumnLayout
         items={audios}
         selectedId={selected}
         onSelect={setSelected}
-        onAdd={() => {}}
+        onAdd={() => setAddOpen(true)}
         searchPlaceholder="Buscar áudio..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
@@ -60,6 +85,44 @@ export default function AudiosPage() {
           </div>
         )}
       </TwoColumnLayout>
+
+      {/* Modal Adicionar Áudio */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar áudio</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
+              <Input placeholder="Nome do áudio" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              {!newName.trim() && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={forwarded} onCheckedChange={setForwarded} />
+                <span className="text-sm text-foreground">Enviar áudio como <strong>encaminhado</strong></span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch checked={singleView} onCheckedChange={setSingleView} />
+                <span className="text-sm text-foreground">Enviar áudio como <strong>visualização única</strong></span>
+              </div>
+            </div>
+            <div>
+              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
+                <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">Para inserir o áudio, clique aqui ou arraste o arquivo para esta área.</p>
+                <p className="text-xs text-muted-foreground mt-1">Formatos aceitos: ".ogg" e ".mp3"</p>
+              </div>
+              <p className="text-xs text-destructive mt-1">Campo obrigatório</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
+            <Button onClick={handleAdd} disabled={!newName.trim()}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <DeleteConfirmDialog
         open={deleteOpen}
