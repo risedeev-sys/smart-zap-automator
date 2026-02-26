@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -18,21 +18,9 @@ import {
 import { Trash2, Copy, Pencil, Heart, Image } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface MediaItem extends ListItem {
-  fileName?: string;
-  fileUrl?: string;
-  fileType?: string;
-}
-
-const initialMidias: MediaItem[] = [];
-
 export default function MidiasPage() {
-  const [midias, setMidias] = useState<MediaItem[]>(initialMidias);
-  const { setMidias: setAssetsMidias } = useAssets();
+  const { midias, setMidias } = useAssets();
 
-  useEffect(() => {
-    setAssetsMidias(midias.map(m => ({ id: m.id, name: m.name })));
-  }, [midias, setAssetsMidias]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -44,6 +32,7 @@ export default function MidiasPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
+  const listItems: ListItem[] = midias.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
   const selectedItem = midias.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -100,7 +89,7 @@ export default function MidiasPage() {
   return (
     <MainLayout title="Mídias">
       <TwoColumnLayout
-        items={midias}
+        items={listItems}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setNewCaption(""); setAddOpen(true); }}
@@ -148,7 +137,6 @@ export default function MidiasPage() {
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar mídia</DialogTitle></DialogHeader>
@@ -184,7 +172,6 @@ export default function MidiasPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Editar */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Editar mídia</DialogTitle></DialogHeader>

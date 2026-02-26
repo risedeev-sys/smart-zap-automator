@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -16,20 +16,9 @@ import {
 import { Trash2, Copy, Pencil, Heart, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface DocItem extends ListItem {
-  fileName?: string;
-  fileUrl?: string;
-}
-
-const initialDocs: DocItem[] = [];
-
 export default function DocumentosPage() {
-  const [docs, setDocs] = useState<DocItem[]>(initialDocs);
-  const { setDocumentos } = useAssets();
+  const { documentos, setDocumentos } = useAssets();
 
-  useEffect(() => {
-    setDocumentos(docs.map(d => ({ id: d.id, name: d.name })));
-  }, [docs, setDocumentos]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -39,11 +28,12 @@ export default function DocumentosPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
-  const selectedItem = docs.find((m) => m.id === selected);
+  const listItems: ListItem[] = documentos.map(d => ({ id: d.id, name: d.name, favorite: d.favorite }));
+  const selectedItem = documentos.find((m) => m.id === selected);
 
   const handleDelete = () => {
     if (selected) {
-      setDocs((prev) => prev.filter((m) => m.id !== selected));
+      setDocumentos((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
     }
@@ -53,7 +43,7 @@ export default function DocumentosPage() {
     if (!newName.trim() || !uploadFile) return;
     const id = Date.now().toString();
     const fileUrl = URL.createObjectURL(uploadFile);
-    setDocs((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
+    setDocumentos((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
     setSelected(id);
     setNewName("");
     setUploadFile(null);
@@ -69,7 +59,7 @@ export default function DocumentosPage() {
 
   const handleEdit = () => {
     if (!selected || !editName.trim()) return;
-    setDocs((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
     setEditOpen(false);
     toast({ title: "Documento atualizado" });
   };
@@ -77,20 +67,20 @@ export default function DocumentosPage() {
   const handleDuplicate = () => {
     if (!selectedItem) return;
     const id = Date.now().toString();
-    setDocs((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
+    setDocumentos((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
     setSelected(id);
     toast({ title: "Documento duplicado" });
   };
 
   const handleFavorite = () => {
     if (!selected) return;
-    setDocs((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
+    setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
   };
 
   return (
     <MainLayout title="Documentos">
       <TwoColumnLayout
-        items={docs}
+        items={listItems}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
@@ -141,7 +131,6 @@ export default function DocumentosPage() {
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar documento</DialogTitle></DialogHeader>
@@ -169,7 +158,6 @@ export default function DocumentosPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Editar */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Editar documento</DialogTitle></DialogHeader>
