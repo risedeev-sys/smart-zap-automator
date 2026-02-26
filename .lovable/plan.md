@@ -1,108 +1,44 @@
 
+# Importacao Completa de Funis com Assets Vinculados
 
-# Rise Zap — Plano de Implementação (UI)
+## Problema Atual
+Quando um backup e importado, os funis referenciam assets (mensagens, audios, midias, documentos) pelo `assetId`. Se os assets correspondentes nao forem importados juntos, os itens do funil aparecem como "(item removido)". Alem disso, ao adicionar (sem substituir), IDs duplicados podem causar conflitos.
 
-## Visão Geral
-Painel web para gerenciar automações de WhatsApp via Evolution API. Foco 100% visual/UI nesta fase — sem backend real. Tema **light como padrão** com toggle para **dark mode**. Visual clean, premium, estilo SaaS moderno.
+## Solucao
 
----
+### 1. Remapeamento de IDs na importacao
+Ao importar sem a opcao "Substituir todos", os itens importados podem ter IDs iguais aos existentes. A solucao e gerar novos IDs unicos para todos os itens importados e atualizar as referencias internas (ex: `assetId` nos funis apontando para os novos IDs dos assets).
 
-## 1. Layout Global (Base de todas as telas)
+### 2. Validacao de integridade pos-importacao
+Apos processar o arquivo, verificar se todos os `assetId` referenciados pelos funis importados existem nos assets (importados + existentes). Exibir um aviso se houver assets faltando.
 
-### Sidebar (menu lateral)
-- Logo "Rise Zap" no topo
-- Itens: Início, Mensagens, Áudios, Mídias, Documentos, Funis, Gatilhos, Fluxos (desabilitado), Backups
-- Ícones + texto, item ativo destacado
-- Colapsável (modo ícone)
+### 3. Importacao inteligente de funis
+Quando o arquivo contem funis mas falta alguma categoria de assets referenciada, mostrar um toast de alerta informando quais categorias estao ausentes.
 
-### Topbar (barra superior)
-- Título da página atual
-- Badge "Plano Básico – chave restrita"
-- Info do usuário (nome + telefone + avatar)
-- Ícones: configurações, sair
-- Toggle claro/escuro
+## Detalhes Tecnicos
 
-### Cards de métricas/limites (faixa horizontal abaixo da topbar)
-- Áudios enviados 0/20, Mídias 0/20, Documentos 0/20, Mensagens 0/20
-- Funis enviados 2/5, Disparos em massa 0/2, Itens agendados 0/5, Fluxos 0/5
-- Visíveis em todas as telas
+### Arquivo: `src/pages/BackupsPage.tsx`
 
----
+**Funcao `handleImport` reformulada:**
 
-## 2. Dashboard (Início)
-- Mensagem de boas-vindas
-- Cards informativos (Guia rápido, Conectar WhatsApp)
-- Card "WhatsApp (Evolution API)" com status conectado/desconectado, botão conectar, área placeholder QR code
-- Bloco "Total de itens cadastrados" com contagem por módulo (Mensagens, Áudios, Mídias, Documentos, Funis, Gatilhos, Fluxos)
+- Ler o JSON importado
+- Criar um mapa de remapeamento de IDs antigos para novos (usando `crypto.randomUUID()` ou `Date.now() + index`)
+- Para cada categoria de assets (mensagens, audios, midias, documentos):
+  - Gerar novos IDs para cada item
+  - Guardar o mapeamento `idAntigo -> idNovo`
+- Para funis:
+  - Gerar novos IDs para cada funil e cada `FunnelItem`
+  - Atualizar o `assetId` de cada `FunnelItem` usando o mapa de remapeamento
+- Para gatilhos:
+  - Gerar novos IDs
+  - Atualizar `funnelName` se necessario (ou migrar para `funnelId` no futuro)
+- Se `replaceAll` estiver ativo, substituir tudo diretamente (sem remapear, pois nao ha conflito)
+- Se `replaceAll` estiver desativado, usar os IDs remapeados e fazer append
+- Exibir toast de sucesso com resumo: "Importado: X mensagens, Y audios, Z midias, W documentos, N funis"
+- Se algum `assetId` de funil nao foi encontrado nos assets importados nem nos existentes, exibir aviso
 
----
-
-## 3. Mensagens (layout 2 colunas)
-- **Esquerda**: busca + botão "+ Adicionar" + lista de cards (nome, ações editar/favoritar, drag handle)
-- **Direita**: header com nome, ações (deletar, duplicar, editar, favoritar), área de preview do texto
-
----
-
-## 4. Áudios (layout 2 colunas)
-- Mesmo padrão: lista à esquerda com busca/adicionar, preview à direita
-- Empty state com ilustração quando vazio
-
----
-
-## 5. Mídias (layout 2 colunas)
-- Mesmo padrão de lista/detalhe
-- Preview de imagem à direita
-- Empty state quando vazio
-
----
-
-## 6. Documentos
-- Empty state com ilustração + botão "+ Adicionar"
-- Com itens: padrão lista/detalhe consistente
-
----
-
-## 7. Funis (layout 2 colunas)
-- **Esquerda**: busca + "+ Adicionar" + lista de funis (nome, tempo total, ícones por tipo, editar/favoritar, drag)
-- **Direita**: header com nome do funil, ações, botão "+ Adicionar item", lista de itens do funil (tipo, nome, delay "Enviando após X", editar/excluir)
-- **Modal "Editar item"**: tabs Mensagem/Áudio/Mídia/Documento, select do item, inputs de delay (minutos/segundos), botões Cancelar/Salvar
-
----
-
-## 8. Gatilhos (layout 2 colunas)
-- **Esquerda**: lista de gatilhos com toggle liga/desliga, favoritar, busca, drag
-- **Direita**: condições de disparo, funil vinculado, atraso, regras (enviar para grupos, contatos salvos, ignorar maiúsculas)
-- **Modal "Editar gatilho 1/2"**: campo nome, condições de disparo (dropdown: igual/contém/começa/não contém), chips de palavras-chave com ENTER, "+ Adicionar outra condição", botões Cancelar/Próximo
-
----
-
-## 9. Backups
-- Tabs: Importar backup / Gerar backup
-- **Importar**: toggle "Substituir todos os itens existentes", área de drag/drop para .json, aviso, botão importar
-- **Gerar**: botão "Gerar backup", bloco informativo
-- **Modal "Confirmação de exportação"**: campo nome do backup, toggle "Exportar tudo" (desativando permite seleção parcial), botões Cancelar/Exportar
-
----
-
-## 10. Tema & Identidade Visual
-- Tema **light** como padrão (fundo branco, textos escuros, cards claros)
-- Dark mode via toggle (coerente com marca)
-- Cores accent: azul/teal para visual SaaS premium clean
-- Toda UI em português (PT-BR)
-
----
-
-## 11. Placeholder Evolution API
-- Card no Dashboard com status conectado/desconectado
-- Badge de status, nome da instância, botão conectar
-- Área de QR code (placeholder visual)
-- Botão reconectar, bloco de logs (placeholder)
-
----
-
-## Fora do escopo desta fase
-- Fluxos (item no menu, mas desabilitado/sem tela)
-- Backend real, persistência, uploads reais
-- Integração real com Evolution API
-- Autenticação real
-
+### Resultado esperado
+- Importar um backup com 10 mensagens, 5 midias e 2 funis traz exatamente tudo
+- Os funis importados apontam corretamente para os assets importados
+- Nenhum item aparece como "(item removido)" apos a importacao
+- Multiplas importacoes nao geram conflitos de ID
