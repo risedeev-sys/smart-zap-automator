@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Trash2, Copy, Pencil, Heart } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const initialMessages: ListItem[] = [
   { id: "1", name: "Boas-vindas", favorite: true },
@@ -20,7 +21,7 @@ const initialMessages: ListItem[] = [
   { id: "3", name: "Lembrete de pagamento" },
 ];
 
-const mockContents: Record<string, string> = {
+const initialContents: Record<string, string> = {
   "1": "Olá! Seja bem-vindo(a)! 👋\nFicamos felizes em te atender. Como posso ajudar?",
   "2": "Muito obrigado pela sua compra! 🎉\nQualquer dúvida, estamos à disposição.",
   "3": "Olá! Este é um lembrete amigável sobre seu pagamento pendente. 💰",
@@ -28,18 +29,23 @@ const mockContents: Record<string, string> = {
 
 export default function MensagensPage() {
   const [messages, setMessages] = useState<ListItem[]>(initialMessages);
-  const [contents, setContents] = useState<Record<string, string>>(mockContents);
+  const [contents, setContents] = useState<Record<string, string>>(initialContents);
   const [selected, setSelected] = useState<string | null>("1");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newText, setNewText] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editText, setEditText] = useState("");
+  const { toast } = useToast();
 
   const selectedItem = messages.find((m) => m.id === selected);
 
   const handleDelete = () => {
     if (selected) {
       setMessages((prev) => prev.filter((m) => m.id !== selected));
+      setContents((prev) => { const c = { ...prev }; delete c[selected]; return c; });
       setSelected(null);
       setDeleteOpen(false);
     }
@@ -54,6 +60,35 @@ export default function MensagensPage() {
     setNewName("");
     setNewText("");
     setAddOpen(false);
+  };
+
+  const handleEdit = () => {
+    if (!selected || !editName.trim()) return;
+    setMessages((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setContents((prev) => ({ ...prev, [selected]: editText }));
+    setEditOpen(false);
+    toast({ title: "Mensagem atualizada" });
+  };
+
+  const openEdit = () => {
+    if (!selectedItem) return;
+    setEditName(selectedItem.name);
+    setEditText(contents[selected!] ?? "");
+    setEditOpen(true);
+  };
+
+  const handleDuplicate = () => {
+    if (!selectedItem) return;
+    const id = Date.now().toString();
+    setMessages((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
+    setContents((prev) => ({ ...prev, [id]: contents[selected!] ?? "" }));
+    setSelected(id);
+    toast({ title: "Mensagem duplicada" });
+  };
+
+  const handleFavorite = () => {
+    if (!selected) return;
+    setMessages((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
   };
 
   return (
@@ -71,9 +106,9 @@ export default function MensagensPage() {
               <h3 className="font-semibold text-foreground">{selectedItem.name}</h3>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><Copy className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicate}><Copy className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={openEdit}><Pencil className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavorite}>
                   <Heart className={`h-4 w-4 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
                 </Button>
               </div>
@@ -87,12 +122,10 @@ export default function MensagensPage() {
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar Mensagem */}
+      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adicionar mensagem</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Adicionar mensagem</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
@@ -112,13 +145,28 @@ export default function MensagensPage() {
         </DialogContent>
       </Dialog>
 
-      <DeleteConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Excluir mensagem"
-        itemName={selectedItem?.name}
-        onConfirm={handleDelete}
-      />
+      {/* Modal Editar */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar mensagem</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Texto</label>
+              <Textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={5} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
+            <Button onClick={handleEdit} disabled={!editName.trim()}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} title="Excluir mensagem" itemName={selectedItem?.name} onConfirm={handleDelete} />
     </MainLayout>
   );
 }

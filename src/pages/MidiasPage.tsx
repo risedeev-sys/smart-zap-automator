@@ -14,6 +14,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Trash2, Copy, Pencil, Heart, Image, Upload } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const initialMidias: ListItem[] = [];
 
@@ -22,9 +23,12 @@ export default function MidiasPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCaption, setNewCaption] = useState("");
   const [singleView, setSingleView] = useState(false);
+  const [editName, setEditName] = useState("");
+  const { toast } = useToast();
 
   const selectedItem = midias.find((m) => m.id === selected);
 
@@ -45,6 +49,32 @@ export default function MidiasPage() {
     setNewCaption("");
     setSingleView(false);
     setAddOpen(false);
+  };
+
+  const openEdit = () => {
+    if (!selectedItem) return;
+    setEditName(selectedItem.name);
+    setEditOpen(true);
+  };
+
+  const handleEdit = () => {
+    if (!selected || !editName.trim()) return;
+    setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setEditOpen(false);
+    toast({ title: "Mídia atualizada" });
+  };
+
+  const handleDuplicate = () => {
+    if (!selectedItem) return;
+    const id = Date.now().toString();
+    setMidias((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
+    setSelected(id);
+    toast({ title: "Mídia duplicada" });
+  };
+
+  const handleFavorite = () => {
+    if (!selected) return;
+    setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
   };
 
   return (
@@ -70,9 +100,11 @@ export default function MidiasPage() {
               <h3 className="font-semibold text-foreground">{selectedItem.name}</h3>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><Copy className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><Heart className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicate}><Copy className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={openEdit}><Pencil className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavorite}>
+                  <Heart className={`h-4 w-4 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
+                </Button>
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-4">
@@ -85,12 +117,10 @@ export default function MidiasPage() {
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar Mídia */}
+      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adicionar mídia</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Adicionar mídia</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
@@ -121,13 +151,24 @@ export default function MidiasPage() {
         </DialogContent>
       </Dialog>
 
-      <DeleteConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Excluir mídia"
-        itemName={selectedItem?.name}
-        onConfirm={handleDelete}
-      />
+      {/* Modal Editar */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar mídia</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
+            <Button onClick={handleEdit} disabled={!editName.trim()}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} title="Excluir mídia" itemName={selectedItem?.name} onConfirm={handleDelete} />
     </MainLayout>
   );
 }
