@@ -101,6 +101,7 @@ export default function FunisPage() {
   const [addItemSelectedId, setAddItemSelectedId] = useState<string>("");
   const [addItemDelayMin, setAddItemDelayMin] = useState(0);
   const [addItemDelaySec, setAddItemDelaySec] = useState(0);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const assetsByType = useMemo(() => ({
     mensagem: mensagens,
@@ -207,7 +208,7 @@ export default function FunisPage() {
                 </div>
               </div>
               <div className="p-4">
-                <Button variant="outline" size="sm" onClick={() => { setAddItemTab("mensagem"); setAddItemSelectedId(""); setAddItemDelayMin(0); setAddItemDelaySec(0); setEditModalOpen(true); }}>
+                <Button variant="outline" size="sm" onClick={() => { setEditingItemId(null); setAddItemTab("mensagem"); setAddItemSelectedId(""); setAddItemDelayMin(0); setAddItemDelaySec(0); setEditModalOpen(true); }}>
                   <Plus className="h-4 w-4 mr-1" /> Adicionar item
                 </Button>
               </div>
@@ -226,7 +227,7 @@ export default function FunisPage() {
                         <Clock className="h-3 w-3" />
                         Enviando após {item.delayMin}m {item.delaySec}s
                       </div>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditModalOpen(true)}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItemId(item.id); setAddItemTab(item.type); setAddItemSelectedId(""); setAddItemDelayMin(item.delayMin); setAddItemDelaySec(item.delaySec); setEditModalOpen(true); }}>
                         <Pencil className="h-3 w-3" />
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: item.name, type: "item", itemId: item.id }); setDeleteOpen(true); }}>
@@ -286,7 +287,7 @@ export default function FunisPage() {
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Adicionar item ao funil</DialogTitle>
+            <DialogTitle>{editingItemId ? "Editar item do funil" : "Adicionar item ao funil"}</DialogTitle>
             <DialogDescription>Selecione o tipo e configure o delay.</DialogDescription>
           </DialogHeader>
           <Tabs value={addItemTab} onValueChange={(v) => { setAddItemTab(v); setAddItemSelectedId(""); }}>
@@ -335,14 +336,18 @@ export default function FunisPage() {
                 const assets = assetsByType[addItemTab as keyof typeof assetsByType] || [];
                 const asset = assets.find(a => a.id === addItemSelectedId);
                 if (!asset) return;
-                const newItem: FunnelItem = {
-                  id: Date.now().toString(),
-                  type: addItemTab as FunnelItem["type"],
-                  name: asset.name,
-                  delayMin: addItemDelayMin,
-                  delaySec: addItemDelaySec,
-                };
-                setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: [...f.items, newItem] } : f));
+                if (editingItemId) {
+                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: f.items.map(i => i.id === editingItemId ? { ...i, type: addItemTab as FunnelItem["type"], name: asset.name, delayMin: addItemDelayMin, delaySec: addItemDelaySec } : i) } : f));
+                } else {
+                  const newItem: FunnelItem = {
+                    id: Date.now().toString(),
+                    type: addItemTab as FunnelItem["type"],
+                    name: asset.name,
+                    delayMin: addItemDelayMin,
+                    delaySec: addItemDelaySec,
+                  };
+                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: [...f.items, newItem] } : f));
+                }
                 setEditModalOpen(false);
               }}
             >Salvar</Button>
