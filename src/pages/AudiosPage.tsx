@@ -5,19 +5,28 @@ import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Trash2, Copy, Pencil, Heart, Mic } from "lucide-react";
 
-const mockAudios: ListItem[] = [
+const initialAudios: ListItem[] = [
   { id: "1", name: "Áudio de boas-vindas", favorite: false },
 ];
 
 export default function AudiosPage() {
+  const [audios, setAudios] = useState<ListItem[]>(initialAudios);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const selectedItem = mockAudios.find((m) => m.id === selected);
+  const selectedItem = audios.find((m) => m.id === selected);
+
+  const handleDelete = () => {
+    if (selected) {
+      setAudios((prev) => prev.filter((m) => m.id !== selected));
+      setSelected(null);
+      setDeleteOpen(false);
+    }
+  };
 
   return (
     <MainLayout title="Áudios">
       <TwoColumnLayout
-        items={mockAudios}
+        items={audios}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => {}}
@@ -57,7 +66,7 @@ export default function AudiosPage() {
         onOpenChange={setDeleteOpen}
         title="Excluir áudio"
         itemName={selectedItem?.name}
-        onConfirm={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
       />
     </MainLayout>
   );

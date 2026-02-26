@@ -51,7 +51,7 @@ interface Funnel {
   items: FunnelItem[];
 }
 
-const mockFunnels: Funnel[] = [
+const initialFunnels: Funnel[] = [
   {
     id: "1",
     name: "Funil de boas-vindas",
@@ -86,12 +86,13 @@ const typeLabels = {
 };
 
 export default function FunisPage() {
+  const [funnels, setFunnels] = useState<Funnel[]>(initialFunnels);
   const [selected, setSelected] = useState<string | null>("1");
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string; type: "funnel" | "item"; itemId?: string } | null>(null);
 
-  const selectedFunnel = mockFunnels.find((f) => f.id === selected);
+  const selectedFunnel = funnels.find((f) => f.id === selected);
 
   const totalTime = (items: FunnelItem[]) => {
     const totalSec = items.reduce((acc, i) => acc + i.delayMin * 60 + i.delaySec, 0);
@@ -115,7 +116,7 @@ export default function FunisPage() {
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {mockFunnels.map((f) => (
+            {funnels.map((f) => (
               <button
                 key={f.id}
                 onClick={() => setSelected(f.id)}
@@ -154,7 +155,7 @@ export default function FunisPage() {
                   <h3 className="font-semibold text-foreground">{selectedFunnel.name}</h3>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setDeleteTarget({ title: "Excluir funil", name: selectedFunnel.name }); setDeleteOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setDeleteTarget({ title: "Excluir funil", name: selectedFunnel.name, type: "funnel" }); setDeleteOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8"><Copy className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -188,7 +189,7 @@ export default function FunisPage() {
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditModalOpen(true)}>
                         <Pencil className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: item.name }); setDeleteOpen(true); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: item.name, type: "item", itemId: item.id }); setDeleteOpen(true); }}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
@@ -254,7 +255,21 @@ export default function FunisPage() {
         onOpenChange={setDeleteOpen}
         title={deleteTarget?.title ?? "Excluir item"}
         itemName={deleteTarget?.name}
-        onConfirm={() => setDeleteOpen(false)}
+        onConfirm={() => {
+          if (deleteTarget?.type === "funnel" && selected) {
+            setFunnels((prev) => prev.filter((f) => f.id !== selected));
+            setSelected(null);
+          } else if (deleteTarget?.type === "item" && deleteTarget.itemId && selected) {
+            setFunnels((prev) =>
+              prev.map((f) =>
+                f.id === selected
+                  ? { ...f, items: f.items.filter((i) => i.id !== deleteTarget.itemId) }
+                  : f
+              )
+            );
+          }
+          setDeleteOpen(false);
+        }}
       />
     </MainLayout>
   );

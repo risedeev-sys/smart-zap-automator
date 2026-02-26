@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Trash2, Copy, Pencil, Heart } from "lucide-react";
 
-const mockMessages: ListItem[] = [
+const initialMessages: ListItem[] = [
   { id: "1", name: "Boas-vindas", favorite: true },
   { id: "2", name: "Agradecimento pós-compra" },
   { id: "3", name: "Lembrete de pagamento" },
@@ -18,15 +18,24 @@ const mockContents: Record<string, string> = {
 };
 
 export default function MensagensPage() {
+  const [messages, setMessages] = useState<ListItem[]>(initialMessages);
   const [selected, setSelected] = useState<string | null>("1");
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const selectedItem = mockMessages.find((m) => m.id === selected);
+  const selectedItem = messages.find((m) => m.id === selected);
+
+  const handleDelete = () => {
+    if (selected) {
+      setMessages((prev) => prev.filter((m) => m.id !== selected));
+      setSelected(null);
+      setDeleteOpen(false);
+    }
+  };
 
   return (
     <MainLayout title="Mensagens">
       <TwoColumnLayout
-        items={mockMessages}
+        items={messages}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => {}}
@@ -59,7 +68,7 @@ export default function MensagensPage() {
         onOpenChange={setDeleteOpen}
         title="Excluir mensagem"
         itemName={selectedItem?.name}
-        onConfirm={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
       />
     </MainLayout>
   );
