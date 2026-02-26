@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -16,27 +16,9 @@ import {
 import { Trash2, Copy, Pencil, Heart } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const initialMessages: ListItem[] = [
-  { id: "1", name: "Boas-vindas", favorite: true },
-  { id: "2", name: "Agradecimento pós-compra" },
-  { id: "3", name: "Lembrete de pagamento" },
-];
-
-const initialContents: Record<string, string> = {
-  "1": "Olá! Seja bem-vindo(a)! 👋\nFicamos felizes em te atender. Como posso ajudar?",
-  "2": "Muito obrigado pela sua compra! 🎉\nQualquer dúvida, estamos à disposição.",
-  "3": "Olá! Este é um lembrete amigável sobre seu pagamento pendente. 💰",
-};
-
 export default function MensagensPage() {
-  const [messages, setMessages] = useState<ListItem[]>(initialMessages);
-  const { setMensagens } = useAssets();
+  const { mensagens, setMensagens } = useAssets();
 
-  useEffect(() => {
-    setMensagens(messages.map(m => ({ id: m.id, name: m.name })));
-  }, [messages, setMensagens]);
-
-  const [contents, setContents] = useState<Record<string, string>>(initialContents);
   const [selected, setSelected] = useState<string | null>("1");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -47,12 +29,12 @@ export default function MensagensPage() {
   const [editText, setEditText] = useState("");
   const { toast } = useToast();
 
-  const selectedItem = messages.find((m) => m.id === selected);
+  const listItems: ListItem[] = mensagens.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
+  const selectedItem = mensagens.find((m) => m.id === selected);
 
   const handleDelete = () => {
     if (selected) {
-      setMessages((prev) => prev.filter((m) => m.id !== selected));
-      setContents((prev) => { const c = { ...prev }; delete c[selected]; return c; });
+      setMensagens((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
     }
@@ -61,8 +43,7 @@ export default function MensagensPage() {
   const handleAdd = () => {
     if (!newName.trim() || !newText.trim()) return;
     const id = Date.now().toString();
-    setMessages((prev) => [...prev, { id, name: newName.trim() }]);
-    setContents((prev) => ({ ...prev, [id]: newText.trim() }));
+    setMensagens((prev) => [...prev, { id, name: newName.trim(), content: newText.trim() }]);
     setSelected(id);
     setNewName("");
     setNewText("");
@@ -71,8 +52,7 @@ export default function MensagensPage() {
 
   const handleEdit = () => {
     if (!selected || !editName.trim()) return;
-    setMessages((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
-    setContents((prev) => ({ ...prev, [selected]: editText }));
+    setMensagens((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim(), content: editText } : m));
     setEditOpen(false);
     toast({ title: "Mensagem atualizada" });
   };
@@ -80,28 +60,27 @@ export default function MensagensPage() {
   const openEdit = () => {
     if (!selectedItem) return;
     setEditName(selectedItem.name);
-    setEditText(contents[selected!] ?? "");
+    setEditText(selectedItem.content ?? "");
     setEditOpen(true);
   };
 
   const handleDuplicate = () => {
     if (!selectedItem) return;
     const id = Date.now().toString();
-    setMessages((prev) => [...prev, { id, name: `${selectedItem.name} (cópia)` }]);
-    setContents((prev) => ({ ...prev, [id]: contents[selected!] ?? "" }));
+    setMensagens((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
     setSelected(id);
     toast({ title: "Mensagem duplicada" });
   };
 
   const handleFavorite = () => {
     if (!selected) return;
-    setMessages((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
+    setMensagens((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
   };
 
   return (
     <MainLayout title="Mensagens">
       <TwoColumnLayout
-        items={messages}
+        items={listItems}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => setAddOpen(true)}
@@ -122,14 +101,13 @@ export default function MensagensPage() {
             </div>
             <div className="flex-1 p-4">
               <div className="whitespace-pre-wrap text-sm text-foreground bg-muted/50 rounded-lg p-4">
-                {contents[selected!] ?? ""}
+                {selectedItem.content ?? ""}
               </div>
             </div>
           </div>
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar mensagem</DialogTitle></DialogHeader>
@@ -152,7 +130,6 @@ export default function MensagensPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Editar */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Editar mensagem</DialogTitle></DialogHeader>

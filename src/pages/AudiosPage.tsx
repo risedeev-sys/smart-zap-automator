@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -17,24 +17,9 @@ import {
 import { Trash2, Copy, Pencil, Heart, Mic, Download, Info, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface AudioItem extends ListItem {
-  fileName?: string;
-  fileUrl?: string;
-  forwarded?: boolean;
-  singleView?: boolean;
-}
-
-const initialAudios: AudioItem[] = [
-  { id: "1", name: "Áudio de boas-vindas", favorite: false },
-];
-
 export default function AudiosPage() {
-  const [audios, setAudios] = useState<AudioItem[]>(initialAudios);
-  const { setAudios: setAssetsAudios } = useAssets();
+  const { audios, setAudios } = useAssets();
 
-  useEffect(() => {
-    setAssetsAudios(audios.map(a => ({ id: a.id, name: a.name })));
-  }, [audios, setAssetsAudios]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -46,6 +31,7 @@ export default function AudiosPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
+  const listItems: ListItem[] = audios.map(a => ({ id: a.id, name: a.name, favorite: a.favorite }));
   const selectedItem = audios.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -99,7 +85,7 @@ export default function AudiosPage() {
   return (
     <MainLayout title="Áudios">
       <TwoColumnLayout
-        items={audios}
+        items={listItems}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
@@ -115,7 +101,6 @@ export default function AudiosPage() {
       >
         {selectedItem && (
           <div className="flex flex-col h-full">
-            {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-semibold text-lg text-foreground truncate">{selectedItem.name}</h3>
               <div className="flex items-center gap-1">
@@ -140,10 +125,7 @@ export default function AudiosPage() {
                 </Button>
               </div>
             </div>
-
-            {/* Content */}
             <div className="flex-1 flex flex-col p-6">
-              {/* Metadata */}
               <div className="space-y-1.5 mb-6">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Mic className="h-4 w-4 flex-shrink-0" />
@@ -158,8 +140,6 @@ export default function AudiosPage() {
                   <span>Não mencionando em grupos</span>
                 </div>
               </div>
-
-              {/* Player */}
               {selectedItem.fileUrl ? (
                 <div className="w-full max-w-lg">
                   <audio controls className="w-full" src={selectedItem.fileUrl} />
@@ -175,7 +155,6 @@ export default function AudiosPage() {
         )}
       </TwoColumnLayout>
 
-      {/* Modal Adicionar */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar áudio</DialogTitle></DialogHeader>
@@ -213,7 +192,6 @@ export default function AudiosPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Editar */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Editar áudio</DialogTitle></DialogHeader>
