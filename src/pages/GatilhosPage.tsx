@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAssets, TriggerCondition, Trigger } from "@/contexts/AssetsContext";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,52 +39,8 @@ import {
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { toast } from "@/hooks/use-toast";
 
-interface TriggerCondition {
-  type: string;
-  keywords: string[];
-}
-
-interface Trigger {
-  id: string;
-  name: string;
-  enabled: boolean;
-  favorite?: boolean;
-  conditions: TriggerCondition[];
-  funnelName: string;
-  delay: string;
-  sendToGroups: boolean;
-  savedContactsOnly: boolean;
-  ignoreCase: boolean;
-}
-
-const initialTriggers: Trigger[] = [
-  {
-    id: "1",
-    name: "Gatilho de boas-vindas",
-    enabled: true,
-    favorite: true,
-    conditions: [{ type: "contém", keywords: ["oi", "olá", "bom dia"] }],
-    funnelName: "Funil de boas-vindas",
-    delay: "5 segundos",
-    sendToGroups: false,
-    savedContactsOnly: false,
-    ignoreCase: true,
-  },
-  {
-    id: "2",
-    name: "Gatilho pós-venda",
-    enabled: false,
-    conditions: [{ type: "igual a", keywords: ["comprei"] }],
-    funnelName: "Funil pós-venda",
-    delay: "0 segundos",
-    sendToGroups: false,
-    savedContactsOnly: true,
-    ignoreCase: true,
-  },
-];
-
 export default function GatilhosPage() {
-  const [triggers, setTriggers] = useState<Trigger[]>(initialTriggers);
+  const { triggers, setTriggers } = useAssets();
   const [selected, setSelected] = useState<string | null>("1");
   
   // Add modal

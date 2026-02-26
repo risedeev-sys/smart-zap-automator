@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, FunnelItem } from "@/contexts/AssetsContext";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -37,41 +37,6 @@ import {
   GitBranch,
 } from "lucide-react";
 
-interface FunnelItem {
-  id: string;
-  type: "mensagem" | "audio" | "midia" | "documento";
-  assetId: string;
-  delayMin: number;
-  delaySec: number;
-}
-
-interface Funnel {
-  id: string;
-  name: string;
-  favorite?: boolean;
-  items: FunnelItem[];
-}
-
-const initialFunnels: Funnel[] = [
-  {
-    id: "1",
-    name: "Funil de boas-vindas",
-    favorite: true,
-    items: [
-      { id: "i1", type: "mensagem", assetId: "1", delayMin: 0, delaySec: 0 },
-      { id: "i2", type: "audio", assetId: "1", delayMin: 0, delaySec: 30 },
-      { id: "i3", type: "mensagem", assetId: "2", delayMin: 1, delaySec: 0 },
-    ],
-  },
-  {
-    id: "2",
-    name: "Funil pós-venda",
-    items: [
-      { id: "i4", type: "mensagem", assetId: "2", delayMin: 0, delaySec: 0 },
-    ],
-  },
-];
-
 const typeIcons = {
   mensagem: MessageSquare,
   audio: Mic,
@@ -87,8 +52,7 @@ const typeLabels = {
 };
 
 export default function FunisPage() {
-  const { mensagens, audios, midias, documentos } = useAssets();
-  const [funnels, setFunnels] = useState<Funnel[]>(initialFunnels);
+  const { mensagens, audios, midias, documentos, funnels, setFunnels } = useAssets();
   const [selected, setSelected] = useState<string | null>("1");
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
