@@ -93,8 +93,28 @@ export default function FunisPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string; type: "funnel" | "item"; itemId?: string } | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [newFunnelName, setNewFunnelName] = useState("");
+  const [editFunnelOpen, setEditFunnelOpen] = useState(false);
+  const [editFunnelName, setEditFunnelName] = useState("");
 
   const selectedFunnel = funnels.find((f) => f.id === selected);
+
+  const handleEditFunnel = () => {
+    if (!selected || !editFunnelName.trim()) return;
+    setFunnels((prev) => prev.map((f) => f.id === selected ? { ...f, name: editFunnelName.trim() } : f));
+    setEditFunnelOpen(false);
+  };
+
+  const handleDuplicateFunnel = () => {
+    if (!selectedFunnel) return;
+    const id = Date.now().toString();
+    setFunnels((prev) => [...prev, { ...selectedFunnel, id, name: `${selectedFunnel.name} (cópia)`, items: selectedFunnel.items.map((i) => ({ ...i, id: `${i.id}-${id}` })) }]);
+    setSelected(id);
+  };
+
+  const handleFavoriteFunnel = () => {
+    if (!selected) return;
+    setFunnels((prev) => prev.map((f) => f.id === selected ? { ...f, favorite: !f.favorite } : f));
+  };
 
   const totalTime = (items: FunnelItem[]) => {
     const totalSec = items.reduce((acc, i) => acc + i.delayMin * 60 + i.delaySec, 0);
@@ -167,9 +187,9 @@ export default function FunisPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setDeleteTarget({ title: "Excluir funil", name: selectedFunnel.name, type: "funnel" }); setDeleteOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8"><Copy className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicateFunnel}><Copy className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditFunnelName(selectedFunnel.name); setEditFunnelOpen(true); }}><Pencil className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavoriteFunnel}>
                     <Heart className={`h-4 w-4 ${selectedFunnel.favorite ? "fill-primary text-primary" : ""}`} />
                   </Button>
                 </div>
@@ -229,6 +249,23 @@ export default function FunisPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
             <Button onClick={handleAddFunnel} disabled={!newFunnelName.trim()}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Editar Funil */}
+      <Dialog open={editFunnelOpen} onOpenChange={setEditFunnelOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar funil</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Título</label>
+              <Input value={editFunnelName} onChange={(e) => setEditFunnelName(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditFunnelOpen(false)}>Cancelar</Button>
+            <Button onClick={handleEditFunnel} disabled={!editFunnelName.trim()}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
