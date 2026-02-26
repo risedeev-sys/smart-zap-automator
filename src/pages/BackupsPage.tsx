@@ -17,6 +17,7 @@ import {
 import { Upload, Download, AlertTriangle, FileJson, CheckCircle2 } from "lucide-react";
 import { useAssets, type AssetItem, type Funnel, type Trigger } from "@/contexts/AssetsContext";
 import { useToast } from "@/hooks/use-toast";
+import { detectAndConvertZapVoice } from "@/utils/zapVoiceConverter";
 
 export default function BackupsPage() {
   const { mensagens, setMensagens, audios, setAudios, midias, setMidias, documentos, setDocumentos, funnels, setFunnels, triggers, setTriggers } = useAssets();
@@ -88,7 +89,8 @@ export default function BackupsPage() {
 
     try {
       const text = await importFile.text();
-      const data = JSON.parse(text);
+      const rawData = JSON.parse(text);
+      const { converted: data, wasZapVoice } = detectAndConvertZapVoice(rawData);
 
       if (replaceAll) {
         // Replace mode: use IDs as-is
@@ -186,7 +188,10 @@ export default function BackupsPage() {
 
       setImportSuccess(true);
       setImportFile(null);
-      toast({ title: "Backup importado com sucesso!", description: counts.length ? `Importado: ${counts.join(", ")}` : undefined });
+      toast({
+        title: wasZapVoice ? "Backup do Zap Voice importado com sucesso!" : "Backup importado com sucesso!",
+        description: counts.length ? `Importado: ${counts.join(", ")}` : undefined,
+      });
     } catch {
       toast({ title: "Erro ao importar", description: "O arquivo não é um backup válido.", variant: "destructive" });
     }
