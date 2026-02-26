@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { Search, Plus, GripVertical, Heart, Pencil } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useDragReorder } from "@/hooks/use-drag-reorder";
 
 export interface ListItem {
   id: string;
@@ -15,6 +16,7 @@ interface TwoColumnLayoutProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onAdd: () => void;
+  onReorder?: (items: ListItem[]) => void;
   searchPlaceholder?: string;
   children: ReactNode;
   emptyDetail?: ReactNode;
@@ -26,11 +28,14 @@ export function TwoColumnLayout({
   selectedId,
   onSelect,
   onAdd,
+  onReorder,
   searchPlaceholder = "Buscar...",
   children,
   emptyDetail,
   renderItemExtra,
 }: TwoColumnLayoutProps) {
+  const { getDragProps } = useDragReorder(items, onReorder ?? (() => {}));
+
   return (
     <div className="flex gap-4 h-[calc(100vh-12rem)]">
       {/* Left column */}
@@ -51,27 +56,32 @@ export function TwoColumnLayout({
               Nenhum item cadastrado.
             </div>
           )}
-          {items.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onSelect(item.id)}
-              className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
-                selectedId === item.id
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-muted text-foreground"
-              }`}
-            >
-              <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
-              <span className="flex-1 truncate">{item.name}</span>
-              {renderItemExtra?.(item)}
-              <Heart
-                className={`h-3.5 w-3.5 flex-shrink-0 ${
-                  item.favorite ? "fill-primary text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100"
-                }`}
-              />
-              <Pencil className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0" />
-            </button>
-          ))}
+          {items.map((item, index) => {
+            const dragProps = onReorder ? getDragProps(index) : { className: "" };
+            const { className: dragClassName, ...restDragProps } = dragProps;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onSelect(item.id)}
+                {...restDragProps}
+                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
+                  selectedId === item.id
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-muted text-foreground"
+                } ${dragClassName}`}
+              >
+                <GripVertical className={`h-3.5 w-3.5 text-muted-foreground flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
+                <span className="flex-1 truncate">{item.name}</span>
+                {renderItemExtra?.(item)}
+                <Heart
+                  className={`h-3.5 w-3.5 flex-shrink-0 ${
+                    item.favorite ? "fill-primary text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100"
+                  }`}
+                />
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0" />
+              </button>
+            );
+          })}
         </div>
       </div>
 

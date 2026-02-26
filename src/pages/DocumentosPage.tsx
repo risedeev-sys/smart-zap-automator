@@ -29,6 +29,14 @@ export default function DocumentosPage() {
   const { toast } = useToast();
 
   const listItems: ListItem[] = documentos.map(d => ({ id: d.id, name: d.name, favorite: d.favorite }));
+
+  const handleReorder = (reordered: ListItem[]) => {
+    const idOrder = reordered.map(r => r.id);
+    setDocumentos(prev => {
+      const map = new Map(prev.map(m => [m.id, m]));
+      return idOrder.map(id => map.get(id)!).filter(Boolean);
+    });
+  };
   const selectedItem = documentos.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -84,6 +92,7 @@ export default function DocumentosPage() {
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
+        onReorder={handleReorder}
         searchPlaceholder="Buscar documento..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">

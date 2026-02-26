@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useAssets, FunnelItem } from "@/contexts/AssetsContext";
+import { useDragReorder } from "@/hooks/use-drag-reorder";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -81,6 +82,18 @@ export default function FunisPage() {
 
   const selectedFunnel = funnels.find((f) => f.id === selected);
 
+  const handleReorderFunnels = useCallback((reordered: typeof funnels) => {
+    setFunnels(reordered);
+  }, [setFunnels]);
+
+  const handleReorderItems = useCallback((reordered: FunnelItem[]) => {
+    if (!selected) return;
+    setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: reordered } : f));
+  }, [selected, setFunnels]);
+
+  const { getDragProps: getFunnelDragProps } = useDragReorder(funnels, handleReorderFunnels);
+  const { getDragProps: getItemDragProps } = useDragReorder(selectedFunnel?.items ?? [], handleReorderItems);
+
   const handleEditFunnel = () => {
     if (!selected || !editFunnelName.trim()) return;
     setFunnels((prev) => prev.map((f) => f.id === selected ? { ...f, name: editFunnelName.trim() } : f));
@@ -130,15 +143,18 @@ export default function FunisPage() {
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {funnels.map((f) => (
+            {funnels.map((f, index) => {
+              const { className: dragClassName, ...dragProps } = getFunnelDragProps(index);
+              return (
               <button
                 key={f.id}
                 onClick={() => setSelected(f.id)}
+                {...dragProps}
                 className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
                   selected === f.id ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
-                }`}
+                } ${dragClassName}`}
               >
-                <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
+                <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
                 <div className="flex-1 min-w-0">
                   <span className="block truncate">{f.name}</span>
                   <span className="text-xs text-muted-foreground">{totalTime(f.items)}</span>
@@ -155,7 +171,8 @@ export default function FunisPage() {
                   }`}
                 />
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -185,8 +202,10 @@ export default function FunisPage() {
               <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
                 {selectedFunnel.items.map((item, idx) => {
                   const Icon = typeIcons[item.type];
+                  const { className: dragClassName, ...dragProps } = getItemDragProps(idx);
                   return (
-                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30">
+                    <div key={item.id} {...dragProps} className={`flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30 ${dragClassName}`}>
+                      <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 hover:opacity-100 flex-shrink-0 cursor-grab" />
                       <span className="text-xs text-muted-foreground font-mono w-5">{idx + 1}</span>
                       <Badge variant="secondary" className="gap-1 text-xs">
                         <Icon className="h-3 w-3" />

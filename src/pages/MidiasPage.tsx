@@ -33,6 +33,14 @@ export default function MidiasPage() {
   const { toast } = useToast();
 
   const listItems: ListItem[] = midias.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
+
+  const handleReorder = (reordered: ListItem[]) => {
+    const idOrder = reordered.map(r => r.id);
+    setMidias(prev => {
+      const map = new Map(prev.map(m => [m.id, m]));
+      return idOrder.map(id => map.get(id)!).filter(Boolean);
+    });
+  };
   const selectedItem = midias.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -93,6 +101,7 @@ export default function MidiasPage() {
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setNewCaption(""); setAddOpen(true); }}
+        onReorder={handleReorder}
         searchPlaceholder="Buscar mídia..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
