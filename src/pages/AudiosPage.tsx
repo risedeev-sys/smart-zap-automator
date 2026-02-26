@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { useAssets } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -29,6 +30,11 @@ const initialAudios: AudioItem[] = [
 
 export default function AudiosPage() {
   const [audios, setAudios] = useState<AudioItem[]>(initialAudios);
+  const { setAudios: setAssetsAudios } = useAssets();
+
+  useEffect(() => {
+    setAssetsAudios(audios.map(a => ({ id: a.id, name: a.name })));
+  }, [audios, setAssetsAudios]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
