@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -32,14 +33,22 @@ import {
   CaseSensitive,
   Clock,
   GitBranch,
+  Trash2,
 } from "lucide-react";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
+import { toast } from "@/hooks/use-toast";
+
+interface TriggerCondition {
+  type: string;
+  keywords: string[];
+}
 
 interface Trigger {
   id: string;
   name: string;
   enabled: boolean;
   favorite?: boolean;
-  conditions: { type: string; keywords: string[] }[];
+  conditions: TriggerCondition[];
   funnelName: string;
   delay: string;
   sendToGroups: boolean;
@@ -47,7 +56,7 @@ interface Trigger {
   ignoreCase: boolean;
 }
 
-const mockTriggers: Trigger[] = [
+const initialTriggers: Trigger[] = [
   {
     id: "1",
     name: "Gatilho de boas-vindas",
@@ -74,20 +83,237 @@ const mockTriggers: Trigger[] = [
 ];
 
 export default function GatilhosPage() {
+  const [triggers, setTriggers] = useState<Trigger[]>(initialTriggers);
   const [selected, setSelected] = useState<string | null>("1");
+  
+  // Add modal
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addConditions, setAddConditions] = useState<TriggerCondition[]>([
+    { type: "contém", keywords: [] },
+  ]);
+  const [addKeywordInputs, setAddKeywordInputs] = useState<string[]>([""]);
+
+  // Edit modal
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editKeywords, setEditKeywords] = useState<string[]>(["oi", "olá"]);
-  const [keywordInput, setKeywordInput] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editConditions, setEditConditions] = useState<TriggerCondition[]>([]);
+  const [editKeywordInputs, setEditKeywordInputs] = useState<string[]>([]);
 
-  const selectedTrigger = mockTriggers.find((t) => t.id === selected);
+  // Delete
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const addKeyword = () => {
-    const kw = keywordInput.trim();
-    if (kw && !editKeywords.includes(kw)) {
-      setEditKeywords([...editKeywords, kw]);
-      setKeywordInput("");
+  const selectedTrigger = triggers.find((t) => t.id === selected);
+
+  // ---- Add ----
+  const handleOpenAdd = () => {
+    setAddName("");
+    setAddConditions([{ type: "contém", keywords: [] }]);
+    setAddKeywordInputs([""]);
+    setAddOpen(true);
+  };
+
+  const handleAddCondition = () => {
+    setAddConditions([...addConditions, { type: "contém", keywords: [] }]);
+    setAddKeywordInputs([...addKeywordInputs, ""]);
+  };
+
+  const handleRemoveAddCondition = (idx: number) => {
+    setAddConditions(addConditions.filter((_, i) => i !== idx));
+    setAddKeywordInputs(addKeywordInputs.filter((_, i) => i !== idx));
+  };
+
+  const handleAddKeyword = (idx: number) => {
+    const kw = addKeywordInputs[idx]?.trim();
+    if (kw && !addConditions[idx].keywords.includes(kw)) {
+      const updated = [...addConditions];
+      updated[idx] = { ...updated[idx], keywords: [...updated[idx].keywords, kw] };
+      setAddConditions(updated);
+      const inputs = [...addKeywordInputs];
+      inputs[idx] = "";
+      setAddKeywordInputs(inputs);
     }
   };
+
+  const handleRemoveAddKeyword = (condIdx: number, kw: string) => {
+    const updated = [...addConditions];
+    updated[condIdx] = {
+      ...updated[condIdx],
+      keywords: updated[condIdx].keywords.filter((k) => k !== kw),
+    };
+    setAddConditions(updated);
+  };
+
+  const handleSaveAdd = () => {
+    if (!addName.trim()) return;
+    const newId = Date.now().toString();
+    const newTrigger: Trigger = {
+      id: newId,
+      name: addName.trim(),
+      enabled: true,
+      conditions: addConditions.filter((c) => c.keywords.length > 0),
+      funnelName: "",
+      delay: "0 segundos",
+      sendToGroups: false,
+      savedContactsOnly: false,
+      ignoreCase: true,
+    };
+    setTriggers([...triggers, newTrigger]);
+    setSelected(newId);
+    setAddOpen(false);
+    toast({ title: "Gatilho criado com sucesso!" });
+  };
+
+  // ---- Edit ----
+  const handleOpenEdit = () => {
+    if (!selectedTrigger) return;
+    setEditName(selectedTrigger.name);
+    setEditConditions(selectedTrigger.conditions.map((c) => ({ ...c, keywords: [...c.keywords] })));
+    setEditKeywordInputs(selectedTrigger.conditions.map(() => ""));
+    setEditModalOpen(true);
+  };
+
+  const handleEditAddCondition = () => {
+    setEditConditions([...editConditions, { type: "contém", keywords: [] }]);
+    setEditKeywordInputs([...editKeywordInputs, ""]);
+  };
+
+  const handleRemoveEditCondition = (idx: number) => {
+    setEditConditions(editConditions.filter((_, i) => i !== idx));
+    setEditKeywordInputs(editKeywordInputs.filter((_, i) => i !== idx));
+  };
+
+  const handleEditKeyword = (idx: number) => {
+    const kw = editKeywordInputs[idx]?.trim();
+    if (kw && !editConditions[idx].keywords.includes(kw)) {
+      const updated = [...editConditions];
+      updated[idx] = { ...updated[idx], keywords: [...updated[idx].keywords, kw] };
+      setEditConditions(updated);
+      const inputs = [...editKeywordInputs];
+      inputs[idx] = "";
+      setEditKeywordInputs(inputs);
+    }
+  };
+
+  const handleRemoveEditKeyword = (condIdx: number, kw: string) => {
+    const updated = [...editConditions];
+    updated[condIdx] = {
+      ...updated[condIdx],
+      keywords: updated[condIdx].keywords.filter((k) => k !== kw),
+    };
+    setEditConditions(updated);
+  };
+
+  const handleSaveEdit = () => {
+    if (!selectedTrigger || !editName.trim()) return;
+    setTriggers(
+      triggers.map((t) =>
+        t.id === selectedTrigger.id
+          ? { ...t, name: editName.trim(), conditions: editConditions }
+          : t
+      )
+    );
+    setEditModalOpen(false);
+    toast({ title: "Gatilho atualizado!" });
+  };
+
+  // ---- Delete ----
+  const handleDelete = () => {
+    if (!selectedTrigger) return;
+    setTriggers(triggers.filter((t) => t.id !== selectedTrigger.id));
+    setSelected(null);
+    setDeleteOpen(false);
+    toast({ title: "Gatilho excluído!" });
+  };
+
+  // ---- Favorite ----
+  const handleFavorite = (id: string) => {
+    setTriggers(triggers.map((t) => (t.id === id ? { ...t, favorite: !t.favorite } : t)));
+  };
+
+  // ---- Toggle enabled ----
+  const handleToggleEnabled = (id: string) => {
+    setTriggers(triggers.map((t) => (t.id === id ? { ...t, enabled: !t.enabled } : t)));
+  };
+
+  // ---- Condition row component ----
+  const renderConditionEditor = (
+    conditions: TriggerCondition[],
+    keywordInputs: string[],
+    setConditions: (c: TriggerCondition[]) => void,
+    setKeywordInputs: (k: string[]) => void,
+    onAddKeyword: (idx: number) => void,
+    onRemoveKeyword: (condIdx: number, kw: string) => void,
+    onRemoveCondition: (idx: number) => void
+  ) => (
+    <div className="space-y-3">
+      {conditions.map((cond, idx) => (
+        <div key={idx} className="border border-border rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Select
+              value={cond.type}
+              onValueChange={(val) => {
+                const updated = [...conditions];
+                updated[idx] = { ...updated[idx], type: val };
+                setConditions(updated);
+              }}
+            >
+              <SelectTrigger className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="contém">Se a mensagem contém (alguma)</SelectItem>
+                <SelectItem value="igual a">Se a mensagem for igual a (alguma)</SelectItem>
+                <SelectItem value="começa com">Se a mensagem começa com (alguma)</SelectItem>
+                <SelectItem value="não contém">Se a mensagem não contém (nenhuma)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => onRemoveCondition(idx)}
+            >
+              Remover condição
+            </Button>
+          </div>
+
+          <div className="text-xs text-center text-primary font-medium">
+            Para mais de uma palavra-chave aperte ⏎ ENTER
+          </div>
+
+          {cond.keywords.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {cond.keywords.map((kw) => (
+                <Badge key={kw} variant="secondary" className="gap-1 text-xs pr-1">
+                  {kw}
+                  <button onClick={() => onRemoveKeyword(idx, kw)} className="hover:text-destructive">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          <Textarea
+            placeholder="Digite nova palavra-chave"
+            value={keywordInputs[idx] || ""}
+            onChange={(e) => {
+              const inputs = [...keywordInputs];
+              inputs[idx] = e.target.value;
+              setKeywordInputs(inputs);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onAddKeyword(idx);
+              }
+            }}
+            rows={3}
+          />
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <MainLayout title="Gatilhos">
@@ -99,12 +325,12 @@ export default function GatilhosPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Buscar gatilho..." className="pl-9 h-9" />
             </div>
-            <Button className="w-full h-9 text-sm">
+            <Button onClick={handleOpenAdd} className="w-full h-9 text-sm">
               <Plus className="h-4 w-4 mr-1" /> Adicionar
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {mockTriggers.map((t) => (
+            {triggers.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setSelected(t.id)}
@@ -113,12 +339,23 @@ export default function GatilhosPage() {
                 }`}
               >
                 <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
-                <Switch checked={t.enabled} className="scale-75" />
+                <Switch
+                  checked={t.enabled}
+                  className="scale-75"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleEnabled(t.id);
+                  }}
+                />
                 <span className="flex-1 truncate">{t.name}</span>
                 <Heart
-                  className={`h-3.5 w-3.5 flex-shrink-0 ${
+                  className={`h-3.5 w-3.5 flex-shrink-0 cursor-pointer ${
                     t.favorite ? "fill-primary text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100"
                   }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleFavorite(t.id);
+                  }}
                 />
               </button>
             ))}
@@ -137,9 +374,18 @@ export default function GatilhosPage() {
                     {selectedTrigger.enabled ? "Ativo" : "Inativo"}
                   </Badge>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => setEditModalOpen(true)}>
-                  <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleOpenEdit}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
+                  </Button>
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {/* Conditions */}
@@ -196,9 +442,55 @@ export default function GatilhosPage() {
         </div>
       </div>
 
+      {/* Add Trigger Modal */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Adicionar gatilho 1/2</DialogTitle>
+            <DialogDescription>Configure o nome e as condições de disparo.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Nome</label>
+              <Input
+                placeholder="Título do gatilho"
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+              />
+              {!addName.trim() && (
+                <span className="text-xs text-destructive mt-1">Campo obrigatório</span>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-2 block">
+                Condições de disparo ({addConditions.length})
+              </label>
+              {renderConditionEditor(
+                addConditions,
+                addKeywordInputs,
+                setAddConditions,
+                setAddKeywordInputs,
+                handleAddKeyword,
+                handleRemoveAddKeyword,
+                handleRemoveAddCondition
+              )}
+            </div>
+
+            <Button variant="outline" size="sm" className="w-full" onClick={handleAddCondition}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar outra condição
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
+            <Button onClick={handleSaveAdd} disabled={!addName.trim()}>Próximo</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Trigger Modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar gatilho 1/2</DialogTitle>
             <DialogDescription>Configure as condições de disparo.</DialogDescription>
@@ -206,57 +498,43 @@ export default function GatilhosPage() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Nome do gatilho</label>
-              <Input defaultValue={selectedTrigger?.name ?? ""} />
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
             </div>
+
             <div>
-              <label className="text-sm font-medium text-foreground mb-1 block">Condição</label>
-              <Select defaultValue="contém">
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="igual">Se a mensagem for igual a (alguma)</SelectItem>
-                  <SelectItem value="contém">Se a mensagem contém (alguma)</SelectItem>
-                  <SelectItem value="começa">Se a mensagem começa com (alguma)</SelectItem>
-                  <SelectItem value="não contém">Se a mensagem não contém (nenhuma)</SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="text-sm font-medium text-foreground mb-2 block">
+                Condições de disparo ({editConditions.length})
+              </label>
+              {renderConditionEditor(
+                editConditions,
+                editKeywordInputs,
+                setEditConditions,
+                setEditKeywordInputs,
+                handleEditKeyword,
+                handleRemoveEditKeyword,
+                handleRemoveEditCondition
+              )}
             </div>
-            <div>
-              <label className="text-sm font-medium text-foreground mb-1 block">Palavras-chave</label>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {editKeywords.map((kw) => (
-                  <Badge key={kw} variant="secondary" className="gap-1 text-xs pr-1">
-                    {kw}
-                    <button
-                      onClick={() => setEditKeywords(editKeywords.filter((k) => k !== kw))}
-                      className="hover:text-destructive"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-              <Input
-                placeholder="Digite e pressione ENTER..."
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addKeyword();
-                  }
-                }}
-              />
-            </div>
-            <Button variant="outline" size="sm">
+
+            <Button variant="outline" size="sm" className="w-full" onClick={handleEditAddCondition}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar outra condição
             </Button>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditModalOpen(false)}>Cancelar</Button>
-            <Button onClick={() => setEditModalOpen(false)}>Próximo</Button>
+            <Button onClick={handleSaveEdit}>Próximo</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirm */}
+      <DeleteConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Excluir gatilho"
+        itemName={selectedTrigger?.name}
+        onConfirm={handleDelete}
+      />
     </MainLayout>
   );
 }
