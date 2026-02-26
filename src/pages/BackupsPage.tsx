@@ -15,7 +15,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Upload, Download, AlertTriangle, FileJson, CheckCircle2 } from "lucide-react";
-import { useAssets } from "@/contexts/AssetsContext";
+import { useAssets, type AssetItem, type Funnel, type Trigger } from "@/contexts/AssetsContext";
 import { useToast } from "@/hooks/use-toast";
 
 export default function BackupsPage() {
@@ -90,34 +90,103 @@ export default function BackupsPage() {
       const text = await importFile.text();
       const data = JSON.parse(text);
 
-      if (data.mensagens) {
-        if (replaceAll) setMensagens(data.mensagens);
-        else setMensagens((prev) => [...prev, ...data.mensagens]);
+      if (replaceAll) {
+        // Replace mode: use IDs as-is
+        if (data.mensagens) setMensagens(data.mensagens);
+        if (data.audios) setAudios(data.audios);
+        if (data.midias) setMidias(data.midias);
+        if (data.documentos) setDocumentos(data.documentos);
+        if (data.funis) setFunnels(data.funis);
+        if (data.gatilhos) setTriggers(data.gatilhos);
+      } else {
+        // Append mode: remap all IDs to avoid conflicts
+        const idMap: Record<string, string> = {};
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const remap = (items: any[]): any[] =>
+          items.map((item) => {
+            const newId = crypto.randomUUID();
+            idMap[item.id] = newId;
+            return { ...item, id: newId };
+          });
+
+        const remappedMensagens = data.mensagens ? remap(data.mensagens) : [];
+        const remappedAudios = data.audios ? remap(data.audios) : [];
+        const remappedMidias = data.midias ? remap(data.midias) : [];
+        const remappedDocumentos = data.documentos ? remap(data.documentos) : [];
+
+        if (remappedMensagens.length) setMensagens((prev) => [...prev, ...remappedMensagens]);
+        if (remappedAudios.length) setAudios((prev) => [...prev, ...remappedAudios]);
+        if (remappedMidias.length) setMidias((prev) => [...prev, ...remappedMidias]);
+        if (remappedDocumentos.length) setDocumentos((prev) => [...prev, ...remappedDocumentos]);
+
+        // Remap funnels: new funnel IDs, new item IDs, updated assetIds
+        if (data.funis) {
+          const remappedFunnels = (data.funis as Funnel[]).map((funnel) => ({
+            ...funnel,
+            id: crypto.randomUUID(),
+            items: funnel.items.map((item) => ({
+              ...item,
+              id: crypto.randomUUID(),
+              assetId: idMap[item.assetId] || item.assetId,
+            })),
+          }));
+          setFunnels((prev) => [...prev, ...remappedFunnels]);
+        }
+
+        // Remap triggers
+        if (data.gatilhos) {
+          const remappedTriggers = (data.gatilhos as Trigger[]).map((trigger) => ({
+            ...trigger,
+            id: crypto.randomUUID(),
+          }));
+          setTriggers((prev) => [...prev, ...remappedTriggers]);
+        }
       }
-      if (data.audios) {
-        if (replaceAll) setAudios(data.audios);
-        else setAudios((prev) => [...prev, ...data.audios]);
-      }
-      if (data.midias) {
-        if (replaceAll) setMidias(data.midias);
-        else setMidias((prev) => [...prev, ...data.midias]);
-      }
-      if (data.documentos) {
-        if (replaceAll) setDocumentos(data.documentos);
-        else setDocumentos((prev) => [...prev, ...data.documentos]);
-      }
+
+      // Validate funnel asset references
       if (data.funis) {
-        if (replaceAll) setFunnels(data.funis);
-        else setFunnels((prev) => [...prev, ...data.funis]);
+        const allAssetIds = new Set([
+          ...mensagens.map((m) => m.id),
+          ...audios.map((a) => a.id),
+          ...midias.map((m) => m.id),
+          ...documentos.map((d) => d.id),
+          ...(data.mensagens || []).map((m: { id: string }) => m.id),
+          ...(data.audios || []).map((a: { id: string }) => a.id),
+          ...(data.midias || []).map((m: { id: string }) => m.id),
+          ...(data.documentos || []).map((d: { id: string }) => d.id),
+        ]);
+
+        const missingCategories = new Set<string>();
+        for (const funnel of data.funis as Funnel[]) {
+          for (const item of funnel.items) {
+            if (!allAssetIds.has(item.assetId)) {
+              const labels: Record<string, string> = { mensagem: "Mensagens", audio: "Áudios", midia: "Mídias", documento: "Documentos" };
+              missingCategories.add(labels[item.type] || item.type);
+            }
+          }
+        }
+
+        if (missingCategories.size > 0) {
+          toast({
+            title: "Atenção: assets ausentes",
+            description: `Alguns funis referenciam itens não encontrados em: ${[...missingCategories].join(", ")}. Esses itens podem aparecer como "(item removido)".`,
+            variant: "destructive",
+          });
+        }
       }
-      if (data.gatilhos) {
-        if (replaceAll) setTriggers(data.gatilhos);
-        else setTriggers((prev) => [...prev, ...data.gatilhos]);
-      }
+
+      // Summary toast
+      const counts: string[] = [];
+      if (data.mensagens?.length) counts.push(`${data.mensagens.length} mensagens`);
+      if (data.audios?.length) counts.push(`${data.audios.length} áudios`);
+      if (data.midias?.length) counts.push(`${data.midias.length} mídias`);
+      if (data.documentos?.length) counts.push(`${data.documentos.length} documentos`);
+      if (data.funis?.length) counts.push(`${data.funis.length} funis`);
+      if (data.gatilhos?.length) counts.push(`${data.gatilhos.length} gatilhos`);
 
       setImportSuccess(true);
       setImportFile(null);
-      toast({ title: "Backup importado com sucesso!" });
+      toast({ title: "Backup importado com sucesso!", description: counts.length ? `Importado: ${counts.join(", ")}` : undefined });
     } catch {
       toast({ title: "Erro ao importar", description: "O arquivo não é um backup válido.", variant: "destructive" });
     }
