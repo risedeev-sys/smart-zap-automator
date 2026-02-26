@@ -30,6 +30,14 @@ export default function MensagensPage() {
   const { toast } = useToast();
 
   const listItems: ListItem[] = mensagens.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
+
+  const handleReorder = (reordered: ListItem[]) => {
+    const idOrder = reordered.map(r => r.id);
+    setMensagens(prev => {
+      const map = new Map(prev.map(m => [m.id, m]));
+      return idOrder.map(id => map.get(id)!).filter(Boolean);
+    });
+  };
   const selectedItem = mensagens.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -84,6 +92,7 @@ export default function MensagensPage() {
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => setAddOpen(true)}
+        onReorder={handleReorder}
         searchPlaceholder="Buscar mensagem..."
       >
         {selectedItem && (

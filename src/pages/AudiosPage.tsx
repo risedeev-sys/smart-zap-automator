@@ -32,6 +32,14 @@ export default function AudiosPage() {
   const { toast } = useToast();
 
   const listItems: ListItem[] = audios.map(a => ({ id: a.id, name: a.name, favorite: a.favorite }));
+
+  const handleReorder = (reordered: ListItem[]) => {
+    const idOrder = reordered.map(r => r.id);
+    setAudios(prev => {
+      const map = new Map(prev.map(m => [m.id, m]));
+      return idOrder.map(id => map.get(id)!).filter(Boolean);
+    });
+  };
   const selectedItem = audios.find((m) => m.id === selected);
 
   const handleDelete = () => {
@@ -89,6 +97,7 @@ export default function AudiosPage() {
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => { setUploadFile(null); setNewName(""); setAddOpen(true); }}
+        onReorder={handleReorder}
         searchPlaceholder="Buscar áudio..."
         emptyDetail={
           <div className="flex flex-col items-center justify-center h-full text-center px-8">

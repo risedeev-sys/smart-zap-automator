@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useDragReorder } from "@/hooks/use-drag-reorder";
 import { useAssets, TriggerCondition, Trigger } from "@/contexts/AssetsContext";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,12 @@ import { toast } from "@/hooks/use-toast";
 export default function GatilhosPage() {
   const { triggers, setTriggers } = useAssets();
   const [selected, setSelected] = useState<string | null>("1");
+
+  const handleReorderTriggers = useCallback((reordered: typeof triggers) => {
+    setTriggers(reordered);
+  }, [setTriggers]);
+
+  const { getDragProps: getTriggerDragProps } = useDragReorder(triggers, handleReorderTriggers);
   
   // Add modal
   const [addOpen, setAddOpen] = useState(false);
@@ -287,15 +294,18 @@ export default function GatilhosPage() {
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {triggers.map((t) => (
+            {triggers.map((t, index) => {
+              const { className: dragClassName, ...dragProps } = getTriggerDragProps(index);
+              return (
               <button
                 key={t.id}
                 onClick={() => setSelected(t.id)}
+                {...dragProps}
                 className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
                   selected === t.id ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
-                }`}
+                } ${dragClassName}`}
               >
-                <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
+                <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
                 <Switch
                   checked={t.enabled}
                   className="scale-75"
@@ -315,7 +325,8 @@ export default function GatilhosPage() {
                   }}
                 />
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 
