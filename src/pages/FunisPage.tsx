@@ -40,7 +40,7 @@ import {
 interface FunnelItem {
   id: string;
   type: "mensagem" | "audio" | "midia" | "documento";
-  name: string;
+  assetId: string;
   delayMin: number;
   delaySec: number;
 }
@@ -58,16 +58,16 @@ const initialFunnels: Funnel[] = [
     name: "Funil de boas-vindas",
     favorite: true,
     items: [
-      { id: "i1", type: "mensagem", name: "Boas-vindas", delayMin: 0, delaySec: 0 },
-      { id: "i2", type: "audio", name: "Áudio de boas-vindas", delayMin: 0, delaySec: 30 },
-      { id: "i3", type: "mensagem", name: "Agradecimento pós-compra", delayMin: 1, delaySec: 0 },
+      { id: "i1", type: "mensagem", assetId: "1", delayMin: 0, delaySec: 0 },
+      { id: "i2", type: "audio", assetId: "1", delayMin: 0, delaySec: 30 },
+      { id: "i3", type: "mensagem", assetId: "2", delayMin: 1, delaySec: 0 },
     ],
   },
   {
     id: "2",
     name: "Funil pós-venda",
     items: [
-      { id: "i4", type: "mensagem", name: "Agradecimento pós-compra", delayMin: 0, delaySec: 0 },
+      { id: "i4", type: "mensagem", assetId: "2", delayMin: 0, delaySec: 0 },
     ],
   },
 ];
@@ -109,6 +109,12 @@ export default function FunisPage() {
     midia: midias,
     documento: documentos,
   }), [mensagens, audios, midias, documentos]);
+
+  const getAssetName = (type: string, assetId: string) => {
+    const assets = assetsByType[type as keyof typeof assetsByType] || [];
+    return assets.find(a => a.id === assetId)?.name ?? "(item removido)";
+  };
+
   const selectedFunnel = funnels.find((f) => f.id === selected);
 
   const handleEditFunnel = () => {
@@ -222,7 +228,7 @@ export default function FunisPage() {
                         <Icon className="h-3 w-3" />
                         {typeLabels[item.type]}
                       </Badge>
-                      <span className="flex-1 text-sm truncate">{item.name}</span>
+                      <span className="flex-1 text-sm truncate">{getAssetName(item.type, item.assetId)}</span>
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
                         Enviando após {item.delayMin}m {item.delaySec}s
@@ -230,7 +236,7 @@ export default function FunisPage() {
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItemId(item.id); setAddItemTab(item.type); setAddItemSelectedId(""); setAddItemDelayMin(item.delayMin); setAddItemDelaySec(item.delaySec); setEditModalOpen(true); }}>
                         <Pencil className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: item.name, type: "item", itemId: item.id }); setDeleteOpen(true); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: getAssetName(item.type, item.assetId), type: "item", itemId: item.id }); setDeleteOpen(true); }}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
@@ -337,12 +343,12 @@ export default function FunisPage() {
                 const asset = assets.find(a => a.id === addItemSelectedId);
                 if (!asset) return;
                 if (editingItemId) {
-                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: f.items.map(i => i.id === editingItemId ? { ...i, type: addItemTab as FunnelItem["type"], name: asset.name, delayMin: addItemDelayMin, delaySec: addItemDelaySec } : i) } : f));
+                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: f.items.map(i => i.id === editingItemId ? { ...i, type: addItemTab as FunnelItem["type"], assetId: addItemSelectedId, delayMin: addItemDelayMin, delaySec: addItemDelaySec } : i) } : f));
                 } else {
                   const newItem: FunnelItem = {
                     id: Date.now().toString(),
                     type: addItemTab as FunnelItem["type"],
-                    name: asset.name,
+                    assetId: addItemSelectedId,
                     delayMin: addItemDelayMin,
                     delaySec: addItemDelaySec,
                   };
