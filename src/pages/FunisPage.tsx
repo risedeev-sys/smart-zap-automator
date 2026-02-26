@@ -323,11 +323,11 @@ export default function FunisPage() {
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="text-sm font-medium text-foreground mb-1 block">Minutos</label>
-                    <Input type="number" value={addItemDelayMin} onChange={(e) => setAddItemDelayMin(Number(e.target.value))} min="0" />
+                    <Input type="number" value={addItemDelayMin} onChange={(e) => setAddItemDelayMin(Math.min(60, Math.max(0, Number(e.target.value))))} min="0" max="60" />
                   </div>
                   <div className="flex-1">
                     <label className="text-sm font-medium text-foreground mb-1 block">Segundos</label>
-                    <Input type="number" value={addItemDelaySec} onChange={(e) => setAddItemDelaySec(Number(e.target.value))} min="0" max="59" />
+                    <Input type="number" value={addItemDelaySec} onChange={(e) => setAddItemDelaySec(Math.min(59, Math.max(0, Number(e.target.value))))} min="0" max="59" />
                   </div>
                 </div>
               </TabsContent>
