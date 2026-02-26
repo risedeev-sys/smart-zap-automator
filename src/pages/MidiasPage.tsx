@@ -5,17 +5,26 @@ import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Trash2, Copy, Pencil, Heart, Image } from "lucide-react";
 
-const mockMidias: ListItem[] = [];
+const initialMidias: ListItem[] = [];
 
 export default function MidiasPage() {
+  const [midias, setMidias] = useState<ListItem[]>(initialMidias);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const selectedItem = mockMidias.find((m) => m.id === selected);
+  const selectedItem = midias.find((m) => m.id === selected);
+
+  const handleDelete = () => {
+    if (selected) {
+      setMidias((prev) => prev.filter((m) => m.id !== selected));
+      setSelected(null);
+      setDeleteOpen(false);
+    }
+  };
 
   return (
     <MainLayout title="Mídias">
       <TwoColumnLayout
-        items={mockMidias}
+        items={midias}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => {}}
@@ -55,7 +64,7 @@ export default function MidiasPage() {
         onOpenChange={setDeleteOpen}
         title="Excluir mídia"
         itemName={selectedItem?.name}
-        onConfirm={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
       />
     </MainLayout>
   );

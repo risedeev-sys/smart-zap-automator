@@ -5,17 +5,26 @@ import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { Trash2, Copy, Pencil, Heart, FileText } from "lucide-react";
 
-const mockDocs: ListItem[] = [];
+const initialDocs: ListItem[] = [];
 
 export default function DocumentosPage() {
+  const [docs, setDocs] = useState<ListItem[]>(initialDocs);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const selectedItem = mockDocs.find((m) => m.id === selected);
+  const selectedItem = docs.find((m) => m.id === selected);
+
+  const handleDelete = () => {
+    if (selected) {
+      setDocs((prev) => prev.filter((m) => m.id !== selected));
+      setSelected(null);
+      setDeleteOpen(false);
+    }
+  };
 
   return (
     <MainLayout title="Documentos">
       <TwoColumnLayout
-        items={mockDocs}
+        items={docs}
         selectedId={selected}
         onSelect={setSelected}
         onAdd={() => {}}
@@ -55,7 +64,7 @@ export default function DocumentosPage() {
         onOpenChange={setDeleteOpen}
         title="Excluir documento"
         itemName={selectedItem?.name}
-        onConfirm={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
       />
     </MainLayout>
   );
