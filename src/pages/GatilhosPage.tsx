@@ -419,17 +419,41 @@ export default function GatilhosPage() {
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm">Enviar para grupos</span>
-                    <Switch checked={selectedTrigger.sendToGroups} className="ml-auto scale-75" />
+                    <Switch
+                      checked={selectedTrigger.sendToGroups}
+                      className="ml-auto scale-75"
+                      onCheckedChange={() =>
+                        setTriggers(triggers.map((t) =>
+                          t.id === selectedTrigger.id ? { ...t, sendToGroups: !t.sendToGroups } : t
+                        ))
+                      }
+                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <UserCheck className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm">Apenas contatos salvos</span>
-                    <Switch checked={selectedTrigger.savedContactsOnly} className="ml-auto scale-75" />
+                    <Switch
+                      checked={selectedTrigger.savedContactsOnly}
+                      className="ml-auto scale-75"
+                      onCheckedChange={() =>
+                        setTriggers(triggers.map((t) =>
+                          t.id === selectedTrigger.id ? { ...t, savedContactsOnly: !t.savedContactsOnly } : t
+                        ))
+                      }
+                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <CaseSensitive className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm">Ignorar maiúsculas/minúsculas</span>
-                    <Switch checked={selectedTrigger.ignoreCase} className="ml-auto scale-75" />
+                    <Switch
+                      checked={selectedTrigger.ignoreCase}
+                      className="ml-auto scale-75"
+                      onCheckedChange={() =>
+                        setTriggers(triggers.map((t) =>
+                          t.id === selectedTrigger.id ? { ...t, ignoreCase: !t.ignoreCase } : t
+                        ))
+                      }
+                    />
                   </div>
                 </div>
               </div>
