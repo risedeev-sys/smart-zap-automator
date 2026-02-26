@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { useAssets } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -24,6 +25,11 @@ const initialDocs: DocItem[] = [];
 
 export default function DocumentosPage() {
   const [docs, setDocs] = useState<DocItem[]>(initialDocs);
+  const { setDocumentos } = useAssets();
+
+  useEffect(() => {
+    setDocumentos(docs.map(d => ({ id: d.id, name: d.name })));
+  }, [docs, setDocumentos]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);

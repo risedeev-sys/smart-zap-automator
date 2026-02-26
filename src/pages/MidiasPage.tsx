@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { useAssets } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -27,6 +28,11 @@ const initialMidias: MediaItem[] = [];
 
 export default function MidiasPage() {
   const [midias, setMidias] = useState<MediaItem[]>(initialMidias);
+  const { setMidias: setAssetsMidias } = useAssets();
+
+  useEffect(() => {
+    setAssetsMidias(midias.map(m => ({ id: m.id, name: m.name })));
+  }, [midias, setAssetsMidias]);
   const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);

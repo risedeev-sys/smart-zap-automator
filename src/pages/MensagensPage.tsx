@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { useAssets } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -29,6 +30,12 @@ const initialContents: Record<string, string> = {
 
 export default function MensagensPage() {
   const [messages, setMessages] = useState<ListItem[]>(initialMessages);
+  const { setMensagens } = useAssets();
+
+  useEffect(() => {
+    setMensagens(messages.map(m => ({ id: m.id, name: m.name })));
+  }, [messages, setMensagens]);
+
   const [contents, setContents] = useState<Record<string, string>>(initialContents);
   const [selected, setSelected] = useState<string | null>("1");
   const [deleteOpen, setDeleteOpen] = useState(false);

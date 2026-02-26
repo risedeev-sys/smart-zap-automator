@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useAssets } from "@/contexts/AssetsContext";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -86,6 +87,7 @@ const typeLabels = {
 };
 
 export default function FunisPage() {
+  const { mensagens, audios, midias, documentos } = useAssets();
   const [funnels, setFunnels] = useState<Funnel[]>(initialFunnels);
   const [selected, setSelected] = useState<string | null>("1");
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -95,7 +97,17 @@ export default function FunisPage() {
   const [newFunnelName, setNewFunnelName] = useState("");
   const [editFunnelOpen, setEditFunnelOpen] = useState(false);
   const [editFunnelName, setEditFunnelName] = useState("");
+  const [addItemTab, setAddItemTab] = useState<string>("mensagem");
+  const [addItemSelectedId, setAddItemSelectedId] = useState<string>("");
+  const [addItemDelayMin, setAddItemDelayMin] = useState(0);
+  const [addItemDelaySec, setAddItemDelaySec] = useState(0);
 
+  const assetsByType = useMemo(() => ({
+    mensagem: mensagens,
+    audio: audios,
+    midia: midias,
+    documento: documentos,
+  }), [mensagens, audios, midias, documentos]);
   const selectedFunnel = funnels.find((f) => f.id === selected);
 
   const handleEditFunnel = () => {
@@ -195,7 +207,7 @@ export default function FunisPage() {
                 </div>
               </div>
               <div className="p-4">
-                <Button variant="outline" size="sm" onClick={() => setEditModalOpen(true)}>
+                <Button variant="outline" size="sm" onClick={() => { setAddItemTab("mensagem"); setAddItemSelectedId(""); setAddItemDelayMin(0); setAddItemDelaySec(0); setEditModalOpen(true); }}>
                   <Plus className="h-4 w-4 mr-1" /> Adicionar item
                 </Button>
               </div>
@@ -270,14 +282,14 @@ export default function FunisPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit item modal */}
+      {/* Add item modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar item do funil</DialogTitle>
+            <DialogTitle>Adicionar item ao funil</DialogTitle>
             <DialogDescription>Selecione o tipo e configure o delay.</DialogDescription>
           </DialogHeader>
-          <Tabs defaultValue="mensagem">
+          <Tabs value={addItemTab} onValueChange={(v) => { setAddItemTab(v); setAddItemSelectedId(""); }}>
             <TabsList className="w-full">
               <TabsTrigger value="mensagem" className="flex-1">Mensagem</TabsTrigger>
               <TabsTrigger value="audio" className="flex-1">Áudio</TabsTrigger>
@@ -288,22 +300,27 @@ export default function FunisPage() {
               <TabsContent key={tab} value={tab} className="space-y-4 mt-4">
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1 block">Selecionar item</label>
-                  <Select>
+                  <Select value={addItemSelectedId} onValueChange={setAddItemSelectedId}>
                     <SelectTrigger><SelectValue placeholder="Escolha um item..." /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">Item exemplo 1</SelectItem>
-                      <SelectItem value="2">Item exemplo 2</SelectItem>
+                      {(assetsByType[tab as keyof typeof assetsByType] || []).length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum item cadastrado</div>
+                      ) : (
+                        (assetsByType[tab as keyof typeof assetsByType] || []).map((asset) => (
+                          <SelectItem key={asset.id} value={asset.id}>{asset.name}</SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="text-sm font-medium text-foreground mb-1 block">Minutos</label>
-                    <Input type="number" defaultValue="0" min="0" />
+                    <Input type="number" value={addItemDelayMin} onChange={(e) => setAddItemDelayMin(Number(e.target.value))} min="0" />
                   </div>
                   <div className="flex-1">
                     <label className="text-sm font-medium text-foreground mb-1 block">Segundos</label>
-                    <Input type="number" defaultValue="0" min="0" max="59" />
+                    <Input type="number" value={addItemDelaySec} onChange={(e) => setAddItemDelaySec(Number(e.target.value))} min="0" max="59" />
                   </div>
                 </div>
               </TabsContent>
@@ -311,7 +328,24 @@ export default function FunisPage() {
           </Tabs>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditModalOpen(false)}>Cancelar</Button>
-            <Button onClick={() => setEditModalOpen(false)}>Salvar</Button>
+            <Button
+              disabled={!addItemSelectedId}
+              onClick={() => {
+                if (!selected || !addItemSelectedId) return;
+                const assets = assetsByType[addItemTab as keyof typeof assetsByType] || [];
+                const asset = assets.find(a => a.id === addItemSelectedId);
+                if (!asset) return;
+                const newItem: FunnelItem = {
+                  id: Date.now().toString(),
+                  type: addItemTab as FunnelItem["type"],
+                  name: asset.name,
+                  delayMin: addItemDelayMin,
+                  delaySec: addItemDelaySec,
+                };
+                setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: [...f.items, newItem] } : f));
+                setEditModalOpen(false);
+              }}
+            >Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
