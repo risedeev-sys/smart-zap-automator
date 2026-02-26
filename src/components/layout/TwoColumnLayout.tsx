@@ -37,22 +37,22 @@ export function TwoColumnLayout({
   const { getDragProps } = useDragReorder(items, onReorder ?? (() => {}));
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-12rem)]">
+    <div className="flex gap-4 h-[calc(100vh-10rem)]">
       {/* Left column */}
-      <div className="w-80 flex-shrink-0 flex flex-col border border-border rounded-lg bg-card overflow-hidden">
-        <div className="p-3 border-b border-border space-y-2">
+      <div className="w-96 flex-shrink-0 flex flex-col border border-border rounded-lg bg-card overflow-hidden">
+        <div className="p-4 border-b border-border space-y-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder={searchPlaceholder} className="pl-9 h-9" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Input placeholder={searchPlaceholder} className="pl-10 h-11 text-base" />
           </div>
-          <Button onClick={onAdd} className="w-full h-9 text-sm">
-            <Plus className="h-4 w-4 mr-1" /> Adicionar
+          <Button onClick={onAdd} className="w-full h-11 text-base">
+            <Plus className="h-5 w-5 mr-1" /> Adicionar
           </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {items.length === 0 && (
-            <div className="text-center py-8 text-sm text-muted-foreground">
+            <div className="text-center py-8 text-base text-muted-foreground">
               Nenhum item cadastrado.
             </div>
           )}
@@ -64,21 +64,21 @@ export function TwoColumnLayout({
                 key={item.id}
                 onClick={() => onSelect(item.id)}
                 {...restDragProps}
-                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
+                className={`w-full flex items-center gap-3 p-3 rounded-md text-left text-base transition-colors group ${
                   selectedId === item.id
                     ? "bg-accent text-accent-foreground"
                     : "hover:bg-muted text-foreground"
                 } ${dragClassName}`}
               >
-                <GripVertical className={`h-3.5 w-3.5 text-muted-foreground flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
+                <GripVertical className={`h-4 w-4 text-muted-foreground flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
                 <span className="flex-1 truncate">{item.name}</span>
                 {renderItemExtra?.(item)}
                 <Heart
-                  className={`h-3.5 w-3.5 flex-shrink-0 ${
+                  className={`h-4 w-4 flex-shrink-0 ${
                     item.favorite ? "fill-primary text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100"
                   }`}
                 />
-                <Pencil className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                <Pencil className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0" />
               </button>
             );
           })}
