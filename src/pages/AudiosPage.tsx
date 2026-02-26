@@ -13,12 +13,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Trash2, Copy, Pencil, Heart, Mic } from "lucide-react";
+import { Trash2, Copy, Pencil, Heart, Mic, Download, Info, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface AudioItem extends ListItem {
   fileName?: string;
   fileUrl?: string;
+  forwarded?: boolean;
+  singleView?: boolean;
 }
 
 const initialAudios: AudioItem[] = [
@@ -52,7 +54,7 @@ export default function AudiosPage() {
     if (!newName.trim() || !uploadFile) return;
     const id = Date.now().toString();
     const fileUrl = URL.createObjectURL(uploadFile);
-    setAudios((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
+    setAudios((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl, forwarded, singleView }]);
     setSelected(id);
     setNewName("");
     setForwarded(false);
@@ -108,22 +110,45 @@ export default function AudiosPage() {
         {selectedItem && (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="font-semibold text-foreground">{selectedItem.name}</h3>
+              <h3 className="font-semibold text-foreground truncate">{selectedItem.name}</h3>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicate}><Copy className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
+                  if (selectedItem.fileUrl) {
+                    const a = document.createElement("a");
+                    a.href = selectedItem.fileUrl;
+                    a.download = selectedItem.fileName || "audio";
+                    a.click();
+                  }
+                }}><Download className="h-4 w-4" /></Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={openEdit}><Pencil className="h-4 w-4" /></Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavorite}>
                   <Heart className={`h-4 w-4 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
                 </Button>
               </div>
             </div>
-            <div className="flex-1 flex items-center justify-center p-4">
+
+            <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+              {/* Metadata */}
+              <div className="space-y-2 w-full max-w-md">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Mic className="h-4 w-4" />
+                  <span>{selectedItem.forwarded ? "Enviando como encaminhado" : "Enviando como gravado"}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4" />
+                  <span>{selectedItem.singleView ? "Enviando como visualização única" : "Não enviando como visualização única"}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Users className="h-4 w-4" />
+                  <span>Não mencionando em grupos</span>
+                </div>
+              </div>
+
+              {/* Player */}
               {selectedItem.fileUrl ? (
-                <div className="w-full max-w-md space-y-3 text-center">
-                  <Mic className="h-12 w-12 mx-auto text-primary" />
-                  <p className="text-sm text-muted-foreground">{selectedItem.fileName}</p>
-                  <audio controls className="w-full" src={selectedItem.fileUrl} />
+                <div className="w-full max-w-md">
+                  <audio controls className="w-full rounded-full" src={selectedItem.fileUrl} />
                 </div>
               ) : (
                 <div className="w-full max-w-md bg-muted/50 rounded-lg p-6 text-center">
