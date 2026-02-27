@@ -14,6 +14,7 @@ import FunisPage from "./pages/FunisPage";
 import GatilhosPage from "./pages/GatilhosPage";
 import BackupsPage from "./pages/BackupsPage";
 import LoginPage from "./pages/LoginPage";
+import SignupPage from "./pages/SignupPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -29,6 +30,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
             <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
             <Route path="/mensagens" element={<ProtectedRoute><MensagensPage /></ProtectedRoute>} />
             <Route path="/audios" element={<ProtectedRoute><AudiosPage /></ProtectedRoute>} />
