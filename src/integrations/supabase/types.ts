@@ -121,18 +121,21 @@ export type Database = {
       }
       messages: {
         Row: {
+          content: string | null
           created_at: string
           id: string
           name: string
           user_id: string
         }
         Insert: {
+          content?: string | null
           created_at?: string
           id?: string
           name: string
           user_id: string
         }
         Update: {
+          content?: string | null
           created_at?: string
           id?: string
           name?: string
