@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -13,13 +12,20 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Trash2, Copy, Pencil, Heart } from "lucide-react";
+import { Trash2, Copy, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+
+interface MessageRow {
+  id: string;
+  name: string;
+  content: string;
+}
 
 export default function MensagensPage() {
-  const { mensagens, setMensagens } = useAssets();
-
-  const [selected, setSelected] = useState<string | null>("1");
+  const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -29,40 +35,78 @@ export default function MensagensPage() {
   const [editText, setEditText] = useState("");
   const { toast } = useToast();
 
-  const listItems: ListItem[] = mensagens.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
+  const fetchMessages = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, name, content")
+      .order("created_at", { ascending: true });
 
-  const handleReorder = (reordered: ListItem[]) => {
-    const idOrder = reordered.map(r => r.id);
-    setMensagens(prev => {
-      const map = new Map(prev.map(m => [m.id, m]));
-      return idOrder.map(id => map.get(id)!).filter(Boolean);
-    });
-  };
-  const selectedItem = mensagens.find((m) => m.id === selected);
+    if (error) {
+      toast({ title: "Erro ao carregar mensagens", description: error.message, variant: "destructive" });
+    } else {
+      setMessages(data ?? []);
+      if (!selected && data && data.length > 0) {
+        setSelected(data[0].id);
+      }
+    }
+    setLoading(false);
+  }, []);
 
-  const handleDelete = () => {
-    if (selected) {
-      setMensagens((prev) => prev.filter((m) => m.id !== selected));
+  useEffect(() => {
+    fetchMessages();
+  }, [fetchMessages]);
+
+  const listItems: ListItem[] = messages.map(m => ({ id: m.id, name: m.name }));
+  const selectedItem = messages.find((m) => m.id === selected);
+
+  const handleDelete = async () => {
+    if (!selected) return;
+    const { error } = await supabase.from("messages").delete().eq("id", selected);
+    if (error) {
+      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
+    } else {
+      setMessages(prev => prev.filter(m => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
     }
   };
 
-  const handleAdd = () => {
-    if (!newName.trim() || !newText.trim()) return;
-    const id = Date.now().toString();
-    setMensagens((prev) => [...prev, { id, name: newName.trim(), content: newText.trim() }]);
-    setSelected(id);
-    setNewName("");
-    setNewText("");
-    setAddOpen(false);
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({ name: newName.trim(), content: newText.trim(), user_id: user.id })
+      .select("id, name, content")
+      .single();
+
+    if (error) {
+      toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
+    } else if (data) {
+      setMessages(prev => [...prev, data]);
+      setSelected(data.id);
+      setNewName("");
+      setNewText("");
+      setAddOpen(false);
+    }
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     if (!selected || !editName.trim()) return;
-    setMensagens((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim(), content: editText } : m));
-    setEditOpen(false);
-    toast({ title: "Mensagem atualizada" });
+    const { error } = await supabase
+      .from("messages")
+      .update({ name: editName.trim(), content: editText })
+      .eq("id", selected);
+
+    if (error) {
+      toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
+    } else {
+      setMessages(prev => prev.map(m => m.id === selected ? { ...m, name: editName.trim(), content: editText } : m));
+      setEditOpen(false);
+      toast({ title: "Mensagem atualizada" });
+    }
   };
 
   const openEdit = () => {
@@ -72,18 +116,41 @@ export default function MensagensPage() {
     setEditOpen(true);
   };
 
-  const handleDuplicate = () => {
+  const handleDuplicate = async () => {
     if (!selectedItem) return;
-    const id = Date.now().toString();
-    setMensagens((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
-    setSelected(id);
-    toast({ title: "Mensagem duplicada" });
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({ name: `${selectedItem.name} (cópia)`, content: selectedItem.content, user_id: user.id })
+      .select("id, name, content")
+      .single();
+
+    if (error) {
+      toast({ title: "Erro ao duplicar", description: error.message, variant: "destructive" });
+    } else if (data) {
+      setMessages(prev => [...prev, data]);
+      setSelected(data.id);
+      toast({ title: "Mensagem duplicada" });
+    }
   };
 
-  const handleFavorite = () => {
-    if (!selected) return;
-    setMensagens((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
+  const handleReorder = (reordered: ListItem[]) => {
+    const idOrder = reordered.map(r => r.id);
+    setMessages(prev => {
+      const map = new Map(prev.map(m => [m.id, m]));
+      return idOrder.map(id => map.get(id)!).filter(Boolean);
+    });
   };
+
+  if (loading) {
+    return (
+      <MainLayout title="Mensagens">
+        <div className="flex items-center justify-center h-64 text-muted-foreground">Carregando...</div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout title="Mensagens">
@@ -103,9 +170,6 @@ export default function MensagensPage() {
                 <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setDeleteOpen(true)}><Trash2 className="h-5 w-5 text-destructive" /></Button>
                 <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleDuplicate}><Copy className="h-5 w-5" /></Button>
                 <Button variant="ghost" size="icon" className="h-9 w-9" onClick={openEdit}><Pencil className="h-5 w-5" /></Button>
-                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleFavorite}>
-                  <Heart className={`h-5 w-5 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />
-                </Button>
               </div>
             </div>
             <div className="flex-1 p-5">
@@ -129,12 +193,11 @@ export default function MensagensPage() {
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Texto</label>
               <Textarea placeholder="Texto da mensagem" value={newText} onChange={(e) => setNewText(e.target.value)} rows={5} />
-              {!newText.trim() && <p className="text-xs text-destructive mt-1">Campo obrigatório</p>}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim() || !newText.trim()}>Salvar</Button>
+            <Button onClick={handleAdd} disabled={!newName.trim()}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
