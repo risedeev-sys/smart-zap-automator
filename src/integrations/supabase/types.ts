@@ -77,21 +77,68 @@ export type Database = {
         }
         Relationships: []
       }
+      funnel_items: {
+        Row: {
+          asset_id: string
+          created_at: string
+          delay_min: number
+          delay_sec: number
+          funnel_id: string
+          id: string
+          position: number
+          type: string
+          user_id: string
+        }
+        Insert: {
+          asset_id: string
+          created_at?: string
+          delay_min?: number
+          delay_sec?: number
+          funnel_id: string
+          id?: string
+          position?: number
+          type: string
+          user_id: string
+        }
+        Update: {
+          asset_id?: string
+          created_at?: string
+          delay_min?: number
+          delay_sec?: number
+          funnel_id?: string
+          id?: string
+          position?: number
+          type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funnel_items_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "funnels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       funnels: {
         Row: {
           created_at: string
+          favorite: boolean
           id: string
           name: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          favorite?: boolean
           id?: string
           name: string
           user_id: string
         }
         Update: {
           created_at?: string
+          favorite?: boolean
           id?: string
           name?: string
           user_id?: string
@@ -190,7 +237,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      user_owns_funnel: {
+        Args: { _funnel_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

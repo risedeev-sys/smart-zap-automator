@@ -1,6 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
-import { useAssets, FunnelItem } from "@/contexts/AssetsContext";
-import { useDragReorder } from "@/hooks/use-drag-reorder";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -37,96 +35,294 @@ import {
   Clock,
   GitBranch,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
-const typeIcons = {
+const typeIcons: Record<string, typeof MessageSquare> = {
   mensagem: MessageSquare,
   audio: Mic,
   midia: Image,
   documento: FileText,
 };
 
-const typeLabels = {
+const typeLabels: Record<string, string> = {
   mensagem: "Mensagem",
   audio: "Áudio",
   midia: "Mídia",
   documento: "Documento",
 };
 
+const assetTables: Record<string, string> = {
+  mensagem: "messages",
+  audio: "audios",
+  midia: "medias",
+  documento: "documents",
+};
+
+interface FunnelRow {
+  id: string;
+  name: string;
+  favorite: boolean;
+}
+
+interface FunnelItemRow {
+  id: string;
+  funnel_id: string;
+  type: string;
+  asset_id: string;
+  delay_min: number;
+  delay_sec: number;
+  position: number;
+}
+
+interface AssetOption {
+  id: string;
+  name: string;
+}
+
 export default function FunisPage() {
-  const { mensagens, audios, midias, documentos, funnels, setFunnels } = useAssets();
-  const [selected, setSelected] = useState<string | null>("1");
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string; type: "funnel" | "item"; itemId?: string } | null>(null);
+  const [funnels, setFunnels] = useState<FunnelRow[]>([]);
+  const [items, setItems] = useState<FunnelItemRow[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Modals
   const [addOpen, setAddOpen] = useState(false);
   const [newFunnelName, setNewFunnelName] = useState("");
   const [editFunnelOpen, setEditFunnelOpen] = useState(false);
   const [editFunnelName, setEditFunnelName] = useState("");
-  const [addItemTab, setAddItemTab] = useState<string>("mensagem");
-  const [addItemSelectedId, setAddItemSelectedId] = useState<string>("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ title: string; name: string; type: "funnel" | "item"; itemId?: string } | null>(null);
+
+  // Item modal
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [addItemTab, setAddItemTab] = useState("mensagem");
+  const [addItemSelectedId, setAddItemSelectedId] = useState("");
   const [addItemDelayMin, setAddItemDelayMin] = useState(0);
   const [addItemDelaySec, setAddItemDelaySec] = useState(0);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
-  const assetsByType = useMemo(() => ({
-    mensagem: mensagens,
-    audio: audios,
-    midia: midias,
-    documento: documentos,
-  }), [mensagens, audios, midias, documentos]);
+  // Asset options for selects
+  const [assetOptions, setAssetOptions] = useState<Record<string, AssetOption[]>>({
+    mensagem: [], audio: [], midia: [], documento: [],
+  });
+  const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
 
-  const getAssetName = (type: string, assetId: string) => {
-    const assets = assetsByType[type as keyof typeof assetsByType] || [];
-    return assets.find(a => a.id === assetId)?.name ?? "(item removido)";
+  const { toast } = useToast();
+
+  const fetchFunnels = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("funnels")
+      .select("id, name, favorite")
+      .order("created_at", { ascending: true });
+    if (error) {
+      toast({ title: "Erro ao carregar funis", description: error.message, variant: "destructive" });
+    } else {
+      setFunnels(data ?? []);
+      if (!selected && data && data.length > 0) setSelected(data[0].id);
+    }
+    setLoading(false);
+  }, []);
+
+  const fetchItems = useCallback(async (funnelId: string) => {
+    const { data, error } = await supabase
+      .from("funnel_items")
+      .select("id, funnel_id, type, asset_id, delay_min, delay_sec, position")
+      .eq("funnel_id", funnelId)
+      .order("position", { ascending: true });
+    if (error) {
+      toast({ title: "Erro ao carregar itens", description: error.message, variant: "destructive" });
+    } else {
+      setItems(data ?? []);
+      // Cache asset names
+      const newCache: Record<string, string> = {};
+      for (const item of data ?? []) {
+        const table = assetTables[item.type];
+        if (table && !assetNameCache[item.asset_id]) {
+          const { data: asset } = await supabase.from(table as any).select("name").eq("id", item.asset_id).single();
+          if (asset) newCache[item.asset_id] = (asset as any).name;
+        }
+      }
+      if (Object.keys(newCache).length > 0) {
+        setAssetNameCache(prev => ({ ...prev, ...newCache }));
+      }
+    }
+  }, [assetNameCache]);
+
+  const fetchAssetOptions = useCallback(async (type: string) => {
+    const table = assetTables[type];
+    if (!table) return;
+    const { data } = await supabase.from(table as any).select("id, name").order("created_at", { ascending: true });
+    if (data) {
+      setAssetOptions(prev => ({ ...prev, [type]: (data as any[]).map(d => ({ id: d.id, name: d.name })) }));
+    }
+  }, []);
+
+  useEffect(() => { fetchFunnels(); }, [fetchFunnels]);
+  useEffect(() => { if (selected) fetchItems(selected); }, [selected]);
+
+  const selectedFunnel = funnels.find(f => f.id === selected);
+  const filteredFunnels = funnels.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const getAssetName = (assetId: string) => assetNameCache[assetId] ?? "(item removido)";
+
+  const totalTime = (funnelItems: FunnelItemRow[]) => {
+    const totalSec = funnelItems.reduce((acc, i) => acc + i.delay_min * 60 + i.delay_sec, 0);
+    return `${Math.floor(totalSec / 60)} min e ${totalSec % 60}s`;
   };
 
-  const selectedFunnel = funnels.find((f) => f.id === selected);
-
-  const handleReorderFunnels = useCallback((reordered: typeof funnels) => {
-    setFunnels(reordered);
-  }, [setFunnels]);
-
-  const handleReorderItems = useCallback((reordered: FunnelItem[]) => {
-    if (!selected) return;
-    setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: reordered } : f));
-  }, [selected, setFunnels]);
-
-  const { getDragProps: getFunnelDragProps } = useDragReorder(funnels, handleReorderFunnels);
-  const { getDragProps: getItemDragProps } = useDragReorder(selectedFunnel?.items ?? [], handleReorderItems);
-
-  const handleEditFunnel = () => {
-    if (!selected || !editFunnelName.trim()) return;
-    setFunnels((prev) => prev.map((f) => f.id === selected ? { ...f, name: editFunnelName.trim() } : f));
-    setEditFunnelOpen(false);
-  };
-
-  const handleDuplicateFunnel = () => {
-    if (!selectedFunnel) return;
-    const id = Date.now().toString();
-    setFunnels((prev) => [...prev, { ...selectedFunnel, id, name: `${selectedFunnel.name} (cópia)`, items: selectedFunnel.items.map((i) => ({ ...i, id: `${i.id}-${id}` })) }]);
-    setSelected(id);
-  };
-
-  const handleFavoriteFunnel = () => {
-    if (!selected) return;
-    setFunnels((prev) => prev.map((f) => f.id === selected ? { ...f, favorite: !f.favorite } : f));
-  };
-
-  const totalTime = (items: FunnelItem[]) => {
-    const totalSec = items.reduce((acc, i) => acc + i.delayMin * 60 + i.delaySec, 0);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    return `${min} min e ${sec}s`;
-  };
-
-  const handleAddFunnel = () => {
+  // --- CRUD ---
+  const handleAddFunnel = async () => {
     if (!newFunnelName.trim()) return;
-    const id = Date.now().toString();
-    setFunnels((prev) => [...prev, { id, name: newFunnelName.trim(), items: [] }]);
-    setSelected(id);
-    setNewFunnelName("");
-    setAddOpen(false);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("funnels")
+      .insert({ name: newFunnelName.trim(), user_id: user.id })
+      .select("id, name, favorite")
+      .single();
+    if (error) {
+      toast({ title: "Erro ao criar funil", description: error.message, variant: "destructive" });
+    } else if (data) {
+      setFunnels(prev => [...prev, data]);
+      setSelected(data.id);
+      setNewFunnelName("");
+      setAddOpen(false);
+    }
   };
+
+  const handleEditFunnel = async () => {
+    if (!selected || !editFunnelName.trim()) return;
+    const { error } = await supabase.from("funnels").update({ name: editFunnelName.trim() }).eq("id", selected);
+    if (error) {
+      toast({ title: "Erro ao editar", description: error.message, variant: "destructive" });
+    } else {
+      setFunnels(prev => prev.map(f => f.id === selected ? { ...f, name: editFunnelName.trim() } : f));
+      setEditFunnelOpen(false);
+    }
+  };
+
+  const handleDuplicateFunnel = async () => {
+    if (!selectedFunnel) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("funnels")
+      .insert({ name: `${selectedFunnel.name} (cópia)`, user_id: user.id })
+      .select("id, name, favorite")
+      .single();
+    if (error) {
+      toast({ title: "Erro ao duplicar", description: error.message, variant: "destructive" });
+      return;
+    }
+    if (data && items.length > 0) {
+      const newItems = items.map((i, idx) => ({
+        funnel_id: data.id,
+        user_id: user.id,
+        type: i.type,
+        asset_id: i.asset_id,
+        delay_min: i.delay_min,
+        delay_sec: i.delay_sec,
+        position: idx,
+      }));
+      await supabase.from("funnel_items").insert(newItems as any);
+    }
+    if (data) {
+      setFunnels(prev => [...prev, data]);
+      setSelected(data.id);
+    }
+  };
+
+  const handleFavoriteFunnel = async () => {
+    if (!selectedFunnel) return;
+    const newVal = !selectedFunnel.favorite;
+    const { error } = await supabase.from("funnels").update({ favorite: newVal }).eq("id", selected!);
+    if (!error) setFunnels(prev => prev.map(f => f.id === selected ? { ...f, favorite: newVal } : f));
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (deleteTarget?.type === "funnel" && selected) {
+      const { error } = await supabase.from("funnels").delete().eq("id", selected);
+      if (!error) {
+        setFunnels(prev => prev.filter(f => f.id !== selected));
+        setItems([]);
+        setSelected(null);
+      }
+    } else if (deleteTarget?.type === "item" && deleteTarget.itemId) {
+      const { error } = await supabase.from("funnel_items").delete().eq("id", deleteTarget.itemId);
+      if (!error) setItems(prev => prev.filter(i => i.id !== deleteTarget.itemId));
+    }
+    setDeleteOpen(false);
+  };
+
+  const handleSaveItem = async () => {
+    if (!selected || !addItemSelectedId) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    if (editingItemId) {
+      const { error } = await supabase.from("funnel_items").update({
+        type: addItemTab,
+        asset_id: addItemSelectedId,
+        delay_min: addItemDelayMin,
+        delay_sec: addItemDelaySec,
+      }).eq("id", editingItemId);
+      if (!error) {
+        setItems(prev => prev.map(i => i.id === editingItemId ? { ...i, type: addItemTab, asset_id: addItemSelectedId, delay_min: addItemDelayMin, delay_sec: addItemDelaySec } : i));
+        // update cache
+        const opts = assetOptions[addItemTab] || [];
+        const found = opts.find(a => a.id === addItemSelectedId);
+        if (found) setAssetNameCache(prev => ({ ...prev, [addItemSelectedId]: found.name }));
+      }
+    } else {
+      const position = items.length;
+      const { data, error } = await supabase.from("funnel_items").insert({
+        funnel_id: selected,
+        user_id: user.id,
+        type: addItemTab,
+        asset_id: addItemSelectedId,
+        delay_min: addItemDelayMin,
+        delay_sec: addItemDelaySec,
+        position,
+      }).select("id, funnel_id, type, asset_id, delay_min, delay_sec, position").single();
+      if (!error && data) {
+        setItems(prev => [...prev, data]);
+        const opts = assetOptions[addItemTab] || [];
+        const found = opts.find(a => a.id === addItemSelectedId);
+        if (found) setAssetNameCache(prev => ({ ...prev, [addItemSelectedId]: found.name }));
+      }
+    }
+    setEditModalOpen(false);
+  };
+
+  const openAddItem = () => {
+    setEditingItemId(null);
+    setAddItemTab("mensagem");
+    setAddItemSelectedId("");
+    setAddItemDelayMin(0);
+    setAddItemDelaySec(0);
+    fetchAssetOptions("mensagem");
+    setEditModalOpen(true);
+  };
+
+  const openEditItem = (item: FunnelItemRow) => {
+    setEditingItemId(item.id);
+    setAddItemTab(item.type);
+    setAddItemSelectedId("");
+    setAddItemDelayMin(item.delay_min);
+    setAddItemDelaySec(item.delay_sec);
+    fetchAssetOptions(item.type);
+    setEditModalOpen(true);
+  };
+
+  if (loading) {
+    return (
+      <MainLayout title="Funis">
+        <div className="flex items-center justify-center h-64 text-muted-foreground">Carregando...</div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout title="Funis">
@@ -136,34 +332,23 @@ export default function FunisPage() {
           <div className="p-3 border-b border-border space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Buscar funil..." className="pl-9 h-9" />
+              <Input placeholder="Buscar funil..." className="pl-9 h-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
             <Button className="w-full h-9 text-sm" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1" /> Adicionar
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {funnels.map((f, index) => {
-              const { className: dragClassName, ...dragProps } = getFunnelDragProps(index);
-              return (
+            {filteredFunnels.map((f) => (
               <button
                 key={f.id}
                 onClick={() => setSelected(f.id)}
-                {...dragProps}
                 className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
                   selected === f.id ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
-                } ${dragClassName}`}
+                }`}
               >
-                <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 group-hover:opacity-100 flex-shrink-0 cursor-grab" />
                 <div className="flex-1 min-w-0">
                   <span className="block truncate">{f.name}</span>
-                  <span className="text-xs text-muted-foreground">{totalTime(f.items)}</span>
-                </div>
-                <div className="flex gap-0.5">
-                  {[...new Set(f.items.map((i) => i.type))].map((type) => {
-                    const Icon = typeIcons[type];
-                    return <Icon key={type} className="h-3 w-3 text-muted-foreground" />;
-                  })}
                 </div>
                 <Heart
                   className={`h-3.5 w-3.5 flex-shrink-0 ${
@@ -171,8 +356,7 @@ export default function FunisPage() {
                   }`}
                 />
               </button>
-              );
-            })}
+            ))}
           </div>
         </div>
 
@@ -195,31 +379,29 @@ export default function FunisPage() {
                 </div>
               </div>
               <div className="p-4">
-                <Button variant="outline" size="sm" onClick={() => { setEditingItemId(null); setAddItemTab("mensagem"); setAddItemSelectedId(""); setAddItemDelayMin(0); setAddItemDelaySec(0); setEditModalOpen(true); }}>
+                <Button variant="outline" size="sm" onClick={openAddItem}>
                   <Plus className="h-4 w-4 mr-1" /> Adicionar item
                 </Button>
               </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
-                {selectedFunnel.items.map((item, idx) => {
-                  const Icon = typeIcons[item.type];
-                  const { className: dragClassName, ...dragProps } = getItemDragProps(idx);
+                {items.map((item, idx) => {
+                  const Icon = typeIcons[item.type] || FileText;
                   return (
-                    <div key={item.id} {...dragProps} className={`flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30 ${dragClassName}`}>
-                      <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 hover:opacity-100 flex-shrink-0 cursor-grab" />
+                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30">
                       <span className="text-xs text-muted-foreground font-mono w-5">{idx + 1}</span>
                       <Badge variant="secondary" className="gap-1 text-xs">
                         <Icon className="h-3 w-3" />
-                        {typeLabels[item.type]}
+                        {typeLabels[item.type] || item.type}
                       </Badge>
-                      <span className="flex-1 text-sm truncate">{getAssetName(item.type, item.assetId)}</span>
+                      <span className="flex-1 text-sm truncate">{getAssetName(item.asset_id)}</span>
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
-                        Enviando após {item.delayMin}m {item.delaySec}s
+                        Enviando após {item.delay_min}m {item.delay_sec}s
                       </div>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItemId(item.id); setAddItemTab(item.type); setAddItemSelectedId(""); setAddItemDelayMin(item.delayMin); setAddItemDelaySec(item.delaySec); setEditModalOpen(true); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditItem(item)}>
                         <Pencil className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: getAssetName(item.type, item.assetId), type: "item", itemId: item.id }); setDeleteOpen(true); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setDeleteTarget({ title: "Excluir item do funil", name: getAssetName(item.asset_id), type: "item", itemId: item.id }); setDeleteOpen(true); }}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
@@ -238,9 +420,7 @@ export default function FunisPage() {
       {/* Modal Adicionar Funil */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adicionar funil</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Adicionar funil</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Título</label>
@@ -272,14 +452,14 @@ export default function FunisPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add item modal */}
+      {/* Add/Edit item modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingItemId ? "Editar item do funil" : "Adicionar item ao funil"}</DialogTitle>
             <DialogDescription>Selecione o tipo e configure o delay.</DialogDescription>
           </DialogHeader>
-          <Tabs value={addItemTab} onValueChange={(v) => { setAddItemTab(v); setAddItemSelectedId(""); }}>
+          <Tabs value={addItemTab} onValueChange={(v) => { setAddItemTab(v); setAddItemSelectedId(""); fetchAssetOptions(v); }}>
             <TabsList className="w-full">
               <TabsTrigger value="mensagem" className="flex-1">Mensagem</TabsTrigger>
               <TabsTrigger value="audio" className="flex-1">Áudio</TabsTrigger>
@@ -293,10 +473,10 @@ export default function FunisPage() {
                   <Select value={addItemSelectedId} onValueChange={setAddItemSelectedId}>
                     <SelectTrigger><SelectValue placeholder="Escolha um item..." /></SelectTrigger>
                     <SelectContent>
-                      {(assetsByType[tab as keyof typeof assetsByType] || []).length === 0 ? (
+                      {(assetOptions[tab] || []).length === 0 ? (
                         <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum item cadastrado</div>
                       ) : (
-                        (assetsByType[tab as keyof typeof assetsByType] || []).map((asset) => (
+                        (assetOptions[tab] || []).map((asset) => (
                           <SelectItem key={asset.id} value={asset.id}>{asset.name}</SelectItem>
                         ))
                       )}
@@ -318,28 +498,7 @@ export default function FunisPage() {
           </Tabs>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditModalOpen(false)}>Cancelar</Button>
-            <Button
-              disabled={!addItemSelectedId}
-              onClick={() => {
-                if (!selected || !addItemSelectedId) return;
-                const assets = assetsByType[addItemTab as keyof typeof assetsByType] || [];
-                const asset = assets.find(a => a.id === addItemSelectedId);
-                if (!asset) return;
-                if (editingItemId) {
-                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: f.items.map(i => i.id === editingItemId ? { ...i, type: addItemTab as FunnelItem["type"], assetId: addItemSelectedId, delayMin: addItemDelayMin, delaySec: addItemDelaySec } : i) } : f));
-                } else {
-                  const newItem: FunnelItem = {
-                    id: Date.now().toString(),
-                    type: addItemTab as FunnelItem["type"],
-                    assetId: addItemSelectedId,
-                    delayMin: addItemDelayMin,
-                    delaySec: addItemDelaySec,
-                  };
-                  setFunnels(prev => prev.map(f => f.id === selected ? { ...f, items: [...f.items, newItem] } : f));
-                }
-                setEditModalOpen(false);
-              }}
-            >Salvar</Button>
+            <Button disabled={!addItemSelectedId} onClick={handleSaveItem}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -349,21 +508,7 @@ export default function FunisPage() {
         onOpenChange={setDeleteOpen}
         title={deleteTarget?.title ?? "Excluir item"}
         itemName={deleteTarget?.name}
-        onConfirm={() => {
-          if (deleteTarget?.type === "funnel" && selected) {
-            setFunnels((prev) => prev.filter((f) => f.id !== selected));
-            setSelected(null);
-          } else if (deleteTarget?.type === "item" && deleteTarget.itemId && selected) {
-            setFunnels((prev) =>
-              prev.map((f) =>
-                f.id === selected
-                  ? { ...f, items: f.items.filter((i) => i.id !== deleteTarget.itemId) }
-                  : f
-              )
-            );
-          }
-          setDeleteOpen(false);
-        }}
+        onConfirm={handleDeleteConfirm}
       />
     </MainLayout>
   );
