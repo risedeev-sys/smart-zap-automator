@@ -13,6 +13,7 @@ import DocumentosPage from "./pages/DocumentosPage";
 import FunisPage from "./pages/FunisPage";
 import GatilhosPage from "./pages/GatilhosPage";
 import BackupsPage from "./pages/BackupsPage";
+import LoginPage from "./pages/LoginPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/funis" element={<FunisPage />} />
             <Route path="/gatilhos" element={<GatilhosPage />} />
             <Route path="/backups" element={<BackupsPage />} />
+            <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
