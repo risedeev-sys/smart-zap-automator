@@ -16,21 +16,30 @@ export type Database = {
     Tables: {
       audios: {
         Row: {
+          bytes: number | null
           created_at: string
           id: string
+          mime: string | null
           name: string
+          storage_path: string | null
           user_id: string
         }
         Insert: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name: string
+          storage_path?: string | null
           user_id: string
         }
         Update: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name?: string
+          storage_path?: string | null
           user_id?: string
         }
         Relationships: []
@@ -78,21 +87,30 @@ export type Database = {
       }
       documents: {
         Row: {
+          bytes: number | null
           created_at: string
           id: string
+          mime: string | null
           name: string
+          storage_path: string | null
           user_id: string
         }
         Insert: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name: string
+          storage_path?: string | null
           user_id: string
         }
         Update: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name?: string
+          storage_path?: string | null
           user_id?: string
         }
         Relationships: []
@@ -188,21 +206,30 @@ export type Database = {
       }
       medias: {
         Row: {
+          bytes: number | null
           created_at: string
           id: string
+          mime: string | null
           name: string
+          storage_path: string | null
           user_id: string
         }
         Insert: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name: string
+          storage_path?: string | null
           user_id: string
         }
         Update: {
+          bytes?: number | null
           created_at?: string
           id?: string
+          mime?: string | null
           name?: string
+          storage_path?: string | null
           user_id?: string
         }
         Relationships: []
