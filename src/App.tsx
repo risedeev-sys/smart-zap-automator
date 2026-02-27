@@ -14,6 +14,7 @@ import FunisPage from "./pages/FunisPage";
 import GatilhosPage from "./pages/GatilhosPage";
 import BackupsPage from "./pages/BackupsPage";
 import LoginPage from "./pages/LoginPage";
+import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,15 +28,15 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/mensagens" element={<MensagensPage />} />
-            <Route path="/audios" element={<AudiosPage />} />
-            <Route path="/midias" element={<MidiasPage />} />
-            <Route path="/documentos" element={<DocumentosPage />} />
-            <Route path="/funis" element={<FunisPage />} />
-            <Route path="/gatilhos" element={<GatilhosPage />} />
-            <Route path="/backups" element={<BackupsPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/mensagens" element={<ProtectedRoute><MensagensPage /></ProtectedRoute>} />
+            <Route path="/audios" element={<ProtectedRoute><AudiosPage /></ProtectedRoute>} />
+            <Route path="/midias" element={<ProtectedRoute><MidiasPage /></ProtectedRoute>} />
+            <Route path="/documentos" element={<ProtectedRoute><DocumentosPage /></ProtectedRoute>} />
+            <Route path="/funis" element={<ProtectedRoute><FunisPage /></ProtectedRoute>} />
+            <Route path="/gatilhos" element={<ProtectedRoute><GatilhosPage /></ProtectedRoute>} />
+            <Route path="/backups" element={<ProtectedRoute><BackupsPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
