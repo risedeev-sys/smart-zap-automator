@@ -13,6 +13,7 @@ import DocumentosPage from "./pages/DocumentosPage";
 import FunisPage from "./pages/FunisPage";
 import GatilhosPage from "./pages/GatilhosPage";
 import BackupsPage from "./pages/BackupsPage";
+import EspacoTestePage from "./pages/EspacoTestePage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -39,6 +40,7 @@ const App = () => (
             <Route path="/funis" element={<ProtectedRoute><FunisPage /></ProtectedRoute>} />
             <Route path="/gatilhos" element={<ProtectedRoute><GatilhosPage /></ProtectedRoute>} />
             <Route path="/backups" element={<ProtectedRoute><BackupsPage /></ProtectedRoute>} />
+            <Route path="/teste" element={<ProtectedRoute><EspacoTestePage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
