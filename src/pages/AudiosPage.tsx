@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { Trash2, Copy, Pencil, Heart, Mic, Download, Info, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { uploadAssetFile } from "@/utils/uploadAssetFile";
 
 export default function AudiosPage() {
   const { audios, setAudios } = useAssets();
@@ -50,12 +52,32 @@ export default function AudiosPage() {
     }
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newName.trim() || !uploadFile) return;
-    const id = Date.now().toString();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // 1. Insert record in Supabase
+    const { data: record, error } = await supabase
+      .from("audios")
+      .insert({ name: newName.trim(), user_id: user.id })
+      .select("id, name")
+      .single();
+    if (error || !record) {
+      toast({ title: "Erro ao criar áudio", description: error?.message, variant: "destructive" });
+      return;
+    }
+
+    // 2. Upload file to bucket & update storage_path
+    try {
+      await uploadAssetFile("audios", record.id, uploadFile, user.id);
+    } catch (e: any) {
+      toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
+    }
+
     const fileUrl = URL.createObjectURL(uploadFile);
-    setAudios((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl, forwarded, singleView }]);
-    setSelected(id);
+    setAudios((prev) => [...prev, { id: record.id, name: newName.trim(), fileName: uploadFile.name, fileUrl, forwarded, singleView }]);
+    setSelected(record.id);
     setNewName("");
     setForwarded(false);
     setSingleView(false);

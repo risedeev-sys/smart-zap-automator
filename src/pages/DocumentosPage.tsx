@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/dialog";
 import { Trash2, Copy, Pencil, Heart, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { uploadAssetFile } from "@/utils/uploadAssetFile";
 
 export default function DocumentosPage() {
   const { documentos, setDocumentos } = useAssets();
@@ -47,12 +49,30 @@ export default function DocumentosPage() {
     }
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newName.trim() || !uploadFile) return;
-    const id = Date.now().toString();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: record, error } = await supabase
+      .from("documents")
+      .insert({ name: newName.trim(), user_id: user.id })
+      .select("id, name")
+      .single();
+    if (error || !record) {
+      toast({ title: "Erro ao criar documento", description: error?.message, variant: "destructive" });
+      return;
+    }
+
+    try {
+      await uploadAssetFile("documents", record.id, uploadFile, user.id);
+    } catch (e: any) {
+      toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
+    }
+
     const fileUrl = URL.createObjectURL(uploadFile);
-    setDocumentos((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
-    setSelected(id);
+    setDocumentos((prev) => [...prev, { id: record.id, name: newName.trim(), fileName: uploadFile.name, fileUrl }]);
+    setSelected(record.id);
     setNewName("");
     setUploadFile(null);
     setAddOpen(false);
