@@ -24,6 +24,7 @@ import { findMatchingTriggers, type TriggerData } from "@/utils/triggerEngine";
 import { AssetConfirmDialog } from "@/components/FunnelConfirmDialog";
 import { getAppSettings } from "@/pages/ConfiguracoesPage";
 import { toast } from "sonner";
+import { WhatsAppAudioPlayer } from "@/components/WhatsAppAudioPlayer";
 
 interface ChatMessage {
   id: string;
@@ -419,7 +420,7 @@ export default function EspacoTestePage() {
                 >
                   {/* Render file content based on type */}
                   {msg.fileUrl && msg.assetType === "audio" && (
-                    <audio controls className="w-full max-w-[250px] my-1" src={msg.fileUrl} />
+                    <WhatsAppAudioPlayer src={msg.fileUrl} />
                   )}
                   {msg.fileUrl && msg.assetType === "midia" && msg.fileType?.startsWith("video") && (
                     <video controls className="w-full max-w-[250px] rounded my-1" src={msg.fileUrl} />
