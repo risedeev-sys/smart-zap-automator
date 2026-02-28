@@ -54,7 +54,7 @@ interface Contact {
 }
 
 const INITIAL_CONTACTS: Contact[] = [
-  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "👤", status: "online", lastMessage: "Clique para testar gatilhos", lastTime: "agora", unread: 0 },
+  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "👤", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
   { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "👩", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
   { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "👨", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
   { id: "4", name: "Ana Oliveira", phone: "+55 41 96666-5555", avatar: "👩‍💼", status: "online", lastMessage: "Vou verificar aqui", lastTime: "ontem", unread: 0 },
@@ -66,6 +66,7 @@ const INITIAL_CONTACTS: Contact[] = [
 
 // Pre-built received messages for contacts with unread
 const UNREAD_MESSAGES: Record<string, string[]> = {
+  "1": ["Oi, tudo bem?"],
   "2": ["Oi, tudo bem?", "Você tem disponibilidade hoje?"],
   "5": ["Pode me enviar o catálogo?"],
   "6": ["Olá!", "Vi seu anúncio", "Qual o valor?"],
