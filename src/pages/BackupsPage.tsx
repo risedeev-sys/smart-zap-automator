@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { importBackupToSupabase } from "@/utils/importBackupToSupabase";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,12 +17,12 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Upload, Download, AlertTriangle, FileJson, CheckCircle2 } from "lucide-react";
-import { useAssets, type AssetItem, type Funnel, type Trigger } from "@/contexts/AssetsContext";
+import { useAssets, type AssetItem, type Funnel } from "@/contexts/AssetsContext";
 import { useToast } from "@/hooks/use-toast";
 import { detectAndConvertZapVoice } from "@/utils/zapVoiceConverter";
 
 export default function BackupsPage() {
-  const { mensagens, setMensagens, audios, setAudios, midias, setMidias, documentos, setDocumentos, funnels, setFunnels, triggers, setTriggers } = useAssets();
+  const { mensagens, setMensagens, audios, setAudios, midias, setMidias, documentos, setDocumentos, funnels, setFunnels } = useAssets();
   const { toast } = useToast();
 
   // Export state
@@ -50,7 +51,7 @@ export default function BackupsPage() {
     setExportModalOpen(true);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const data: Record<string, unknown> = { version: 1, createdAt: new Date().toISOString() };
 
     if (exportAll || exportSections.mensagens) data.mensagens = mensagens;
@@ -58,7 +59,10 @@ export default function BackupsPage() {
     if (exportAll || exportSections.midias) data.midias = midias;
     if (exportAll || exportSections.documentos) data.documentos = documentos;
     if (exportAll || exportSections.funis) data.funis = funnels;
-    if (exportAll || exportSections.gatilhos) data.gatilhos = triggers;
+    if (exportAll || exportSections.gatilhos) {
+      const { data: triggersData } = await supabase.from("triggers").select("*");
+      data.gatilhos = triggersData ?? [];
+    }
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -103,7 +107,7 @@ export default function BackupsPage() {
       setMidias(data.midias ?? []);
       setDocumentos(data.documentos ?? []);
       setFunnels(data.funis ?? []);
-      setTriggers(data.gatilhos ?? []);
+      // triggers are now handled by importBackupToSupabase directly
 
       // Summary toast
       const countStrs: string[] = [];

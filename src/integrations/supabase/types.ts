@@ -281,24 +281,59 @@ export type Database = {
       }
       triggers: {
         Row: {
+          conditions: Json
           created_at: string
+          delay_seconds: number
+          enabled: boolean
+          favorite: boolean
+          funnel_id: string | null
           id: string
+          ignore_case: boolean
           name: string
+          position: number
+          saved_contacts_only: boolean
+          send_to_groups: boolean
           user_id: string
         }
         Insert: {
+          conditions?: Json
           created_at?: string
+          delay_seconds?: number
+          enabled?: boolean
+          favorite?: boolean
+          funnel_id?: string | null
           id?: string
+          ignore_case?: boolean
           name: string
+          position?: number
+          saved_contacts_only?: boolean
+          send_to_groups?: boolean
           user_id: string
         }
         Update: {
+          conditions?: Json
           created_at?: string
+          delay_seconds?: number
+          enabled?: boolean
+          favorite?: boolean
+          funnel_id?: string | null
           id?: string
+          ignore_case?: boolean
           name?: string
+          position?: number
+          saved_contacts_only?: boolean
+          send_to_groups?: boolean
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "triggers_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "funnels"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
