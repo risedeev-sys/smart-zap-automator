@@ -53,7 +53,7 @@ interface Contact {
   unread?: number;
 }
 
-const CONTACTS: Contact[] = [
+const INITIAL_CONTACTS: Contact[] = [
   { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "👤", status: "online", lastMessage: "Clique para testar gatilhos", lastTime: "agora", unread: 0 },
   { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "👩", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
   { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "👨", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
@@ -63,6 +63,14 @@ const CONTACTS: Contact[] = [
   { id: "7", name: "Pedro Almeida", phone: "+55 71 93333-2222", avatar: "🧑", status: "online", lastMessage: "Fechado!", lastTime: "seg", unread: 0 },
   { id: "8", name: "Grupo Vendas", phone: "5 participantes", avatar: "👥", status: "5 participantes", lastMessage: "Carlos: Meta batida! 🎉", lastTime: "dom", unread: 12 },
 ];
+
+// Pre-built received messages for contacts with unread
+const UNREAD_MESSAGES: Record<string, string[]> = {
+  "2": ["Oi, tudo bem?", "Você tem disponibilidade hoje?"],
+  "5": ["Pode me enviar o catálogo?"],
+  "6": ["Olá!", "Vi seu anúncio", "Qual o valor?"],
+  "8": ["Pedro: Bom dia pessoal", "Ana: Boa!", "Carlos: Meta batida! 🎉", "João: 🔥🔥", "Pedro: Vamos comemorar!", "Ana: Partiu!", "Carlos: 🎯", "João: Excelente trabalho!", "Pedro: Time top!", "Ana: Arrasamos", "Carlos: Próxima meta já!", "João: Bora! 💪"],
+};
 
 const typeIcons: Record<string, typeof MessageSquare> = {
   mensagem: MessageSquare,
@@ -90,15 +98,37 @@ const welcomeMessage = (name: string): ChatMessage => ({
 export default function EspacoTestePage() {
   const [activeContactId, setActiveContactId] = useState<string>("1");
   const [contactSearch, setContactSearch] = useState("");
+  const [contacts, setContacts] = useState<Contact[]>(INITIAL_CONTACTS);
   const [chatHistory, setChatHistory] = useState<Record<string, ChatMessage[]>>(() => {
     const initial: Record<string, ChatMessage[]> = {};
-    CONTACTS.forEach((c) => {
-      initial[c.id] = [welcomeMessage(c.name)];
+    INITIAL_CONTACTS.forEach((c) => {
+      const msgs: ChatMessage[] = [welcomeMessage(c.name)];
+      // Add unread messages as received
+      const unread = UNREAD_MESSAGES[c.id];
+      if (unread) {
+        unread.forEach((text, i) => {
+          msgs.push({
+            id: `unread-${c.id}-${i}`,
+            text,
+            type: "received",
+            timestamp: new Date(Date.now() - (unread.length - i) * 60000),
+          });
+        });
+      }
+      initial[c.id] = msgs;
     });
     return initial;
   });
 
-  const activeContact = CONTACTS.find((c) => c.id === activeContactId)!;
+  const handleSelectContact = (contactId: string) => {
+    setActiveContactId(contactId);
+    // Clear unread badge
+    setContacts((prev) =>
+      prev.map((c) => (c.id === contactId ? { ...c, unread: 0 } : c))
+    );
+  };
+
+  const activeContact = contacts.find((c) => c.id === activeContactId)!;
   const messages = chatHistory[activeContactId] ?? [];
 
   const [inputText, setInputText] = useState("");
@@ -352,7 +382,7 @@ export default function EspacoTestePage() {
   const formatTime = (d: Date) =>
     d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-  const filteredContacts = CONTACTS.filter((c) =>
+  const filteredContacts = contacts.filter((c) =>
     c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
     c.phone.includes(contactSearch)
   );
@@ -382,7 +412,7 @@ export default function EspacoTestePage() {
               return (
                 <button
                   key={contact.id}
-                  onClick={() => setActiveContactId(contact.id)}
+                  onClick={() => handleSelectContact(contact.id)}
                   className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 border-b border-border/50 ${
                     isActive ? "bg-muted/70" : ""
                   }`}
