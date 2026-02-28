@@ -303,23 +303,23 @@ export default function FunisPage() {
     setEditModalOpen(false);
   };
 
-  const openAddItem = () => {
+  const openAddItem = async () => {
     setEditingItemId(null);
     setAddItemTab("mensagem");
     setAddItemSelectedId("");
     setAddItemDelayMin(0);
     setAddItemDelaySec(0);
-    fetchAssetOptions("mensagem");
+    await fetchAssetOptions("mensagem");
     setEditModalOpen(true);
   };
 
-  const openEditItem = (item: FunnelItemRow) => {
+  const openEditItem = async (item: FunnelItemRow) => {
     setEditingItemId(item.id);
     setAddItemTab(item.type);
     setAddItemSelectedId("");
     setAddItemDelayMin(item.delay_min);
     setAddItemDelaySec(item.delay_sec);
-    fetchAssetOptions(item.type);
+    await fetchAssetOptions(item.type);
     setEditModalOpen(true);
   };
 
