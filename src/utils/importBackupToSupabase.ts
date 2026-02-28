@@ -14,6 +14,18 @@ export async function importBackupToSupabase(rawData: Record<string, any>): Prom
   if (!user) throw new Error("Usuário não autenticado.");
   const userId = user.id;
 
+  // Limpar todos os dados do usuário antes de inserir
+  console.log("[importBackupToSupabase] Limpando dados existentes do usuário...");
+  const tablesToClean = ["funnel_items", "funnels", "messages", "audios", "medias", "documents"] as const;
+  for (const table of tablesToClean) {
+    const { error } = await supabase.from(table).delete().eq("user_id", userId);
+    if (error) {
+      console.error(`[importBackupToSupabase] Erro ao limpar ${table}:`, error);
+      throw new Error(`Erro ao limpar ${table}: ${error.message}`);
+    }
+    console.log(`[importBackupToSupabase] ${table} limpo`);
+  }
+
   const idMap: Record<string, string> = {};
   const counts: Record<string, number> = {};
 
