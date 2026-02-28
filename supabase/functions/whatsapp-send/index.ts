@@ -77,6 +77,9 @@ Deno.serve(async (req) => {
     if (instError || !inst) throw new Error("Instance not found");
     if (inst.status !== "open") throw new Error("Instance is not connected");
 
+    // Service role client for logging (bypasses RLS)
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
     let result;
 
     if (media_url) {
@@ -108,11 +111,35 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Log success
+    await supabaseAdmin.from("whatsapp_message_logs").insert({
+      user_id: user.id,
+      instance_id,
+      phone,
+      status: "sent",
+    });
+
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error("whatsapp-send error:", err);
+
+    // Log failure (best-effort, don't let logging errors mask the original)
+    try {
+      const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const body = await req.clone().json().catch(() => ({}));
+      await supabaseAdmin.from("whatsapp_message_logs").insert({
+        user_id: body?.user_id_fallback || "00000000-0000-0000-0000-000000000000",
+        instance_id: body?.instance_id || "00000000-0000-0000-0000-000000000000",
+        phone: body?.phone || "unknown",
+        status: "failed",
+        error: err instanceof Error ? err.message : "Internal error",
+      });
+    } catch (_logErr) {
+      console.error("Failed to log message error:", _logErr);
+    }
+
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

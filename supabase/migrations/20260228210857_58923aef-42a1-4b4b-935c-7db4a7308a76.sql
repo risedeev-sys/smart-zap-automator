@@ -1,0 +1,1 @@
+DROP POLICY "Service role can insert logs" ON public.whatsapp_message_logs;
