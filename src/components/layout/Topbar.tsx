@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { useEffect, useState } from "react";
+import { getAppSettings, saveAppSettings, type AppSettings } from "@/pages/ConfiguracoesPage";
 
 interface TopbarProps {
   title: string;
@@ -12,6 +17,11 @@ interface TopbarProps {
 
 export function Topbar({ title }: TopbarProps) {
   const { theme, toggleTheme } = useTheme();
+  const [settings, setSettings] = useState<AppSettings>(getAppSettings);
+
+  useEffect(() => {
+    saveAppSettings(settings);
+  }, [settings]);
 
   return (
     <header className="h-14 border-b border-border bg-card flex items-center justify-between px-4 flex-shrink-0">
@@ -30,9 +40,36 @@ export function Topbar({ title }: TopbarProps) {
           {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
         </Button>
 
-        <Button variant="ghost" size="icon" className="h-8 w-8">
-          <Settings className="h-4 w-4" />
-        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-72" align="end">
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-foreground">Configurações</h4>
+              <Separator />
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <Label htmlFor="confirm-send" className="text-xs font-medium">
+                    Confirmar antes de enviar
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    Pedir confirmação ao disparar ativos no Espaço de Teste.
+                  </p>
+                </div>
+                <Switch
+                  id="confirm-send"
+                  checked={settings.confirmFunnelSend}
+                  onCheckedChange={(checked) =>
+                    setSettings((prev) => ({ ...prev, confirmFunnelSend: checked }))
+                  }
+                />
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Button variant="ghost" size="icon" className="h-8 w-8">
           <LogOut className="h-4 w-4" />
