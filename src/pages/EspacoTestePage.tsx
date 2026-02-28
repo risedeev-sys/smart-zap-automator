@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { findMatchingTriggers, type TriggerData } from "@/utils/triggerEngine";
+import { FunnelConfirmDialog } from "@/components/FunnelConfirmDialog";
+import { getAppSettings } from "@/pages/ConfiguracoesPage";
+import { toast } from "sonner";
 
 interface ChatMessage {
   id: string;
@@ -70,6 +73,7 @@ export default function EspacoTestePage() {
   const [triggers, setTriggers] = useState<TriggerData[]>([]);
   const [funnelItems, setFunnelItems] = useState<Record<string, any[]>>({});
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
+  const [pendingFunnel, setPendingFunnel] = useState<{ id: string; name: string; itemCount: number; duration: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const assetTables: Record<string, string> = {
@@ -167,7 +171,7 @@ export default function EspacoTestePage() {
   // Fetch funnel items and execute sequentially
   const executeFunnel = async (funnelId: string, funnelName: string) => {
     addMessage({
-      text: `⚡ Gatilho disparou funil "${funnelName}"`,
+      text: `⚡ Funil "${funnelName}" disparado`,
       type: "system",
     });
 
@@ -210,7 +214,6 @@ export default function EspacoTestePage() {
 
       const typeLabel = item.type === "mensagem" ? "💬 Mensagem" : item.type === "audio" ? "🎵 Áudio" : item.type === "midia" ? "📷 Mídia" : "📄 Documento";
 
-      // System message announcing the asset
       addMessage({
         text: `📨 ${typeLabel} "${assetName}" disparada`,
         type: "system",
@@ -225,6 +228,10 @@ export default function EspacoTestePage() {
         fileType: mime ?? undefined,
       });
     }
+
+    toast.success("Envio do funil iniciado com sucesso", {
+      description: `Funil "${funnelName}" com ${items.length} ativo(s)`,
+    });
   };
 
   // Process incoming message through trigger engine
@@ -275,10 +282,35 @@ export default function EspacoTestePage() {
     await processIncomingMessage(text);
   };
 
+  // Helper to calculate funnel duration
+  const calcFunnelDuration = (items: any[]) => {
+    const totalSec = items.reduce((acc: number, item: any) => acc + item.delay_min * 60 + item.delay_sec, 0);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min} min e ${sec} seg`;
+  };
+
   // Send asset directly
   const handleAssetClick = async (asset: AssetButton) => {
     if (asset.type === "funil") {
-      await executeFunnel(asset.id, asset.name);
+      const settings = getAppSettings();
+      if (settings.confirmFunnelSend) {
+        // Fetch items to show count and duration in dialog
+        const { data: items } = await supabase
+          .from("funnel_items")
+          .select("*")
+          .eq("funnel_id", asset.id)
+          .order("position");
+        const itemList = items ?? [];
+        setPendingFunnel({
+          id: asset.id,
+          name: asset.name,
+          itemCount: itemList.length,
+          duration: calcFunnelDuration(itemList),
+        });
+      } else {
+        await executeFunnel(asset.id, asset.name);
+      }
     } else {
       const typeLabel =
         asset.type === "mensagem" ? "💬 Mensagem" : asset.type === "audio" ? "🎵 Áudio" : asset.type === "midia" ? "📷 Mídia" : "📄 Documento";
@@ -297,7 +329,6 @@ export default function EspacoTestePage() {
         }
       }
 
-      // System message announcing
       addMessage({
         text: `📨 ${typeLabel} "${asset.name}" disparada`,
         type: "system",
@@ -312,6 +343,13 @@ export default function EspacoTestePage() {
         fileType: mime ?? undefined,
       });
     }
+  };
+
+  const handleConfirmFunnel = async () => {
+    if (!pendingFunnel) return;
+    const { id, name } = pendingFunnel;
+    setPendingFunnel(null);
+    await executeFunnel(id, name);
   };
 
   const formatTime = (d: Date) =>
@@ -459,6 +497,15 @@ export default function EspacoTestePage() {
           </Button>
         </div>
       </div>
+
+      <FunnelConfirmDialog
+        open={!!pendingFunnel}
+        onOpenChange={(open) => !open && setPendingFunnel(null)}
+        funnelName={pendingFunnel?.name ?? ""}
+        itemCount={pendingFunnel?.itemCount ?? 0}
+        estimatedDuration={pendingFunnel?.duration ?? "0 min e 0 seg"}
+        onConfirm={handleConfirmFunnel}
+      />
     </MainLayout>
   );
 }
