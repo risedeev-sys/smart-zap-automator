@@ -29,6 +29,8 @@ interface ChatMessage {
   timestamp: Date;
   assetType?: string;
   assetName?: string;
+  fileUrl?: string;
+  fileType?: string; // mime type
 }
 
 interface AssetButton {
@@ -156,6 +158,12 @@ export default function EspacoTestePage() {
     ]);
   };
 
+  const getStorageUrl = (storagePath: string | null) => {
+    if (!storagePath) return null;
+    const { data } = supabase.storage.from("assets").getPublicUrl(storagePath);
+    return data?.publicUrl ?? null;
+  };
+
   // Fetch funnel items and execute sequentially
   const executeFunnel = async (funnelId: string, funnelName: string) => {
     addMessage({
@@ -177,12 +185,14 @@ export default function EspacoTestePage() {
     for (const item of items) {
       const delay = (item.delay_min * 60 + item.delay_sec) * 1000;
       if (delay > 0) {
-        await new Promise((r) => setTimeout(r, Math.min(delay, 5000))); // cap at 5s for testing
+        await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
       }
 
       const table = assetTables[item.type];
       let assetName = assetNameCache[item.asset_id] ?? "(ativo)";
       let content = "";
+      let fileUrl: string | null = null;
+      let mime: string | null = null;
 
       if (table) {
         const { data: asset } = await supabase
@@ -193,16 +203,26 @@ export default function EspacoTestePage() {
         if (asset) {
           assetName = (asset as any).name;
           content = (asset as any).content ?? "";
+          fileUrl = getStorageUrl((asset as any).storage_path ?? null);
+          mime = (asset as any).mime ?? null;
         }
       }
 
-      const typeLabel = item.type === "mensagem" ? "💬" : item.type === "audio" ? "🎵" : item.type === "midia" ? "📷" : "📄";
+      const typeLabel = item.type === "mensagem" ? "💬 Mensagem" : item.type === "audio" ? "🎵 Áudio" : item.type === "midia" ? "📷 Mídia" : "📄 Documento";
+
+      // System message announcing the asset
+      addMessage({
+        text: `📨 ${typeLabel} "${assetName}" disparada`,
+        type: "system",
+      });
 
       addMessage({
-        text: content || `${typeLabel} [${item.type}] ${assetName}`,
+        text: content || `${assetName}`,
         type: "sent",
         assetType: item.type,
         assetName,
+        fileUrl: fileUrl ?? undefined,
+        fileType: mime ?? undefined,
       });
     }
   };
@@ -261,19 +281,35 @@ export default function EspacoTestePage() {
       await executeFunnel(asset.id, asset.name);
     } else {
       const typeLabel =
-        asset.type === "mensagem" ? "💬" : asset.type === "audio" ? "🎵" : asset.type === "midia" ? "📷" : "📄";
+        asset.type === "mensagem" ? "💬 Mensagem" : asset.type === "audio" ? "🎵 Áudio" : asset.type === "midia" ? "📷 Mídia" : "📄 Documento";
 
-      let content = asset.content ?? "";
-      if (!content && asset.type === "mensagem") {
-        const { data } = await supabase.from("messages").select("content").eq("id", asset.id).single();
-        content = (data as any)?.content ?? "";
+      let content = "";
+      let fileUrl: string | null = null;
+      let mime: string | null = null;
+
+      const table = assetTables[asset.type];
+      if (table) {
+        const { data } = await supabase.from(table as any).select("*").eq("id", asset.id).single();
+        if (data) {
+          content = (data as any).content ?? "";
+          fileUrl = getStorageUrl((data as any).storage_path ?? null);
+          mime = (data as any).mime ?? null;
+        }
       }
 
+      // System message announcing
       addMessage({
-        text: content || `${typeLabel} [${asset.type}] ${asset.name}`,
+        text: `📨 ${typeLabel} "${asset.name}" disparada`,
+        type: "system",
+      });
+
+      addMessage({
+        text: content || asset.name,
         type: "sent",
         assetType: asset.type,
         assetName: asset.name,
+        fileUrl: fileUrl ?? undefined,
+        fileType: mime ?? undefined,
       });
     }
   };
@@ -346,7 +382,23 @@ export default function EspacoTestePage() {
                       : {msg.assetName}
                     </Badge>
                   )}
-                  <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                  {/* Render file content based on type */}
+                  {msg.fileUrl && msg.assetType === "audio" && (
+                    <audio controls className="w-full max-w-[250px] my-1" src={msg.fileUrl} />
+                  )}
+                  {msg.fileUrl && msg.assetType === "midia" && msg.fileType?.startsWith("video") && (
+                    <video controls className="w-full max-w-[250px] rounded my-1" src={msg.fileUrl} />
+                  )}
+                  {msg.fileUrl && msg.assetType === "midia" && !msg.fileType?.startsWith("video") && (
+                    <img src={msg.fileUrl} alt={msg.assetName} className="w-full max-w-[250px] rounded my-1" />
+                  )}
+                  {msg.fileUrl && msg.assetType === "documento" && (
+                    <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-muted/50 rounded p-2 my-1 text-xs text-primary hover:underline">
+                      <FileText className="h-4 w-4" />
+                      {msg.assetName}
+                    </a>
+                  )}
+                  {msg.text && <p className="text-sm whitespace-pre-wrap">{msg.text}</p>}
                   <div className="flex items-center justify-end gap-1 mt-1">
                     <span className="text-[10px] text-muted-foreground">
                       {formatTime(msg.timestamp)}
