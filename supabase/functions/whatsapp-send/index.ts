@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL")!;
+const EVOLUTION_API_URL = (Deno.env.get("EVOLUTION_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -14,6 +14,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 async function evoFetch(path: string, options: RequestInit = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
+  console.log(`[evoFetch] ${options.method || "GET"} ${url}`);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
@@ -27,7 +28,10 @@ async function evoFetch(path: string, options: RequestInit = {}) {
       },
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data?.message || `Evolution API error ${res.status}`);
+    if (!res.ok) {
+      console.error(`[evoFetch] ${res.status} response:`, JSON.stringify(data));
+      throw new Error(data?.message || `Evolution API error ${res.status}`);
+    }
     return data;
   } finally {
     clearTimeout(timeout);
