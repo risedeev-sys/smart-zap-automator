@@ -1,51 +1,44 @@
 
 
-## Exportar Funil Individual
+# Importar Funil com Persistencia no Supabase
 
-### O que sera feito
+## Contexto
 
-Criar uma funcao `exportFunnel(funnelId)` que busca todos os dados relacionados a um funil no Supabase e gera um download automatico de arquivo `.json`.
+Atualmente, ao exportar um funil individual (`exportFunnel`), o arquivo JSON contem o funil, seus itens e os assets referenciados (messages, audios, medias, documents) com todos os campos do banco, incluindo `storage_path`, `mime`, `bytes`, etc.
 
-### Estrutura do arquivo exportado
+Porem, nao existe uma funcao para **importar** esse backup de volta. O objetivo e criar essa funcao e garantir que os registros de assets sejam criados nas tabelas `public.audios`, `public.medias`, `public.documents` e `public.messages` mesmo que `storage_path` esteja vazio/null.
 
-```text
-backup-{funnel_name}.json
-{
-  "version": 1,
-  "createdAt": "2026-02-27T...",
-  "funnel": { id, name, favorite },
-  "items": [ { id, type, asset_id, delay_min, delay_sec, position } ],
-  "assets": {
-    "messages": [...],
-    "audios": [...],
-    "medias": [...],
-    "documents": [...]
-  }
-}
-```
+## Arquivos a criar/modificar
 
-### Arquivos a criar/modificar
+### 1. Criar `src/utils/importFunnel.ts`
 
-**1. Criar `src/utils/exportFunnel.ts`**
+Funcao `importFunnel(file: File)` que:
 
-Funcao utilitaria que:
-- Busca o funil em `funnels` por ID
-- Busca os itens em `funnel_items` filtrados por `funnel_id`
-- Agrupa os `asset_id` por tipo (mensagem -> messages, audio -> audios, etc.)
-- Busca os assets relacionados em cada tabela usando `.in("id", [ids])`
-- Monta o objeto JSON com funnel, items e assets
-- Gera o download com `Blob` + `createElement("a")` + click
-- Nome do arquivo: `backup-{funnel_name}.json` (com nome sanitizado)
+- Le e parseia o arquivo JSON
+- Valida a estrutura (deve ter `funnel`, `items`, `assets`)
+- Obtem o `user_id` do usuario logado via `supabase.auth.getUser()`
+- Cria os assets nas tabelas do Supabase com novos UUIDs, mantendo um mapa `oldId -> newId`:
+  - Para cada asset em `assets.messages`: insere em `public.messages` com `name`, `content`, `user_id`
+  - Para cada asset em `assets.audios`: insere em `public.audios` com `name`, `storage_path` (pode ser null), `mime`, `bytes`, `user_id`
+  - Para cada asset em `assets.medias`: insere em `public.medias` com os mesmos campos
+  - Para cada asset em `assets.documents`: insere em `public.documents` com os mesmos campos
+- Cria o funil em `public.funnels` com novo UUID
+- Cria os itens em `public.funnel_items` com `asset_id` remapeado para os novos IDs
+- Retorna o ID do novo funil criado
 
-**2. Modificar `src/pages/FunisPage.tsx`**
+### 2. Modificar `src/pages/FunisPage.tsx`
 
-- Importar `exportFunnel` e o icone `Download` do lucide-react
-- Adicionar um botao de export na barra de acoes do funil selecionado (ao lado dos botoes de excluir, duplicar, editar e favoritar)
-- O botao chama `exportFunnel(selected)` e mostra toast de sucesso/erro
+- Importar `importFunnel` e o icone `Upload` do lucide-react
+- Adicionar um botao de importar funil na barra de acoes (ao lado do botao de adicionar)
+- Adicionar um `<input type="file" accept=".json">` hidden
+- Ao selecionar arquivo, chamar `importFunnel(file)`, atualizar a lista de funis e selecionar o funil importado
+- Mostrar toast de sucesso/erro
 
-### Detalhes tecnicos
+## Detalhes tecnicos
 
-- Mapeamento de tipos para tabelas: reutiliza o mesmo `assetTables` ja existente no FunisPage (`mensagem -> messages`, `audio -> audios`, `midia -> medias`, `documento -> documents`)
-- Queries agrupadas por tipo para minimizar chamadas ao Supabase (no maximo 4 queries de assets + 1 funnel + 1 items = 6 queries)
-- Sanitizacao do nome do arquivo: substitui espacos por hifens e remove caracteres especiais
+- Mapeamento de tabelas: `messages`, `audios`, `medias`, `documents` (mesmo mapa `assetTables` ja existente)
+- Campos nullable (`storage_path`, `mime`, `bytes`) serao inseridos como `null` quando ausentes no backup -- isso atende ao requisito de criar registros mesmo sem `storage_path`
+- Remapeamento de IDs: `crypto.randomUUID()` para gerar novos IDs, mapa `Record<string, string>` para atualizar `asset_id` nos `funnel_items`
+- Queries: 4 inserts de assets (um por tabela, usando arrays) + 1 insert de funnel + 1 insert batch de items = 6 operacoes
+- Registro de backup: opcionalmente criar um registro em `public.backups` com `source: "funnel-import"` e referencia ao novo `funnel_id`
 
