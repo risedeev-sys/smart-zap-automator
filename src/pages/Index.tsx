@@ -46,22 +46,10 @@ export default function Index() {
 
   const fetchInstance = useCallback(async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const res = await fetch(
-        `https://txnhtcyjzohxkfwdfrvh.supabase.co/functions/v1/whatsapp-manage`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-            apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR4bmh0Y3lqem9oeGtmd2RmcnZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyMDQ0MTEsImV4cCI6MjA4Nzc4MDQxMX0.vUFZYFr8OLaZczKjcj4I8HOpMLNNOX1yo3GhvwPuR9Y",
-          },
-          body: JSON.stringify({ action: "instance-list" }),
-        }
-      );
-      const data = await res.json();
+      const { data, error } = await supabase.functions.invoke("whatsapp-manage", {
+        body: { action: "instance-list" },
+      });
+      if (error) throw error;
       if (Array.isArray(data) && data.length > 0) {
         setInstance(data[0]);
       }
@@ -106,7 +94,7 @@ export default function Index() {
 
         <Card
           className="border-primary/20 bg-accent/30 cursor-pointer hover:bg-accent/50 transition-colors"
-          onClick={() => navigate("/instancias")}
+          onClick={() => navigate("/api-keys")}
         >
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
@@ -173,7 +161,7 @@ export default function Index() {
               )}
             </div>
             <div className="flex flex-col gap-2 sm:w-48">
-              <Button className="w-full" onClick={() => navigate("/instancias")}>
+              <Button className="w-full" onClick={() => navigate("/api-keys")}>
                 {instance ? "Gerenciar" : "Criar Instância"}
               </Button>
               {instance?.phone_number && (
