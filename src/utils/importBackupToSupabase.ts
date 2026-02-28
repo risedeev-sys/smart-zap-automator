@@ -16,7 +16,7 @@ export async function importBackupToSupabase(rawData: Record<string, any>): Prom
 
   // Limpar todos os dados do usuário antes de inserir
   console.log("[importBackupToSupabase] Limpando dados existentes do usuário...");
-  const tablesToClean = ["funnel_items", "funnels", "messages", "audios", "medias", "documents"] as const;
+  const tablesToClean = ["funnel_items", "funnels", "triggers", "messages", "audios", "medias", "documents"] as const;
   for (const table of tablesToClean) {
     const { error } = await supabase.from(table).delete().eq("user_id", userId);
     if (error) {
@@ -107,6 +107,31 @@ export async function importBackupToSupabase(rawData: Record<string, any>): Prom
     }
     counts["funis"] = rawData.funis.length;
     console.log(`[importBackupToSupabase] ${rawData.funis.length} funis criados`);
+  }
+
+  // Triggers
+  const rawTriggers = rawData.gatilhos ?? rawData.triggers;
+  if (rawTriggers?.length) {
+    for (const trigger of rawTriggers) {
+      const { error } = await supabase.from("triggers").insert({
+        name: trigger.name,
+        enabled: trigger.enabled ?? true,
+        favorite: trigger.favorite ?? false,
+        conditions: trigger.conditions ?? [],
+        funnel_id: trigger.funnel_id ?? null,
+        delay_seconds: trigger.delay_seconds ?? trigger.delaySeconds ?? 0,
+        send_to_groups: trigger.send_to_groups ?? trigger.sendToGroups ?? false,
+        saved_contacts_only: trigger.saved_contacts_only ?? trigger.savedContactsOnly ?? false,
+        ignore_case: trigger.ignore_case ?? trigger.ignoreCase ?? true,
+        position: trigger.position ?? 0,
+        user_id: userId,
+      });
+      if (error) {
+        console.error("[importBackupToSupabase] Erro ao criar trigger:", error);
+      }
+    }
+    counts["gatilhos"] = rawTriggers.length;
+    console.log(`[importBackupToSupabase] ${rawTriggers.length} gatilhos criados`);
   }
 
   console.log("[importBackupToSupabase] Concluído. Counts:", counts);
