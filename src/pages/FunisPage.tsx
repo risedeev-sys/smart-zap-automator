@@ -29,6 +29,7 @@ import {
   Trash2,
   Copy,
   Download,
+  Upload,
   MessageSquare,
   Mic,
   Image,
@@ -39,6 +40,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { exportFunnel } from "@/utils/exportFunnel";
+import { importFunnel } from "@/utils/importFunnel";
+import { useRef } from "react";
 
 const typeIcons: Record<string, typeof MessageSquare> = {
   mensagem: MessageSquare,
@@ -112,6 +115,8 @@ export default function FunisPage() {
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
 
   const { toast } = useToast();
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
 
   const fetchFunnels = useCallback(async () => {
     const { data, error } = await supabase
@@ -336,9 +341,34 @@ export default function FunisPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Buscar funil..." className="pl-9 h-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
-            <Button className="w-full h-9 text-sm" onClick={() => setAddOpen(true)}>
+             <Button className="w-full h-9 text-sm" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1" /> Adicionar
             </Button>
+            <Button variant="outline" className="w-full h-9 text-sm" disabled={importing} onClick={() => importInputRef.current?.click()}>
+              <Upload className="h-4 w-4 mr-1" /> {importing ? "Importando..." : "Importar funil"}
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                e.target.value = "";
+                setImporting(true);
+                try {
+                  const newFunnelId = await importFunnel(file);
+                  await fetchFunnels();
+                  setSelected(newFunnelId);
+                  toast({ title: "Funil importado com sucesso!" });
+                } catch (err: any) {
+                  toast({ title: "Erro ao importar funil", description: err.message, variant: "destructive" });
+                } finally {
+                  setImporting(false);
+                }
+              }}
+            />
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {filteredFunnels.map((f) => (
