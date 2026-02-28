@@ -171,10 +171,6 @@ export default function EspacoTestePage() {
 
   // Fetch funnel items and execute sequentially
   const executeFunnel = async (funnelId: string, funnelName: string) => {
-    addMessage({
-      text: `⚡ Funil "${funnelName}" disparado`,
-      type: "system",
-    });
 
     const { data: items } = await supabase
       .from("funnel_items")
@@ -213,12 +209,6 @@ export default function EspacoTestePage() {
         }
       }
 
-      const typeLabel = item.type === "mensagem" ? "💬 Mensagem" : item.type === "audio" ? "🎵 Áudio" : item.type === "midia" ? "📷 Mídia" : "📄 Documento";
-
-      addMessage({
-        text: `📨 ${typeLabel} "${assetName}" disparada`,
-        type: "system",
-      });
 
       addMessage({
         text: content || `${assetName}`,
@@ -254,19 +244,10 @@ export default function EspacoTestePage() {
 
         const delay = result.delaySeconds * 1000;
         if (delay > 0) {
-          addMessage({
-            text: `⏱ Aguardando ${result.delaySeconds}s antes de disparar "${funnelName}"...`,
-            type: "system",
-          });
           await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
         }
 
         await executeFunnel(result.funnelId, funnelName);
-      } else {
-        addMessage({
-          text: `⚡ Gatilho "${result.triggerName}" disparou, mas não tem funil vinculado.`,
-          type: "system",
-        });
       }
     }
   };
@@ -340,7 +321,7 @@ export default function EspacoTestePage() {
       }
     }
 
-    addMessage({ text: `📨 ${typeLabel} "${asset.name}" disparada`, type: "system" });
+    
     addMessage({
       text: content || asset.name,
       type: "sent",
