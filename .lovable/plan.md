@@ -1,47 +1,87 @@
 
 
-# Importar Backup = Limpar Tudo + Inserir Novo
+# Dar vida aos Gatilhos (Backend) + Simulador de Testes
 
-## Problema Atual
-Quando você importa um backup, os dados antigos permanecem no banco e os novos são adicionados junto. O comportamento correto deve ser: **apagar tudo do usuário** (mensagens, audios, midias, documentos, funnel_items, funnels) e depois inserir apenas os dados do backup importado.
+## Situacao Atual
+- A tabela `triggers` no Supabase so tem `id`, `name`, `user_id`, `created_at`
+- Faltam todas as colunas de configuracao (enabled, conditions, delay, regras, funil vinculado)
+- A pagina `GatilhosPage.tsx` usa estado em memoria (AssetsContext) -- nada persiste no banco
+- As outras paginas (Mensagens, Audios, etc.) ja seguem o padrao correto com CRUD direto no Supabase
 
-## Mudanças
-
-### 1. `importBackupToSupabase.ts` - Adicionar limpeza antes da inserção
-Antes de inserir qualquer dado, deletar todos os registros do usuário nas tabelas, na ordem correta (respeitando dependencias):
-
-1. `funnel_items` (depende de funnels)
-2. `funnels`
-3. `messages`
-4. `audios`
-5. `medias`
-6. `documents`
-
-Isso garante que o banco fique limpo antes de receber os novos dados.
-
-### 2. `BackupsPage.tsx` - Simplificar lógica de importação
-- Remover o toggle "Substituir todos os itens existentes" (agora sempre substitui)
-- Remover toda a lógica condicional de "append vs replace" -- sempre faz replace
-- Atualizar o estado local diretamente com os dados importados (setMensagens, setAudios, etc.)
-- Remover o bloco de remapeamento de IDs no lado do frontend (o `importBackupToSupabase` já faz isso)
-
-### 3. Aviso ao usuário
-Manter o aviso amarelo na UI, mas atualizar o texto para deixar claro que a importação **substituirá todos os dados existentes**.
+## Como Testar sem WhatsApp?
+Vamos criar um **Simulador de Gatilhos** direto na interface. Voce digita uma mensagem de teste e o sistema mostra quais gatilhos seriam disparados e qual funil seria executado. Assim da para validar toda a logica sem precisar conectar no WhatsApp.
 
 ---
 
-### Detalhes Tecnico
+## Plano de Implementacao
 
-**Ordem de deleção no `importBackupToSupabase`:**
+### 1. Migrar schema da tabela `triggers`
+Adicionar as colunas que faltam:
+
+- `enabled` (boolean, default true)
+- `favorite` (boolean, default false)
+- `conditions` (jsonb, default '[]') -- array de `{type, keywords[]}`
+- `funnel_id` (uuid, nullable) -- referencia ao funil vinculado
+- `delay_seconds` (integer, default 0)
+- `send_to_groups` (boolean, default false)
+- `saved_contacts_only` (boolean, default false)
+- `ignore_case` (boolean, default true)
+- `position` (integer, default 0) -- para ordenacao por drag
+
+### 2. Reescrever `GatilhosPage.tsx` com CRUD no Supabase
+Seguir o mesmo padrao de `MensagensPage.tsx`:
+- `fetchTriggers()` no mount com `supabase.from("triggers").select()`
+- Criar, editar, deletar com operacoes diretas no Supabase
+- Remover dependencia do AssetsContext para triggers
+- Manter estado local apenas para UI (selected, modais)
+- Vincular funil via select que lista os funnels do usuario
+
+### 3. Criar componente Simulador de Gatilhos
+Um painel simples (pode ser um dialog ou uma secao na pagina) onde:
+- O usuario digita uma mensagem de teste
+- Clica em "Simular"
+- O sistema avalia todas as condicoes dos gatilhos ativos
+- Mostra uma lista dos gatilhos que seriam disparados, com o funil vinculado
+
+A logica de matching seria:
+- **contem**: mensagem inclui alguma keyword
+- **igual a**: mensagem e exatamente igual a alguma keyword
+- **comeca com**: mensagem comeca com alguma keyword
+- **nao contem**: mensagem nao contem nenhuma keyword
+
+Respeitando a flag `ignore_case`.
+
+### 4. Atualizar AssetsContext
+- Remover `triggers` e `setTriggers` do AssetsContext (ja que agora vive no Supabase)
+- Ou manter como cache local se outras paginas precisarem dos triggers
+
+### 5. Incluir triggers na exportacao/importacao de backup
+- Adicionar triggers ao JSON de exportacao
+- Adicionar limpeza e importacao de triggers no `importBackupToSupabase.ts`
+
+---
+
+## Detalhes Tecnicos
+
+**Schema da coluna `conditions` (jsonb):**
 ```text
-DELETE funnel_items WHERE user_id = ?
-DELETE funnels      WHERE user_id = ?
-DELETE messages     WHERE user_id = ?
-DELETE audios       WHERE user_id = ?
-DELETE medias       WHERE user_id = ?
-DELETE documents    WHERE user_id = ?
+[
+  { "type": "contem", "keywords": ["oi", "ola"] },
+  { "type": "igual a", "keywords": ["menu"] }
+]
 ```
 
-Depois disso, o fluxo de inserção continua exatamente como já funciona hoje.
+**Logica do simulador (client-side):**
+```text
+para cada trigger ativo:
+  para cada condition:
+    normalizar mensagem (se ignore_case)
+    avaliar tipo (contem/igual/comeca/nao contem)
+    se TODAS as conditions passam -> trigger dispara
+```
 
-**Estado local no `BackupsPage`:** Após a importação, o estado local será atualizado com os dados do backup (usando os setters do AssetsContext), garantindo que a UI reflita imediatamente os novos dados sem precisar recarregar a pagina.
+**Ordem das mudancas:**
+1. Migracao do banco (adicionar colunas)
+2. Reescrever GatilhosPage com Supabase
+3. Adicionar simulador
+4. Atualizar backup export/import
