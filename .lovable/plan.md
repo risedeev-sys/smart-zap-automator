@@ -1,53 +1,32 @@
 
 
-## Correção do erro 404 na Evolution API
+## Correção do erro 404: HTTP para HTTPS redirect
 
-### Diagnóstico
-Os logs confirmam que toda chamada à Evolution API retorna **404**. A URL montada é `http://evolution.sandrodev.cloud/instance/create`. Possíveis causas:
+### Problema identificado
+A Evolution API (v2.3.7) está acessivel em `http://evolution.sandrodev.cloud`, mas o servidor redireciona HTTP para HTTPS. Quando isso acontece com um POST, o navegador/runtime converte para GET (comportamento padrao de redirects 301/302), resultando em "Cannot GET /instance/create".
 
-1. **Barra final na URL** — se o secret tem `http://evolution.sandrodev.cloud/`, gera `//instance/create`
-2. **A Evolution API pode exigir um prefixo** como `/api/v1` ou `/api/v2` (dependendo da versão instalada)
+### Solucao
 
-### Correções
+**1. Correcao no codigo (ambas Edge Functions)**
+Adicionar sanitizacao automatica que converte `http://` para `https://` na URL da Evolution API, alem da limpeza de barra final ja existente:
 
-**1. Sanitizar a URL base (remover barra final) — `whatsapp-manage/index.ts` e `whatsapp-send/index.ts`**
-
-Linha 9 de ambos os arquivos:
 ```typescript
-// DE:
-const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL")!;
-// PARA:
-const EVOLUTION_API_URL = (Deno.env.get("EVOLUTION_API_URL") || "").replace(/\/+$/, "");
+const EVOLUTION_API_URL = (Deno.env.get("EVOLUTION_API_URL") || "")
+  .replace(/\/+$/, "")
+  .replace(/^http:\/\//i, "https://");
 ```
 
-**2. Adicionar log da URL completa para diagnóstico**
+Tambem adicionar `redirect: "follow"` explicitamente no fetch para maior seguranca.
 
-Dentro da função `evoFetch` de ambos os arquivos, logo após montar a URL:
-```typescript
-console.log(`[evoFetch] ${options.method || "GET"} ${url}`);
-```
+**2. Arquivos alterados**
 
-E no bloco de erro:
-```typescript
-if (!res.ok) {
-  console.error(`[evoFetch] ${res.status} response:`, JSON.stringify(data));
-  throw new Error(data?.message || `Evolution API error ${res.status}`);
-}
-```
+| Arquivo | Alteracao |
+|---------|-----------|
+| `supabase/functions/whatsapp-manage/index.ts` | Forcar HTTPS na URL (linha 9) |
+| `supabase/functions/whatsapp-send/index.ts` | Forcar HTTPS na URL (linha 9) |
 
-**3. Re-deploy das Edge Functions**
-
-Após as edições, fazer deploy de `whatsapp-manage` e `whatsapp-send`.
+**3. Recomendacao adicional**
+O usuario tambem deve atualizar o secret `EVOLUTION_API_URL` no painel do Supabase para `https://evolution.sandrodev.cloud` (com HTTPS) para evitar dependencia da correcao automatica.
 
 ### Resultado esperado
-- Os logs vão mostrar a URL exata chamada (ex: `[evoFetch] POST http://evolution.sandrodev.cloud/instance/create`)
-- A sanitização resolve o caso de barra dupla
-- Se o 404 persistir, os logs indicarão se é necessário ajustar o `EVOLUTION_API_URL` no painel do Supabase para incluir um prefixo como `/api/v2`
-
-### Arquivos alterados
-
-| Arquivo | Alteração |
-|---------|-----------|
-| `supabase/functions/whatsapp-manage/index.ts` | Sanitizar URL (linha 9), adicionar logs no evoFetch (linhas 16-31) |
-| `supabase/functions/whatsapp-send/index.ts` | Sanitizar URL (linha 9), adicionar logs no evoFetch (linhas 15-30) |
-
+O POST sera enviado diretamente para `https://evolution.sandrodev.cloud/instance/create`, sem redirect, resolvendo o erro 404.
