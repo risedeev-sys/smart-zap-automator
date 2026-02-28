@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/dialog";
 import { Trash2, Copy, Pencil, Heart, Image } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { uploadAssetFile } from "@/utils/uploadAssetFile";
 
 export default function MidiasPage() {
   const { midias, setMidias } = useAssets();
@@ -51,13 +53,31 @@ export default function MidiasPage() {
     }
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newName.trim() || !uploadFile) return;
-    const id = Date.now().toString();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: record, error } = await supabase
+      .from("medias")
+      .insert({ name: newName.trim(), user_id: user.id })
+      .select("id, name")
+      .single();
+    if (error || !record) {
+      toast({ title: "Erro ao criar mídia", description: error?.message, variant: "destructive" });
+      return;
+    }
+
+    try {
+      await uploadAssetFile("medias", record.id, uploadFile, user.id);
+    } catch (e: any) {
+      toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
+    }
+
     const fileUrl = URL.createObjectURL(uploadFile);
     const fileType = uploadFile.type;
-    setMidias((prev) => [...prev, { id, name: newName.trim(), fileName: uploadFile.name, fileUrl, fileType }]);
-    setSelected(id);
+    setMidias((prev) => [...prev, { id: record.id, name: newName.trim(), fileName: uploadFile.name, fileUrl, fileType }]);
+    setSelected(record.id);
     setNewName("");
     setNewCaption("");
     setSingleView(false);
