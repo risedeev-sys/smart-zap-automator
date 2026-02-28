@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { importBackupToSupabase } from "@/utils/importBackupToSupabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,8 +93,13 @@ export default function BackupsPage() {
       const rawData = JSON.parse(text);
       const { converted: data, wasZapVoice } = detectAndConvertZapVoice(rawData);
 
+      // Persist to Supabase
+      console.log("[BackupsPage] Chamando importBackupToSupabase...");
+      const { counts } = await importBackupToSupabase(data);
+      console.log("[BackupsPage] Persistência concluída:", counts);
+
+      // Also update local state for immediate UI feedback
       if (replaceAll) {
-        // Replace mode: use IDs as-is
         if (data.mensagens) setMensagens(data.mensagens);
         if (data.audios) setAudios(data.audios);
         if (data.midias) setMidias(data.midias);
@@ -101,9 +107,7 @@ export default function BackupsPage() {
         if (data.funis) setFunnels(data.funis);
         if (data.gatilhos) setTriggers(data.gatilhos);
       } else {
-        // Append mode: remap all IDs to avoid conflicts
         const idMap: Record<string, string> = {};
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const remap = (items: any[]): any[] =>
           items.map((item) => {
             const newId = crypto.randomUUID();
@@ -121,7 +125,6 @@ export default function BackupsPage() {
         if (remappedMidias.length) setMidias((prev) => [...prev, ...remappedMidias]);
         if (remappedDocumentos.length) setDocumentos((prev) => [...prev, ...remappedDocumentos]);
 
-        // Remap funnels: new funnel IDs, new item IDs, updated assetIds
         if (data.funis) {
           const remappedFunnels = (data.funis as Funnel[]).map((funnel) => ({
             ...funnel,
@@ -135,7 +138,6 @@ export default function BackupsPage() {
           setFunnels((prev) => [...prev, ...remappedFunnels]);
         }
 
-        // Remap triggers
         if (data.gatilhos) {
           const remappedTriggers = (data.gatilhos as Trigger[]).map((trigger) => ({
             ...trigger,
@@ -145,55 +147,23 @@ export default function BackupsPage() {
         }
       }
 
-      // Validate funnel asset references
-      if (data.funis) {
-        const allAssetIds = new Set([
-          ...mensagens.map((m) => m.id),
-          ...audios.map((a) => a.id),
-          ...midias.map((m) => m.id),
-          ...documentos.map((d) => d.id),
-          ...(data.mensagens || []).map((m: { id: string }) => m.id),
-          ...(data.audios || []).map((a: { id: string }) => a.id),
-          ...(data.midias || []).map((m: { id: string }) => m.id),
-          ...(data.documentos || []).map((d: { id: string }) => d.id),
-        ]);
-
-        const missingCategories = new Set<string>();
-        for (const funnel of data.funis as Funnel[]) {
-          for (const item of funnel.items) {
-            if (!allAssetIds.has(item.assetId)) {
-              const labels: Record<string, string> = { mensagem: "Mensagens", audio: "Áudios", midia: "Mídias", documento: "Documentos" };
-              missingCategories.add(labels[item.type] || item.type);
-            }
-          }
-        }
-
-        if (missingCategories.size > 0) {
-          toast({
-            title: "Atenção: assets ausentes",
-            description: `Alguns funis referenciam itens não encontrados em: ${[...missingCategories].join(", ")}. Esses itens podem aparecer como "(item removido)".`,
-            variant: "destructive",
-          });
-        }
-      }
-
       // Summary toast
-      const counts: string[] = [];
-      if (data.mensagens?.length) counts.push(`${data.mensagens.length} mensagens`);
-      if (data.audios?.length) counts.push(`${data.audios.length} áudios`);
-      if (data.midias?.length) counts.push(`${data.midias.length} mídias`);
-      if (data.documentos?.length) counts.push(`${data.documentos.length} documentos`);
-      if (data.funis?.length) counts.push(`${data.funis.length} funis`);
-      if (data.gatilhos?.length) counts.push(`${data.gatilhos.length} gatilhos`);
+      const countStrs: string[] = [];
+      if (counts.mensagens) countStrs.push(`${counts.mensagens} mensagens`);
+      if (counts.audios) countStrs.push(`${counts.audios} áudios`);
+      if (counts.midias) countStrs.push(`${counts.midias} mídias`);
+      if (counts.documentos) countStrs.push(`${counts.documentos} documentos`);
+      if (counts.funis) countStrs.push(`${counts.funis} funis`);
 
       setImportSuccess(true);
       setImportFile(null);
       toast({
         title: wasZapVoice ? "Backup do Zap Voice importado com sucesso!" : "Backup importado com sucesso!",
-        description: counts.length ? `Importado: ${counts.join(", ")}` : undefined,
+        description: countStrs.length ? `Persistido no Supabase: ${countStrs.join(", ")}` : undefined,
       });
-    } catch {
-      toast({ title: "Erro ao importar", description: "O arquivo não é um backup válido.", variant: "destructive" });
+    } catch (err: any) {
+      console.error("[BackupsPage] Erro na importação:", err);
+      toast({ title: "Erro ao importar", description: err.message || "O arquivo não é um backup válido.", variant: "destructive" });
     }
   };
 

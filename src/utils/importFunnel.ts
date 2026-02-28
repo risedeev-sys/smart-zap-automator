@@ -20,7 +20,9 @@ interface ExportData {
 }
 
 export async function importFunnel(file: File): Promise<string> {
+  console.log("[importFunnel] Função chamada, arquivo:", file.name, "tamanho:", file.size);
   const text = await file.text();
+  console.log("[importFunnel] JSON lido, primeiros 200 chars:", text.slice(0, 200));
   const data: ExportData = JSON.parse(text);
 
   if (!data.funnel || !data.items || !data.assets) {
