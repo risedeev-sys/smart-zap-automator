@@ -368,6 +368,36 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_message_logs: {
+        Row: {
+          error: string | null
+          id: string
+          instance_id: string
+          phone: string
+          sent_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          error?: string | null
+          id?: string
+          instance_id: string
+          phone: string
+          sent_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          error?: string | null
+          id?: string
+          instance_id?: string
+          phone?: string
+          sent_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
