@@ -322,10 +322,10 @@ export default function GatilhosPage() {
   const renderFunnelSelect = (value: string, onChange: (v: string) => void) => (
     <div>
       <label className="text-sm font-medium text-foreground mb-1 block">Funil vinculado</label>
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
         <SelectTrigger><SelectValue placeholder="Selecione um funil" /></SelectTrigger>
         <SelectContent>
-          <SelectItem value="">Nenhum</SelectItem>
+          <SelectItem value="__none__">Nenhum</SelectItem>
           {funnels.map((f) => (
             <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
           ))}
