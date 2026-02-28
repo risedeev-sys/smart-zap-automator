@@ -65,10 +65,7 @@ function evaluateCondition(
   switch (cond.type) {
     case "contém": {
       for (let i = 0; i < keywords.length; i++) {
-        // Word boundary match: a keyword must appear as a complete word/phrase
-        const escaped = keywords[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`(^|\\s|[^\\p{L}\\p{N}])${escaped}($|\\s|[^\\p{L}\\p{N}])`, "u");
-        if (regex.test(msg)) {
+        if (msg.includes(keywords[i])) {
           matches.push({ type: cond.type, keyword: cond.keywords[i] });
         }
       }
