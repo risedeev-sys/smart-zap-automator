@@ -16,6 +16,7 @@ import BackupsPage from "./pages/BackupsPage";
 import EspacoTestePage from "./pages/EspacoTestePage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import ApiKeysPage from "./pages/ApiKeysPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -41,6 +42,7 @@ const App = () => (
             <Route path="/gatilhos" element={<ProtectedRoute><GatilhosPage /></ProtectedRoute>} />
             <Route path="/backups" element={<ProtectedRoute><BackupsPage /></ProtectedRoute>} />
             <Route path="/teste" element={<ProtectedRoute><EspacoTestePage /></ProtectedRoute>} />
+            <Route path="/api-keys" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
