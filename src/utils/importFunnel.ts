@@ -25,9 +25,17 @@ export async function importFunnel(file: File): Promise<string> {
   console.log("[importFunnel] JSON lido, primeiros 200 chars:", text.slice(0, 200));
   const data: ExportData = JSON.parse(text);
 
-  if (!data.funnel || !data.items || !data.assets) {
-    throw new Error("Arquivo inválido: estrutura incompleta (funnel, items, assets).");
+  if (!data.funnel || !data.items) {
+    throw new Error("Arquivo inválido: estrutura incompleta (funnel, items).");
   }
+
+  // Normalize: accept assets at root level OR nested under .assets
+  const assets = {
+    messages: data.assets?.messages ?? (data as any).mensagens ?? (data as any).messages ?? [],
+    audios: data.assets?.audios ?? (data as any).audios ?? [],
+    medias: data.assets?.medias ?? (data as any).midias ?? (data as any).medias ?? [],
+    documents: data.assets?.documents ?? (data as any).docs ?? (data as any).documentos ?? (data as any).documents ?? [],
+  };
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError) throw new Error(`Erro de autenticação: ${authError.message}`);
@@ -35,18 +43,18 @@ export async function importFunnel(file: File): Promise<string> {
   const userId = user.id;
 
   console.log("[importFunnel] Usuário:", userId);
-  console.log("[importFunnel] Assets no arquivo:", {
-    messages: data.assets.messages?.length ?? 0,
-    audios: data.assets.audios?.length ?? 0,
-    medias: data.assets.medias?.length ?? 0,
-    documents: data.assets.documents?.length ?? 0,
+  console.log("[importFunnel] Assets normalizados:", {
+    messages: assets.messages?.length ?? 0,
+    audios: assets.audios?.length ?? 0,
+    medias: assets.medias?.length ?? 0,
+    documents: assets.documents?.length ?? 0,
   });
 
   const idMap: Record<string, string> = {};
 
   // Insert messages
-  if (data.assets.messages?.length) {
-    const rows = data.assets.messages.map(a => {
+  if (assets.messages?.length) {
+    const rows = assets.messages.map((a: any) => {
       const newId = crypto.randomUUID();
       idMap[a.id] = newId;
       return { id: newId, name: a.name, content: a.content ?? null, user_id: userId };
@@ -61,8 +69,8 @@ export async function importFunnel(file: File): Promise<string> {
   }
 
   // Insert audios
-  if (data.assets.audios?.length) {
-    const rows = data.assets.audios.map(a => {
+  if (assets.audios?.length) {
+    const rows = assets.audios.map((a: any) => {
       const newId = crypto.randomUUID();
       idMap[a.id] = newId;
       return { id: newId, name: a.name, storage_path: a.storage_path ?? null, mime: a.mime ?? null, bytes: a.bytes ?? null, user_id: userId };
@@ -77,8 +85,8 @@ export async function importFunnel(file: File): Promise<string> {
   }
 
   // Insert medias
-  if (data.assets.medias?.length) {
-    const rows = data.assets.medias.map(a => {
+  if (assets.medias?.length) {
+    const rows = assets.medias.map((a: any) => {
       const newId = crypto.randomUUID();
       idMap[a.id] = newId;
       return { id: newId, name: a.name, storage_path: a.storage_path ?? null, mime: a.mime ?? null, bytes: a.bytes ?? null, user_id: userId };
@@ -93,8 +101,8 @@ export async function importFunnel(file: File): Promise<string> {
   }
 
   // Insert documents
-  if (data.assets.documents?.length) {
-    const rows = data.assets.documents.map(a => {
+  if (assets.documents?.length) {
+    const rows = assets.documents.map((a: any) => {
       const newId = crypto.randomUUID();
       idMap[a.id] = newId;
       return { id: newId, name: a.name, storage_path: a.storage_path ?? null, mime: a.mime ?? null, bytes: a.bytes ?? null, user_id: userId };
