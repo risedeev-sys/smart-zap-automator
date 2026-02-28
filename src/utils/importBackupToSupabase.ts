@@ -41,7 +41,7 @@ export async function importBackupToSupabase(rawData: Record<string, any>): Prom
   }
 
   // Messages
-  await insertAssets("mensagens", "messages", rawData.mensagens, (item, newId) => ({
+  await insertAssets("mensagens", "messages", rawData.mensagens ?? rawData.messages, (item, newId) => ({
     id: newId, name: item.name, content: item.content ?? null, user_id: userId,
   }));
 
@@ -52,13 +52,13 @@ export async function importBackupToSupabase(rawData: Record<string, any>): Prom
   }));
 
   // Medias
-  await insertAssets("midias", "medias", rawData.midias, (item, newId) => ({
+  await insertAssets("midias", "medias", rawData.midias ?? rawData.medias, (item, newId) => ({
     id: newId, name: item.name, storage_path: item.storage_path ?? null,
     mime: item.mime ?? item.fileType ?? null, bytes: item.bytes ?? null, user_id: userId,
   }));
 
   // Documents
-  await insertAssets("documentos", "documents", rawData.documentos, (item, newId) => ({
+  await insertAssets("documentos", "documents", rawData.documentos ?? rawData.docs ?? rawData.documents, (item, newId) => ({
     id: newId, name: item.name, storage_path: item.storage_path ?? null,
     mime: item.mime ?? item.fileType ?? null, bytes: item.bytes ?? null, user_id: userId,
   }));
