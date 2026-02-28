@@ -41,47 +41,64 @@ export interface TriggerMatchResult {
 }
 
 /**
+ * Remove acentos/diacríticos de uma string.
+ * Ex: "olá" → "ola", "café" → "cafe"
+ */
+function removeAccents(str: string): string {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Normaliza texto para comparação: lowercase + sem acentos.
+ */
+function normalizeText(str: string, ignoreCase: boolean): string {
+  const result = ignoreCase ? str.toLowerCase() : str;
+  return removeAccents(result);
+}
+
+/**
  * Avalia se uma única condição passa para a mensagem dada.
  * Retorna as keywords que deram match (se houver).
  */
 function evaluateCondition(
   cond: TriggerCondition,
-  normalizedMessage: string,
+  rawMessage: string,
   ignoreCase: boolean
 ): { passed: boolean; matches: ConditionMatch[] } {
-  const keywords = cond.keywords.map((k) => (ignoreCase ? k.toLowerCase() : k));
+  const msg = normalizeText(rawMessage, ignoreCase);
+  const keywords = cond.keywords.map((k) => normalizeText(k, ignoreCase));
   const matches: ConditionMatch[] = [];
 
   switch (cond.type) {
     case "contém": {
-      for (const kw of keywords) {
-        if (normalizedMessage.includes(kw)) {
-          matches.push({ type: cond.type, keyword: kw });
+      for (let i = 0; i < keywords.length; i++) {
+        if (msg.includes(keywords[i])) {
+          matches.push({ type: cond.type, keyword: cond.keywords[i] });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "igual a": {
-      for (const kw of keywords) {
-        if (normalizedMessage === kw) {
-          matches.push({ type: cond.type, keyword: kw });
+      for (let i = 0; i < keywords.length; i++) {
+        if (msg === keywords[i]) {
+          matches.push({ type: cond.type, keyword: cond.keywords[i] });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "começa com": {
-      for (const kw of keywords) {
-        if (normalizedMessage.startsWith(kw)) {
-          matches.push({ type: cond.type, keyword: kw });
+      for (let i = 0; i < keywords.length; i++) {
+        if (msg.startsWith(keywords[i])) {
+          matches.push({ type: cond.type, keyword: cond.keywords[i] });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "não contém": {
-      const noneContained = keywords.every((kw) => !normalizedMessage.includes(kw));
+      const noneContained = keywords.every((kw) => !msg.includes(kw));
       if (noneContained) {
         matches.push({ type: cond.type, keyword: "(nenhuma)" });
       }
@@ -98,12 +115,11 @@ function evaluateCondition(
  * TODAS as condições devem passar para o gatilho disparar (AND lógico).
  */
 export function evaluateTrigger(trigger: TriggerData, message: string): TriggerMatchResult {
-  const normalizedMessage = trigger.ignore_case ? message.toLowerCase() : message;
   const allMatches: ConditionMatch[] = [];
   let allPassed = true;
 
   for (const cond of trigger.conditions) {
-    const { passed, matches } = evaluateCondition(cond, normalizedMessage, trigger.ignore_case);
+    const { passed, matches } = evaluateCondition(cond, message, trigger.ignore_case);
     allMatches.push(...matches);
     if (!passed) {
       allPassed = false;
