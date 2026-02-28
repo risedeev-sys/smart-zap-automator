@@ -9,7 +9,7 @@ import {
   Workflow,
   Archive,
   FlaskConical,
-  Key,
+  Smartphone,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -36,7 +36,7 @@ const menuItems = [
   { title: "Fluxos", url: "/fluxos", icon: Workflow, color: "text-blue-400", disabled: true },
   { title: "Backups", url: "/backups", icon: Archive, color: "text-slate-400" },
   { title: "Espaço de Teste", url: "/teste", icon: FlaskConical, color: "text-lime-400" },
-  { title: "Chaves API", url: "/api-keys", icon: Key, color: "text-orange-400" },
+  { title: "Instâncias", url: "/api-keys", icon: Smartphone, color: "text-orange-400" },
 ];
 
 export function AppSidebar() {
