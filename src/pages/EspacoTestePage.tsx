@@ -417,18 +417,6 @@ export default function EspacoTestePage() {
                       : "bg-card text-foreground border border-border rounded-bl-none"
                   }`}
                 >
-                  {msg.assetType && (
-                    <Badge variant="secondary" className="text-[10px] mb-1">
-                      {msg.assetType === "mensagem"
-                        ? "💬 Mensagem"
-                        : msg.assetType === "audio"
-                        ? "🎵 Áudio"
-                        : msg.assetType === "midia"
-                        ? "📷 Mídia"
-                        : "📄 Documento"}
-                      : {msg.assetName}
-                    </Badge>
-                  )}
                   {/* Render file content based on type */}
                   {msg.fileUrl && msg.assetType === "audio" && (
                     <audio controls className="w-full max-w-[250px] my-1" src={msg.fileUrl} />
@@ -445,7 +433,9 @@ export default function EspacoTestePage() {
                       {msg.assetName}
                     </a>
                   )}
-                  {msg.text && <p className="text-sm whitespace-pre-wrap">{msg.text}</p>}
+                  {msg.text && (!msg.fileUrl || msg.assetType === "mensagem") && (
+                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                  )}
                   <div className="flex items-center justify-end gap-1 mt-1">
                     <span className="text-[10px] text-muted-foreground">
                       {formatTime(msg.timestamp)}
