@@ -38,7 +38,6 @@ export default function BackupsPage() {
   });
 
   // Import state
-  const [replaceAll, setReplaceAll] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,54 +97,13 @@ export default function BackupsPage() {
       const { counts } = await importBackupToSupabase(data);
       console.log("[BackupsPage] Persistência concluída:", counts);
 
-      // Also update local state for immediate UI feedback
-      if (replaceAll) {
-        if (data.mensagens) setMensagens(data.mensagens);
-        if (data.audios) setAudios(data.audios);
-        if (data.midias) setMidias(data.midias);
-        if (data.documentos) setDocumentos(data.documentos);
-        if (data.funis) setFunnels(data.funis);
-        if (data.gatilhos) setTriggers(data.gatilhos);
-      } else {
-        const idMap: Record<string, string> = {};
-        const remap = (items: any[]): any[] =>
-          items.map((item) => {
-            const newId = crypto.randomUUID();
-            idMap[item.id] = newId;
-            return { ...item, id: newId };
-          });
-
-        const remappedMensagens = data.mensagens ? remap(data.mensagens) : [];
-        const remappedAudios = data.audios ? remap(data.audios) : [];
-        const remappedMidias = data.midias ? remap(data.midias) : [];
-        const remappedDocumentos = data.documentos ? remap(data.documentos) : [];
-
-        if (remappedMensagens.length) setMensagens((prev) => [...prev, ...remappedMensagens]);
-        if (remappedAudios.length) setAudios((prev) => [...prev, ...remappedAudios]);
-        if (remappedMidias.length) setMidias((prev) => [...prev, ...remappedMidias]);
-        if (remappedDocumentos.length) setDocumentos((prev) => [...prev, ...remappedDocumentos]);
-
-        if (data.funis) {
-          const remappedFunnels = (data.funis as Funnel[]).map((funnel) => ({
-            ...funnel,
-            id: crypto.randomUUID(),
-            items: funnel.items.map((item) => ({
-              ...item,
-              id: crypto.randomUUID(),
-              assetId: idMap[item.assetId] || item.assetId,
-            })),
-          }));
-          setFunnels((prev) => [...prev, ...remappedFunnels]);
-        }
-
-        if (data.gatilhos) {
-          const remappedTriggers = (data.gatilhos as Trigger[]).map((trigger) => ({
-            ...trigger,
-            id: crypto.randomUUID(),
-          }));
-          setTriggers((prev) => [...prev, ...remappedTriggers]);
-        }
-      }
+      // Update local state with imported data (always replace)
+      setMensagens(data.mensagens ?? []);
+      setAudios(data.audios ?? []);
+      setMidias(data.midias ?? []);
+      setDocumentos(data.documentos ?? []);
+      setFunnels(data.funis ?? []);
+      setTriggers(data.gatilhos ?? []);
 
       // Summary toast
       const countStrs: string[] = [];
@@ -191,11 +149,6 @@ export default function BackupsPage() {
               <CardTitle className="text-base">Importar backup</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-foreground">Substituir todos os itens existentes</span>
-                <Switch checked={replaceAll} onCheckedChange={setReplaceAll} />
-              </div>
-
               <div
                 className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
@@ -233,7 +186,7 @@ export default function BackupsPage() {
               <div className="flex items-start gap-2 p-3 rounded-md bg-warning/10 text-sm">
                 <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
                 <p className="text-muted-foreground">
-                  Ao importar, os itens do backup serão adicionados à sua conta. Ative a opção acima para substituir todos os itens existentes.
+                  Ao importar, todos os seus dados atuais (mensagens, áudios, mídias, documentos e funis) serão <strong>substituídos</strong> pelos dados do backup.
                 </p>
               </div>
 
