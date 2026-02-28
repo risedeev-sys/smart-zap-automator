@@ -162,10 +162,10 @@ export default function EspacoTestePage() {
     ]);
   };
 
-  const getStorageUrl = (storagePath: string | null) => {
+  const getStorageUrl = async (storagePath: string | null): Promise<string | null> => {
     if (!storagePath) return null;
-    const { data } = supabase.storage.from("assets").getPublicUrl(storagePath);
-    return data?.publicUrl ?? null;
+    const { data } = await supabase.storage.from("assets").createSignedUrl(storagePath, 3600);
+    return data?.signedUrl ?? null;
   };
 
   // Fetch funnel items and execute sequentially
@@ -207,7 +207,7 @@ export default function EspacoTestePage() {
         if (asset) {
           assetName = (asset as any).name;
           content = (asset as any).content ?? "";
-          fileUrl = getStorageUrl((asset as any).storage_path ?? null);
+          fileUrl = await getStorageUrl((asset as any).storage_path ?? null);
           mime = (asset as any).mime ?? null;
         }
       }
@@ -334,7 +334,7 @@ export default function EspacoTestePage() {
       const { data } = await supabase.from(table as any).select("*").eq("id", asset.id).single();
       if (data) {
         content = (data as any).content ?? "";
-        fileUrl = getStorageUrl((data as any).storage_path ?? null);
+        fileUrl = await getStorageUrl((data as any).storage_path ?? null);
         mime = (data as any).mime ?? null;
       }
     }
