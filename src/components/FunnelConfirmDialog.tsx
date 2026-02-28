@@ -6,26 +6,40 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { GitBranch, Clock, User, AlertTriangle } from "lucide-react";
+import { GitBranch, Clock, User, AlertTriangle, MessageSquare, Mic, Image, FileText } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
-interface FunnelConfirmDialogProps {
+const typeLabels: Record<string, { icon: typeof MessageSquare; label: string }> = {
+  funil: { icon: GitBranch, label: "Funil" },
+  mensagem: { icon: MessageSquare, label: "Mensagem" },
+  audio: { icon: Mic, label: "Áudio" },
+  midia: { icon: Image, label: "Mídia" },
+  documento: { icon: FileText, label: "Documento" },
+};
+
+interface AssetConfirmDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  funnelName: string;
-  itemCount: number;
-  estimatedDuration: string;
+  assetName: string;
+  assetType: string;
+  itemCount?: number;
+  estimatedDuration?: string;
   onConfirm: () => void;
 }
 
-export function FunnelConfirmDialog({
+export function AssetConfirmDialog({
   open,
   onOpenChange,
-  funnelName,
+  assetName,
+  assetType,
   itemCount,
   estimatedDuration,
   onConfirm,
-}: FunnelConfirmDialogProps) {
+}: AssetConfirmDialogProps) {
+  const typeInfo = typeLabels[assetType] ?? { icon: FileText, label: assetType };
+  const TypeIcon = typeInfo.icon;
+  const isFunnel = assetType === "funil";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -44,28 +58,32 @@ export function FunnelConfirmDialog({
           </div>
           <Separator />
           <div className="flex items-center gap-3">
-            <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-            <span className="text-sm font-medium">Funil:</span>
-            <span className="text-sm text-muted-foreground">{funnelName}</span>
+            <TypeIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <span className="text-sm font-medium">{typeInfo.label}:</span>
+            <span className="text-sm text-muted-foreground">{assetName}</span>
           </div>
-          <Separator />
-          <div className="flex items-center gap-3">
-            <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-            <span className="text-sm font-medium">Duração:</span>
-            <span className="text-sm text-muted-foreground">{estimatedDuration}</span>
-          </div>
-          <Separator />
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium ml-7">Itens:</span>
-            <span className="text-sm text-muted-foreground">{itemCount} ativo(s)</span>
-          </div>
+          {isFunnel && (
+            <>
+              <Separator />
+              <div className="flex items-center gap-3">
+                <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                <span className="text-sm font-medium">Duração:</span>
+                <span className="text-sm text-muted-foreground">{estimatedDuration}</span>
+              </div>
+              <Separator />
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium ml-7">Itens:</span>
+                <span className="text-sm text-muted-foreground">{itemCount} ativo(s)</span>
+              </div>
+            </>
+          )}
         </div>
 
         <DialogFooter className="flex gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={onConfirm}>Enviar funil</Button>
+          <Button onClick={onConfirm}>Enviar {typeInfo.label.toLowerCase()}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

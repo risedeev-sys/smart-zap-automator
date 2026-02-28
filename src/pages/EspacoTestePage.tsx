@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { findMatchingTriggers, type TriggerData } from "@/utils/triggerEngine";
-import { FunnelConfirmDialog } from "@/components/FunnelConfirmDialog";
+import { AssetConfirmDialog } from "@/components/FunnelConfirmDialog";
 import { getAppSettings } from "@/pages/ConfiguracoesPage";
 import { toast } from "sonner";
 
@@ -73,7 +73,7 @@ export default function EspacoTestePage() {
   const [triggers, setTriggers] = useState<TriggerData[]>([]);
   const [funnelItems, setFunnelItems] = useState<Record<string, any[]>>({});
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
-  const [pendingFunnel, setPendingFunnel] = useState<{ id: string; name: string; itemCount: number; duration: string } | null>(null);
+  const [pendingAsset, setPendingAsset] = useState<{ id: string; name: string; type: string; itemCount?: number; duration?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const assetTables: Record<string, string> = {
@@ -292,19 +292,20 @@ export default function EspacoTestePage() {
 
   // Send asset directly
   const handleAssetClick = async (asset: AssetButton) => {
+    const settings = getAppSettings();
+
     if (asset.type === "funil") {
-      const settings = getAppSettings();
       if (settings.confirmFunnelSend) {
-        // Fetch items to show count and duration in dialog
         const { data: items } = await supabase
           .from("funnel_items")
           .select("*")
           .eq("funnel_id", asset.id)
           .order("position");
         const itemList = items ?? [];
-        setPendingFunnel({
+        setPendingAsset({
           id: asset.id,
           name: asset.name,
+          type: "funil",
           itemCount: itemList.length,
           duration: calcFunnelDuration(itemList),
         });
@@ -312,44 +313,52 @@ export default function EspacoTestePage() {
         await executeFunnel(asset.id, asset.name);
       }
     } else {
-      const typeLabel =
-        asset.type === "mensagem" ? "💬 Mensagem" : asset.type === "audio" ? "🎵 Áudio" : asset.type === "midia" ? "📷 Mídia" : "📄 Documento";
-
-      let content = "";
-      let fileUrl: string | null = null;
-      let mime: string | null = null;
-
-      const table = assetTables[asset.type];
-      if (table) {
-        const { data } = await supabase.from(table as any).select("*").eq("id", asset.id).single();
-        if (data) {
-          content = (data as any).content ?? "";
-          fileUrl = getStorageUrl((data as any).storage_path ?? null);
-          mime = (data as any).mime ?? null;
-        }
+      if (settings.confirmFunnelSend) {
+        setPendingAsset({ id: asset.id, name: asset.name, type: asset.type });
+      } else {
+        await sendAsset(asset);
       }
-
-      addMessage({
-        text: `📨 ${typeLabel} "${asset.name}" disparada`,
-        type: "system",
-      });
-
-      addMessage({
-        text: content || asset.name,
-        type: "sent",
-        assetType: asset.type,
-        assetName: asset.name,
-        fileUrl: fileUrl ?? undefined,
-        fileType: mime ?? undefined,
-      });
     }
   };
 
-  const handleConfirmFunnel = async () => {
-    if (!pendingFunnel) return;
-    const { id, name } = pendingFunnel;
-    setPendingFunnel(null);
-    await executeFunnel(id, name);
+  const sendAsset = async (asset: AssetButton) => {
+    const typeLabel =
+      asset.type === "mensagem" ? "💬 Mensagem" : asset.type === "audio" ? "🎵 Áudio" : asset.type === "midia" ? "📷 Mídia" : "📄 Documento";
+
+    let content = "";
+    let fileUrl: string | null = null;
+    let mime: string | null = null;
+
+    const table = assetTables[asset.type];
+    if (table) {
+      const { data } = await supabase.from(table as any).select("*").eq("id", asset.id).single();
+      if (data) {
+        content = (data as any).content ?? "";
+        fileUrl = getStorageUrl((data as any).storage_path ?? null);
+        mime = (data as any).mime ?? null;
+      }
+    }
+
+    addMessage({ text: `📨 ${typeLabel} "${asset.name}" disparada`, type: "system" });
+    addMessage({
+      text: content || asset.name,
+      type: "sent",
+      assetType: asset.type,
+      assetName: asset.name,
+      fileUrl: fileUrl ?? undefined,
+      fileType: mime ?? undefined,
+    });
+  };
+
+  const handleConfirmAsset = async () => {
+    if (!pendingAsset) return;
+    const { id, name, type } = pendingAsset;
+    setPendingAsset(null);
+    if (type === "funil") {
+      await executeFunnel(id, name);
+    } else {
+      await sendAsset({ id, name, type } as AssetButton);
+    }
   };
 
   const formatTime = (d: Date) =>
@@ -498,13 +507,14 @@ export default function EspacoTestePage() {
         </div>
       </div>
 
-      <FunnelConfirmDialog
-        open={!!pendingFunnel}
-        onOpenChange={(open) => !open && setPendingFunnel(null)}
-        funnelName={pendingFunnel?.name ?? ""}
-        itemCount={pendingFunnel?.itemCount ?? 0}
-        estimatedDuration={pendingFunnel?.duration ?? "0 min e 0 seg"}
-        onConfirm={handleConfirmFunnel}
+      <AssetConfirmDialog
+        open={!!pendingAsset}
+        onOpenChange={(open) => !open && setPendingAsset(null)}
+        assetName={pendingAsset?.name ?? ""}
+        assetType={pendingAsset?.type ?? ""}
+        itemCount={pendingAsset?.itemCount}
+        estimatedDuration={pendingAsset?.duration}
+        onConfirm={handleConfirmAsset}
       />
     </MainLayout>
   );
