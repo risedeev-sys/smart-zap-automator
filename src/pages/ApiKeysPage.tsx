@@ -74,23 +74,10 @@ function statusBadge(status: string) {
 }
 
 async function invokeManage(action: string, payload: Record<string, unknown> = {}) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("Not authenticated");
-
-  const res = await fetch(
-    `https://txnhtcyjzohxkfwdfrvh.supabase.co/functions/v1/whatsapp-manage`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR4bmh0Y3lqem9oeGtmd2RmcnZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyMDQ0MTEsImV4cCI6MjA4Nzc4MDQxMX0.vUFZYFr8OLaZczKjcj4I8HOpMLNNOX1yo3GhvwPuR9Y",
-      },
-      body: JSON.stringify({ action, ...payload }),
-    }
-  );
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || "Erro na operação");
+  const { data, error } = await supabase.functions.invoke("whatsapp-manage", {
+    body: { action, ...payload },
+  });
+  if (error) throw new Error(error.message || "Erro na operação");
   return data;
 }
 
@@ -122,8 +109,15 @@ export default function ApiKeysPage() {
     const hasConnecting = instances.some((i) => i.status === "connecting");
     if (!hasConnecting) return;
 
-    const interval = setInterval(fetchInstances, 4000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchInstances, 3000);
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      toast.error("QR Code expirado. Clique em 'Conectar' para gerar um novo.");
+    }, 60000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
   }, [instances, fetchInstances]);
 
   const handleCreate = async () => {
