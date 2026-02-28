@@ -1,87 +1,106 @@
 
 
-# Dar vida aos Gatilhos (Backend) + Simulador de Testes
+## Integração com Evolution API
 
-## Situacao Atual
-- A tabela `triggers` no Supabase so tem `id`, `name`, `user_id`, `created_at`
-- Faltam todas as colunas de configuracao (enabled, conditions, delay, regras, funil vinculado)
-- A pagina `GatilhosPage.tsx` usa estado em memoria (AssetsContext) -- nada persiste no banco
-- As outras paginas (Mensagens, Audios, etc.) ja seguem o padrao correto com CRUD direto no Supabase
-
-## Como Testar sem WhatsApp?
-Vamos criar um **Simulador de Gatilhos** direto na interface. Voce digita uma mensagem de teste e o sistema mostra quais gatilhos seriam disparados e qual funil seria executado. Assim da para validar toda a logica sem precisar conectar no WhatsApp.
+Plano completo para conectar o Rise Zap com a Evolution API, baseado nos módulos validados do devVAULT. A implementação será adaptada para o contexto do Rise Zap (single-user, não multi-vendor).
 
 ---
 
-## Plano de Implementacao
+### Fase 1 — Banco de Dados
 
-### 1. Migrar schema da tabela `triggers`
-Adicionar as colunas que faltam:
+Criar a tabela `whatsapp_instances` adaptada ao Rise Zap:
 
-- `enabled` (boolean, default true)
-- `favorite` (boolean, default false)
-- `conditions` (jsonb, default '[]') -- array de `{type, keywords[]}`
-- `funnel_id` (uuid, nullable) -- referencia ao funil vinculado
-- `delay_seconds` (integer, default 0)
-- `send_to_groups` (boolean, default false)
-- `saved_contacts_only` (boolean, default false)
-- `ignore_case` (boolean, default true)
-- `position` (integer, default 0) -- para ordenacao por drag
+```text
+whatsapp_instances
+├── id              UUID (PK, default gen_random_uuid())
+├── user_id         UUID (NOT NULL, referencia auth.users)
+├── instance_name   TEXT (NOT NULL, unique por user)
+├── status          TEXT (default 'disconnected') — open | close | connecting | disconnected
+├── qr_code         TEXT (nullable — base64 PNG do QR code)
+├── phone_number    TEXT (nullable — preenchido quando conectado)
+├── created_at      TIMESTAMPTZ (default now())
+└── updated_at      TIMESTAMPTZ (default now())
+```
 
-### 2. Reescrever `GatilhosPage.tsx` com CRUD no Supabase
-Seguir o mesmo padrao de `MensagensPage.tsx`:
-- `fetchTriggers()` no mount com `supabase.from("triggers").select()`
-- Criar, editar, deletar com operacoes diretas no Supabase
-- Remover dependencia do AssetsContext para triggers
-- Manter estado local apenas para UI (selected, modais)
-- Vincular funil via select que lista os funnels do usuario
-
-### 3. Criar componente Simulador de Gatilhos
-Um painel simples (pode ser um dialog ou uma secao na pagina) onde:
-- O usuario digita uma mensagem de teste
-- Clica em "Simular"
-- O sistema avalia todas as condicoes dos gatilhos ativos
-- Mostra uma lista dos gatilhos que seriam disparados, com o funil vinculado
-
-A logica de matching seria:
-- **contem**: mensagem inclui alguma keyword
-- **igual a**: mensagem e exatamente igual a alguma keyword
-- **comeca com**: mensagem comeca com alguma keyword
-- **nao contem**: mensagem nao contem nenhuma keyword
-
-Respeitando a flag `ignore_case`.
-
-### 4. Atualizar AssetsContext
-- Remover `triggers` e `setTriggers` do AssetsContext (ja que agora vive no Supabase)
-- Ou manter como cache local se outras paginas precisarem dos triggers
-
-### 5. Incluir triggers na exportacao/importacao de backup
-- Adicionar triggers ao JSON de exportacao
-- Adicionar limpeza e importacao de triggers no `importBackupToSupabase.ts`
+RLS: cada usuario so ve/edita suas proprias instancias (mesmo padrao das outras tabelas).
 
 ---
 
-## Detalhes Tecnicos
+### Fase 2 — Edge Functions (Backend)
 
-**Schema da coluna `conditions` (jsonb):**
-```text
-[
-  { "type": "contem", "keywords": ["oi", "ola"] },
-  { "type": "igual a", "keywords": ["menu"] }
-]
-```
+#### 2.1 Codigo compartilhado: `_shared/whatsapp/evolution-client.ts`
+Client HTTP tipado para a Evolution API v2 (conforme modulo `evolution-api-v2-client` do devVAULT):
+- `createInstance(name, webhookUrl)` — cria instancia na Evolution API
+- `getConnectionState(name)` — verifica status (open/close/connecting)
+- `getQrCode(name)` — busca QR code base64
+- `deleteInstance(name)` — remove instancia
+- `sendText(name, number, text)` — envia mensagem de texto
+- `sendMedia(name, number, url, caption, type)` — envia midia
+- Timeout de 15s, autenticacao via apikey header
 
-**Logica do simulador (client-side):**
-```text
-para cada trigger ativo:
-  para cada condition:
-    normalizar mensagem (se ignore_case)
-    avaliar tipo (contem/igual/comeca/nao contem)
-    se TODAS as conditions passam -> trigger dispara
-```
+#### 2.2 Edge Function: `whatsapp-manage`
+BFF para o frontend gerenciar instancias. Actions:
+- `instance-create` — cria instancia na Evolution API + salva no banco
+- `instance-connect` — gera QR code para conexao
+- `instance-disconnect` — desconecta instancia
+- `instance-delete` — remove instancia
+- `instance-status` — consulta status atual
+- `instance-list` — lista instancias do usuario
 
-**Ordem das mudancas:**
-1. Migracao do banco (adicionar colunas)
-2. Reescrever GatilhosPage com Supabase
-3. Adicionar simulador
-4. Atualizar backup export/import
+Auth: JWT do Supabase (usuario logado).
+
+#### 2.3 Edge Function: `whatsapp-status-webhook`
+Receptor de webhooks da Evolution API:
+- Eventos: `CONNECTION_UPDATE` (atualiza status) e `QRCODE_UPDATED` (salva QR code)
+- Auth: token na URL (`?token=SECRET`) com comparacao timing-safe
+- Atualiza tabela `whatsapp_instances` automaticamente
+- `verify_jwt = false` (webhook publico)
+
+#### 2.4 Edge Function: `whatsapp-send`
+Endpoint para envio de mensagens (usado pelo sistema de gatilhos/funis):
+- Recebe: `instance_id`, `phone`, `text` (ou `media_url`, `media_type`)
+- Valida que a instancia pertence ao usuario e esta `open`
+- Envia via Evolution API client
+
+---
+
+### Fase 3 — Secrets necessarios
+
+Sera preciso configurar no Supabase:
+- `EVOLUTION_API_URL` — URL da sua instancia da Evolution API (ex: `https://evo.seudominio.com`)
+- `EVOLUTION_API_KEY` — chave global da Evolution API
+- `EVOLUTION_WEBHOOK_SECRET` — token aleatorio para validar webhooks
+
+---
+
+### Fase 4 — Frontend (Pagina de Instancias)
+
+Transformar a pagina `ApiKeysPage.tsx` (placeholder atual) em uma interface funcional:
+
+- **Lista de instancias** com status em tempo real (badge verde/vermelho/amarelo)
+- **Botao "Nova Instancia"** — abre dialog para nomear e criar
+- **Card de instancia** mostrando:
+  - Nome, status, numero de telefone (quando conectado)
+  - Area de QR Code (quando status = connecting) — poll a cada 3s
+  - Botoes: Conectar, Desconectar, Excluir
+- **Pagina Inicio (Index.tsx)** — atualizar o card "WhatsApp (Evolution API)" para mostrar dados reais da instancia
+
+---
+
+### Fase 5 — Integracao com Gatilhos
+
+Atualizar o motor de gatilhos (`triggerEngine.ts`) para usar o `whatsapp-send` ao disparar funis, enviando as mensagens reais via WhatsApp quando uma instancia estiver conectada.
+
+---
+
+### Sequencia de implementacao
+
+1. Secrets (EVOLUTION_API_URL, EVOLUTION_API_KEY, EVOLUTION_WEBHOOK_SECRET)
+2. Migration SQL (tabela whatsapp_instances + RLS)
+3. Edge Function `whatsapp-manage` (com _shared/evolution-client)
+4. Edge Function `whatsapp-status-webhook`
+5. Edge Function `whatsapp-send`
+6. Frontend — pagina de Instancias funcional
+7. Frontend — card da pagina Inicio com dados reais
+8. Integracao com gatilhos (opcional, fase seguinte)
+
