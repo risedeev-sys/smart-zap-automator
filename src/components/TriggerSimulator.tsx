@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -9,95 +10,51 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Zap, FlaskConical, Check, X } from "lucide-react";
+import { Zap, FlaskConical, Check, X, Users, UserCheck } from "lucide-react";
+import {
+  type TriggerData,
+  type TriggerMatchResult,
+  findMatchingTriggers,
+  evaluateTrigger,
+} from "@/utils/triggerEngine";
 
-interface TriggerRow {
-  id: string;
-  name: string;
-  enabled: boolean;
-  conditions: { type: string; keywords: string[] }[];
-  ignore_case: boolean;
+interface TriggerWithFunnelName extends TriggerData {
   funnel_name?: string;
-}
-
-interface SimulatorResult {
-  trigger: TriggerRow;
-  matched: boolean;
-  matchedConditions: { type: string; keyword: string }[];
-}
-
-function evaluateTrigger(trigger: TriggerRow, message: string): SimulatorResult {
-  const msg = trigger.ignore_case ? message.toLowerCase() : message;
-  const matchedConditions: { type: string; keyword: string }[] = [];
-  let allPass = true;
-
-  for (const cond of trigger.conditions) {
-    const keywords = cond.keywords.map((k) =>
-      trigger.ignore_case ? k.toLowerCase() : k
-    );
-
-    let condPass = false;
-    switch (cond.type) {
-      case "contém":
-        for (const kw of keywords) {
-          if (msg.includes(kw)) {
-            matchedConditions.push({ type: cond.type, keyword: kw });
-            condPass = true;
-          }
-        }
-        break;
-      case "igual a":
-        for (const kw of keywords) {
-          if (msg === kw) {
-            matchedConditions.push({ type: cond.type, keyword: kw });
-            condPass = true;
-          }
-        }
-        break;
-      case "começa com":
-        for (const kw of keywords) {
-          if (msg.startsWith(kw)) {
-            matchedConditions.push({ type: cond.type, keyword: kw });
-            condPass = true;
-          }
-        }
-        break;
-      case "não contém":
-        condPass = keywords.every((kw) => !msg.includes(kw));
-        if (condPass) {
-          matchedConditions.push({ type: cond.type, keyword: "(nenhuma)" });
-        }
-        break;
-      default:
-        condPass = false;
-    }
-
-    if (!condPass) {
-      allPass = false;
-    }
-  }
-
-  return { trigger, matched: allPass && trigger.conditions.length > 0, matchedConditions };
 }
 
 interface TriggerSimulatorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  triggers: TriggerRow[];
+  triggers: TriggerWithFunnelName[];
 }
 
 export function TriggerSimulator({ open, onOpenChange, triggers }: TriggerSimulatorProps) {
   const [testMessage, setTestMessage] = useState("");
-  const [results, setResults] = useState<SimulatorResult[] | null>(null);
+  const [isGroup, setIsGroup] = useState(false);
+  const [isSavedContact, setIsSavedContact] = useState(true);
+  const [allResults, setAllResults] = useState<(TriggerMatchResult & { funnel_name?: string })[] | null>(null);
 
   const handleSimulate = () => {
     if (!testMessage.trim()) return;
-    const activeTriggers = triggers.filter((t) => t.enabled);
-    const simResults = activeTriggers.map((t) => evaluateTrigger(t, testMessage.trim()));
-    setResults(simResults);
+
+    // Avalia TODOS os triggers (ativos) para mostrar quais passam e quais não
+    const activeTriggers = triggers.filter((t) => {
+      if (!t.enabled) return false;
+      if (isGroup && !t.send_to_groups) return false;
+      if (t.saved_contacts_only && !isSavedContact) return false;
+      return true;
+    });
+
+    const results = activeTriggers.map((t) => {
+      const result = evaluateTrigger(t, testMessage.trim());
+      const trigger = triggers.find((tr) => tr.id === t.id);
+      return { ...result, funnel_name: trigger?.funnel_name };
+    });
+
+    setAllResults(results);
   };
 
-  const matchedCount = results?.filter((r) => r.matched).length ?? 0;
+  const matchedCount = allResults?.filter((r) => r.matched).length ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,11 +65,26 @@ export function TriggerSimulator({ open, onOpenChange, triggers }: TriggerSimula
             Simulador de Gatilhos
           </DialogTitle>
           <DialogDescription>
-            Digite uma mensagem de teste para ver quais gatilhos seriam disparados.
+            Simula exatamente a mesma lógica que será usada quando o WhatsApp estiver conectado.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Context toggles */}
+          <div className="flex items-center gap-4 p-3 bg-muted/50 rounded-lg">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Grupo</span>
+              <Switch checked={isGroup} onCheckedChange={setIsGroup} className="scale-75" />
+            </div>
+            <div className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Contato salvo</span>
+              <Switch checked={isSavedContact} onCheckedChange={setIsSavedContact} className="scale-75" />
+            </div>
+          </div>
+
+          {/* Message input */}
           <div className="flex gap-2">
             <Input
               placeholder="Ex: Oi, quero saber mais..."
@@ -127,7 +99,7 @@ export function TriggerSimulator({ open, onOpenChange, triggers }: TriggerSimula
             </Button>
           </div>
 
-          {results !== null && (
+          {allResults !== null && (
             <div className="space-y-3">
               <div className="text-sm font-medium text-foreground">
                 {matchedCount > 0 ? (
@@ -139,9 +111,9 @@ export function TriggerSimulator({ open, onOpenChange, triggers }: TriggerSimula
                 )}
               </div>
 
-              {results.map((r) => (
+              {allResults.map((r) => (
                 <div
-                  key={r.trigger.id}
+                  key={r.triggerId}
                   className={`border rounded-lg p-3 space-y-1 ${
                     r.matched ? "border-primary/50 bg-primary/5" : "border-border bg-muted/30"
                   }`}
@@ -152,10 +124,15 @@ export function TriggerSimulator({ open, onOpenChange, triggers }: TriggerSimula
                     ) : (
                       <X className="h-4 w-4 text-muted-foreground" />
                     )}
-                    <span className="font-medium text-sm text-foreground">{r.trigger.name}</span>
-                    {r.trigger.funnel_name && (
+                    <span className="font-medium text-sm text-foreground">{r.triggerName}</span>
+                    {r.funnel_name && (
                       <Badge variant="outline" className="text-xs ml-auto">
-                        → {r.trigger.funnel_name}
+                        → {r.funnel_name}
+                      </Badge>
+                    )}
+                    {r.matched && r.delaySeconds > 0 && (
+                      <Badge variant="secondary" className="text-xs">
+                        ⏱ {r.delaySeconds}s
                       </Badge>
                     )}
                   </div>
