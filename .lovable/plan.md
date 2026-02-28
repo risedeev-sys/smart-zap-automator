@@ -1,106 +1,93 @@
 
 
-## Integração com Evolution API
+## Auditoria: Implementacao vs devVAULT
 
-Plano completo para conectar o Rise Zap com a Evolution API, baseado nos módulos validados do devVAULT. A implementação será adaptada para o contexto do Rise Zap (single-user, não multi-vendor).
+Comparei cada Edge Function e o frontend com os modulos validados do devVAULT. Alem dos 2 problemas ja conhecidos (rota `/instancias` e deploy), encontrei **mais 5 problemas** que precisam ser corrigidos.
 
 ---
 
-### Fase 1 — Banco de Dados
+### Problema 1 (Ja conhecido) — Rota incorreta na Index.tsx
 
-Criar a tabela `whatsapp_instances` adaptada ao Rise Zap:
+**Onde:** `src/pages/Index.tsx` linhas 109 e 176
+**O que:** `navigate("/instancias")` mas a rota real no App.tsx e `/api-keys`
+**Correcao:** Trocar para `navigate("/api-keys")`
 
-```text
-whatsapp_instances
-├── id              UUID (PK, default gen_random_uuid())
-├── user_id         UUID (NOT NULL, referencia auth.users)
-├── instance_name   TEXT (NOT NULL, unique por user)
-├── status          TEXT (default 'disconnected') — open | close | connecting | disconnected
-├── qr_code         TEXT (nullable — base64 PNG do QR code)
-├── phone_number    TEXT (nullable — preenchido quando conectado)
-├── created_at      TIMESTAMPTZ (default now())
-└── updated_at      TIMESTAMPTZ (default now())
+---
+
+### Problema 2 — `getClaims()` nao existe no supabase-js v2
+
+**Onde:** `whatsapp-manage/index.ts` linha 79, `whatsapp-send/index.ts` linha 57
+**O que:** `supabase.auth.getClaims(token)` nao e um metodo valido do supabase-js v2. Isso vai causar erro em runtime.
+**Correcao (conforme devVAULT):** Usar `supabase.auth.getUser()` que ja usa o token do header Authorization passado no client:
+
+```typescript
+const { data: { user }, error } = await supabase.auth.getUser();
+if (error || !user) return null;
+return { userId: user.id, supabase };
 ```
 
-RLS: cada usuario so ve/edita suas proprias instancias (mesmo padrao das outras tabelas).
+---
+
+### Problema 3 — Polling a cada 4s, devVAULT recomenda 3s + timeout de 60s
+
+**Onde:** `src/pages/ApiKeysPage.tsx` linha 125
+**O que do devVAULT:** `whatsapp-status-webhook-url-token` diz explicitamente: "Poll for QR code updates every 3 seconds until status = 'open'. Set a 60-second timeout for QR code scanning — after that, regenerate."
+**Implementacao atual:** Poll a cada 4s, sem timeout de 60s.
+**Correcao:** Mudar intervalo para 3s e adicionar timeout de 60s que para o poll e mostra mensagem de "QR expirado, clique para reconectar".
 
 ---
 
-### Fase 2 — Edge Functions (Backend)
+### Problema 4 — Frontend usa fetch direto com URL hardcoded em vez de supabase.functions.invoke()
 
-#### 2.1 Codigo compartilhado: `_shared/whatsapp/evolution-client.ts`
-Client HTTP tipado para a Evolution API v2 (conforme modulo `evolution-api-v2-client` do devVAULT):
-- `createInstance(name, webhookUrl)` — cria instancia na Evolution API
-- `getConnectionState(name)` — verifica status (open/close/connecting)
-- `getQrCode(name)` — busca QR code base64
-- `deleteInstance(name)` — remove instancia
-- `sendText(name, number, text)` — envia mensagem de texto
-- `sendMedia(name, number, url, caption, type)` — envia midia
-- Timeout de 15s, autenticacao via apikey header
-
-#### 2.2 Edge Function: `whatsapp-manage`
-BFF para o frontend gerenciar instancias. Actions:
-- `instance-create` — cria instancia na Evolution API + salva no banco
-- `instance-connect` — gera QR code para conexao
-- `instance-disconnect` — desconecta instancia
-- `instance-delete` — remove instancia
-- `instance-status` — consulta status atual
-- `instance-list` — lista instancias do usuario
-
-Auth: JWT do Supabase (usuario logado).
-
-#### 2.3 Edge Function: `whatsapp-status-webhook`
-Receptor de webhooks da Evolution API:
-- Eventos: `CONNECTION_UPDATE` (atualiza status) e `QRCODE_UPDATED` (salva QR code)
-- Auth: token na URL (`?token=SECRET`) com comparacao timing-safe
-- Atualiza tabela `whatsapp_instances` automaticamente
-- `verify_jwt = false` (webhook publico)
-
-#### 2.4 Edge Function: `whatsapp-send`
-Endpoint para envio de mensagens (usado pelo sistema de gatilhos/funis):
-- Recebe: `instance_id`, `phone`, `text` (ou `media_url`, `media_type`)
-- Valida que a instancia pertence ao usuario e esta `open`
-- Envia via Evolution API client
+**Onde:** `src/pages/ApiKeysPage.tsx` linha 80-91, `src/pages/Index.tsx` linhas 52-63
+**O que:** As regras do projeto dizem "NEVER CALL FUNCTIONS BY SPECIFYING A PATH... use either `supabase.functions.invoke()` or construct the full URL using `import.meta.env.VITE_SUPABASE_PROJECT_ID`". Alem disso, o devVAULT recomenda hooks React Query (`whatsapp-react-query-hooks`).
+**Correcao:** Substituir `fetch("https://txnhtcyjzohxkfwdfrvh...")` por `supabase.functions.invoke("whatsapp-manage", { body: { action, ...payload } })`. Isso tambem elimina o anon key hardcoded no codigo.
 
 ---
 
-### Fase 3 — Secrets necessarios
+### Problema 5 — whatsapp-send usa sendMedia com path incorreto da Evolution API
 
-Sera preciso configurar no Supabase:
-- `EVOLUTION_API_URL` — URL da sua instancia da Evolution API (ex: `https://evo.seudominio.com`)
-- `EVOLUTION_API_KEY` — chave global da Evolution API
-- `EVOLUTION_WEBHOOK_SECRET` — token aleatorio para validar webhooks
-
----
-
-### Fase 4 — Frontend (Pagina de Instancias)
-
-Transformar a pagina `ApiKeysPage.tsx` (placeholder atual) em uma interface funcional:
-
-- **Lista de instancias** com status em tempo real (badge verde/vermelho/amarelo)
-- **Botao "Nova Instancia"** — abre dialog para nomear e criar
-- **Card de instancia** mostrando:
-  - Nome, status, numero de telefone (quando conectado)
-  - Area de QR Code (quando status = connecting) — poll a cada 3s
-  - Botoes: Conectar, Desconectar, Excluir
-- **Pagina Inicio (Index.tsx)** — atualizar o card "WhatsApp (Evolution API)" para mostrar dados reais da instancia
+**Onde:** `whatsapp-send/index.ts` linha 84
+**O que:** Usa `/message/sendMedia/${name}` mas de acordo com o devVAULT (`evolution-api-v2-client-whatsapp`), o endpoint correto e `/message/sendMedia/${name}` para imagens, porem o campo `media` deve ter o campo `mimetype` para funcionar corretamente com a Evolution API v2. O campo `mediatype` tambem precisa ser validado (image, video, audio, document).
+**Correcao:** Adicionar validacao do `media_type` e incluir `mimetype` quando necessario.
 
 ---
 
-### Fase 5 — Integracao com Gatilhos
+### Problema 6 — Falta tabela whatsapp_message_logs
 
-Atualizar o motor de gatilhos (`triggerEngine.ts`) para usar o `whatsapp-send` ao disparar funis, enviando as mensagens reais via WhatsApp quando uma instancia estiver conectada.
+**Onde:** Schema do banco
+**O que do devVAULT:** Todos os modulos de dispatch (`whatsapp-internal-dispatcher`, `whatsapp-message-dispatcher`, `whatsapp-sql-schema`) mencionam uma tabela `whatsapp_message_logs` para registrar cada envio/falha. Sem essa tabela, nao ha como debugar por que uma mensagem nao foi enviada.
+**Correcao (futura):** Criar tabela `whatsapp_message_logs` com campos: id, user_id, instance_id, phone, status (sent/failed), error, sent_at. E logar no `whatsapp-send` apos cada envio.
 
 ---
 
-### Sequencia de implementacao
+### Problema 7 — Sem deploy das Edge Functions
 
-1. Secrets (EVOLUTION_API_URL, EVOLUTION_API_KEY, EVOLUTION_WEBHOOK_SECRET)
-2. Migration SQL (tabela whatsapp_instances + RLS)
-3. Edge Function `whatsapp-manage` (com _shared/evolution-client)
-4. Edge Function `whatsapp-status-webhook`
-5. Edge Function `whatsapp-send`
-6. Frontend — pagina de Instancias funcional
-7. Frontend — card da pagina Inicio com dados reais
-8. Integracao com gatilhos (opcional, fase seguinte)
+**Onde:** Supabase Edge Functions
+**O que:** As 3 functions (`whatsapp-manage`, `whatsapp-status-webhook`, `whatsapp-send`) precisam ser deployadas. Sem deploy, nenhuma chamada do frontend vai funcionar e nao havera logs para verificar.
+**Correcao:** Executar deploy das 3 functions.
+
+---
+
+### Sequencia de correcao recomendada
+
+1. **Corrigir auth** — trocar `getClaims()` por `getUser()` nas 2 Edge Functions (critico, bloqueia tudo)
+2. **Corrigir chamadas frontend** — trocar fetch hardcoded por `supabase.functions.invoke()` (boas praticas + seguranca)
+3. **Corrigir rota** — `/instancias` para `/api-keys` na Index.tsx
+4. **Ajustar polling** — 3s + timeout 60s conforme devVAULT
+5. **Deploy** das 3 Edge Functions
+6. **Testar end-to-end** — criar instancia, gerar QR, conectar
+7. **(Futuro)** Criar tabela `whatsapp_message_logs` e logar envios
+
+### Resumo tecnico
+
+| # | Severidade | Problema | Arquivo |
+|---|-----------|----------|---------|
+| 1 | Media | Rota `/instancias` errada | Index.tsx |
+| 2 | **Critica** | `getClaims()` nao existe | whatsapp-manage, whatsapp-send |
+| 3 | Baixa | Poll 4s sem timeout | ApiKeysPage.tsx |
+| 4 | Media | fetch hardcoded com anon key | ApiKeysPage.tsx, Index.tsx |
+| 5 | Baixa | sendMedia sem mimetype | whatsapp-send |
+| 6 | Baixa | Falta whatsapp_message_logs | Schema |
+| 7 | **Critica** | Functions nao deployadas | Supabase |
 
