@@ -41,19 +41,13 @@ export interface TriggerMatchResult {
 }
 
 /**
- * Remove acentos/diacríticos de uma string.
- * Ex: "olá" → "ola", "café" → "cafe"
+ * Normaliza texto para comparação.
+ *
+ * MODO ESTRITO: mantém acentos, pontuação e capitalização.
+ * O gatilho só deve disparar com texto exatamente igual ao configurado.
  */
-function removeAccents(str: string): string {
-  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-/**
- * Normaliza texto para comparação: lowercase + sem acentos.
- */
-function normalizeText(str: string, ignoreCase: boolean): string {
-  const result = ignoreCase ? str.toLowerCase() : str;
-  return removeAccents(result);
+function normalizeText(str: string): string {
+  return str;
 }
 
 /**
@@ -62,11 +56,10 @@ function normalizeText(str: string, ignoreCase: boolean): string {
  */
 function evaluateCondition(
   cond: TriggerCondition,
-  rawMessage: string,
-  ignoreCase: boolean
+  rawMessage: string
 ): { passed: boolean; matches: ConditionMatch[] } {
-  const msg = normalizeText(rawMessage, ignoreCase);
-  const keywords = cond.keywords.map((k) => normalizeText(k, ignoreCase));
+  const msg = normalizeText(rawMessage);
+  const keywords = cond.keywords.map((k) => normalizeText(k));
   const matches: ConditionMatch[] = [];
 
   switch (cond.type) {
@@ -122,7 +115,7 @@ export function evaluateTrigger(trigger: TriggerData, message: string): TriggerM
   let allPassed = true;
 
   for (const cond of trigger.conditions) {
-    const { passed, matches } = evaluateCondition(cond, message, trigger.ignore_case);
+    const { passed, matches } = evaluateCondition(cond, message);
     allMatches.push(...matches);
     if (!passed) {
       allPassed = false;
