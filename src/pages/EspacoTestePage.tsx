@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Send,
@@ -16,7 +15,6 @@ import {
   Video,
   MoreVertical,
   Search,
-  Check,
   CheckCheck,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,7 +32,7 @@ interface ChatMessage {
   assetType?: string;
   assetName?: string;
   fileUrl?: string;
-  fileType?: string; // mime type
+  fileType?: string;
 }
 
 interface AssetButton {
@@ -43,6 +41,28 @@ interface AssetButton {
   type: "mensagem" | "audio" | "midia" | "documento" | "funil";
   content?: string;
 }
+
+interface Contact {
+  id: string;
+  name: string;
+  phone: string;
+  avatar: string;
+  status: string;
+  lastMessage?: string;
+  lastTime?: string;
+  unread?: number;
+}
+
+const CONTACTS: Contact[] = [
+  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "👤", status: "online", lastMessage: "Clique para testar gatilhos", lastTime: "agora", unread: 0 },
+  { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "👩", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
+  { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "👨", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
+  { id: "4", name: "Ana Oliveira", phone: "+55 41 96666-5555", avatar: "👩‍💼", status: "online", lastMessage: "Vou verificar aqui", lastTime: "ontem", unread: 0 },
+  { id: "5", name: "Carlos Pereira", phone: "+55 51 95555-4444", avatar: "👨‍💻", status: "visto por último às 18:40", lastMessage: "Pode me enviar o catálogo?", lastTime: "ontem", unread: 1 },
+  { id: "6", name: "Juliana Costa", phone: "+55 61 94444-3333", avatar: "👩‍🎓", status: "digitando...", lastMessage: "Qual o valor?", lastTime: "seg", unread: 3 },
+  { id: "7", name: "Pedro Almeida", phone: "+55 71 93333-2222", avatar: "🧑", status: "online", lastMessage: "Fechado!", lastTime: "seg", unread: 0 },
+  { id: "8", name: "Grupo Vendas", phone: "5 participantes", avatar: "👥", status: "5 participantes", lastMessage: "Carlos: Meta batida! 🎉", lastTime: "dom", unread: 12 },
+];
 
 const typeIcons: Record<string, typeof MessageSquare> = {
   mensagem: MessageSquare,
@@ -60,19 +80,30 @@ const typeColors: Record<string, string> = {
   funil: "bg-emerald-600 hover:bg-emerald-700 text-white",
 };
 
+const welcomeMessage = (name: string): ChatMessage => ({
+  id: "welcome",
+  text: `Conversa com ${name}. Digite uma mensagem para testar seus gatilhos, ou clique nos botões abaixo para enviar ativos.`,
+  type: "system",
+  timestamp: new Date(),
+});
+
 export default function EspacoTestePage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      text: "Bem-vindo ao Espaço de Teste! Simule conversas do WhatsApp aqui. Digite uma mensagem para testar seus gatilhos, ou clique nos botões abaixo para enviar ativos.",
-      type: "system",
-      timestamp: new Date(),
-    },
-  ]);
+  const [activeContactId, setActiveContactId] = useState<string>("1");
+  const [contactSearch, setContactSearch] = useState("");
+  const [chatHistory, setChatHistory] = useState<Record<string, ChatMessage[]>>(() => {
+    const initial: Record<string, ChatMessage[]> = {};
+    CONTACTS.forEach((c) => {
+      initial[c.id] = [welcomeMessage(c.name)];
+    });
+    return initial;
+  });
+
+  const activeContact = CONTACTS.find((c) => c.id === activeContactId)!;
+  const messages = chatHistory[activeContactId] ?? [];
+
   const [inputText, setInputText] = useState("");
   const [assetButtons, setAssetButtons] = useState<AssetButton[]>([]);
   const [triggers, setTriggers] = useState<TriggerData[]>([]);
-  const [funnelItems, setFunnelItems] = useState<Record<string, any[]>>({});
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
   const [pendingAsset, setPendingAsset] = useState<{ id: string; name: string; type: string; itemCount?: number; duration?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -84,7 +115,6 @@ export default function EspacoTestePage() {
     documento: "documents",
   };
 
-  // Fetch all assets + triggers
   const fetchData = useCallback(async () => {
     const [msgRes, audioRes, mediaRes, docRes, funnelRes, triggerRes] = await Promise.all([
       supabase.from("messages").select("id, name, content").order("created_at"),
@@ -98,30 +128,21 @@ export default function EspacoTestePage() {
     const buttons: AssetButton[] = [];
     const nameCache: Record<string, string> = {};
 
-    // Funnels first
     (funnelRes.data ?? []).forEach((f: any) => {
       buttons.push({ id: f.id, name: f.name, type: "funil" });
     });
-
-    // Messages
     (msgRes.data ?? []).forEach((m: any) => {
       buttons.push({ id: m.id, name: m.name, type: "mensagem", content: m.content });
       nameCache[m.id] = m.name;
     });
-
-    // Audios
     (audioRes.data ?? []).forEach((a: any) => {
       buttons.push({ id: a.id, name: a.name, type: "audio" });
       nameCache[a.id] = a.name;
     });
-
-    // Medias
     (mediaRes.data ?? []).forEach((m: any) => {
       buttons.push({ id: m.id, name: m.name, type: "midia" });
       nameCache[m.id] = m.name;
     });
-
-    // Documents
     (docRes.data ?? []).forEach((d: any) => {
       buttons.push({ id: d.id, name: d.name, type: "documento" });
       nameCache[d.id] = d.name;
@@ -130,7 +151,6 @@ export default function EspacoTestePage() {
     setAssetButtons(buttons);
     setAssetNameCache(nameCache);
 
-    // Triggers
     const triggerRows: TriggerData[] = (triggerRes.data ?? []).map((r: any) => ({
       id: r.id,
       name: r.name,
@@ -149,7 +169,6 @@ export default function EspacoTestePage() {
     fetchData();
   }, [fetchData]);
 
-  // Auto scroll
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -157,10 +176,13 @@ export default function EspacoTestePage() {
   }, [messages]);
 
   const addMessage = (msg: Omit<ChatMessage, "id" | "timestamp">) => {
-    setMessages((prev) => [
+    setChatHistory((prev) => ({
       ...prev,
-      { ...msg, id: crypto.randomUUID(), timestamp: new Date() },
-    ]);
+      [activeContactId]: [
+        ...(prev[activeContactId] ?? []),
+        { ...msg, id: crypto.randomUUID(), timestamp: new Date() },
+      ],
+    }));
   };
 
   const getStorageUrl = async (storagePath: string | null): Promise<string | null> => {
@@ -169,9 +191,7 @@ export default function EspacoTestePage() {
     return data?.signedUrl ?? null;
   };
 
-  // Fetch funnel items and execute sequentially
   const executeFunnel = async (funnelId: string, funnelName: string) => {
-
     const { data: items } = await supabase
       .from("funnel_items")
       .select("*")
@@ -209,7 +229,6 @@ export default function EspacoTestePage() {
         }
       }
 
-
       addMessage({
         text: content || `${assetName}`,
         type: "sent",
@@ -225,7 +244,6 @@ export default function EspacoTestePage() {
     });
   };
 
-  // Process incoming message through trigger engine
   const processIncomingMessage = async (text: string) => {
     const matched = findMatchingTriggers(triggers, text, {
       isGroup: false,
@@ -236,7 +254,6 @@ export default function EspacoTestePage() {
 
     for (const result of matched) {
       if (result.funnelId) {
-        // Get funnel name
         const funnel = assetButtons.find(
           (b) => b.type === "funil" && b.id === result.funnelId
         );
@@ -252,19 +269,14 @@ export default function EspacoTestePage() {
     }
   };
 
-  // Send user message (simulates incoming from contact)
   const handleSend = async () => {
     if (!inputText.trim()) return;
     const text = inputText.trim();
     setInputText("");
-
     addMessage({ text, type: "received" });
-
-    // Process through triggers
     await processIncomingMessage(text);
   };
 
-  // Helper to calculate funnel duration
   const calcFunnelDuration = (items: any[]) => {
     const totalSec = items.reduce((acc: number, item: any) => acc + item.delay_min * 60 + item.delay_sec, 0);
     const min = Math.floor(totalSec / 60);
@@ -272,10 +284,8 @@ export default function EspacoTestePage() {
     return `${min} min e ${sec} seg`;
   };
 
-  // Send asset directly
   const handleAssetClick = async (asset: AssetButton) => {
     const settings = getAppSettings();
-
     if (asset.type === "funil") {
       if (settings.confirmFunnelSend) {
         const { data: items } = await supabase
@@ -304,9 +314,6 @@ export default function EspacoTestePage() {
   };
 
   const sendAsset = async (asset: AssetButton) => {
-    const typeLabel =
-      asset.type === "mensagem" ? "💬 Mensagem" : asset.type === "audio" ? "🎵 Áudio" : asset.type === "midia" ? "📷 Mídia" : "📄 Documento";
-
     let content = "";
     let fileUrl: string | null = null;
     let mime: string | null = null;
@@ -321,7 +328,6 @@ export default function EspacoTestePage() {
       }
     }
 
-    
     addMessage({
       text: content || asset.name,
       type: "sent",
@@ -346,136 +352,193 @@ export default function EspacoTestePage() {
   const formatTime = (d: Date) =>
     d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
+  const filteredContacts = CONTACTS.filter((c) =>
+    c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
+    c.phone.includes(contactSearch)
+  );
+
   return (
     <MainLayout title="Espaço de Teste">
-      <div className="flex flex-col h-[calc(100vh-12rem)] max-w-4xl mx-auto border border-border rounded-lg overflow-hidden bg-card">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 bg-muted/50 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-              <span className="text-lg">👤</span>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Contato de Teste</p>
-              <p className="text-xs text-muted-foreground">+55 11 99999-9999 · online</p>
+      <div className="flex h-[calc(100vh-12rem)] max-w-5xl mx-auto border border-border rounded-lg overflow-hidden bg-card">
+        {/* Contact list sidebar */}
+        <div className="w-72 border-r border-border flex flex-col bg-card flex-shrink-0">
+          {/* Search */}
+          <div className="p-3 border-b border-border">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Pesquisar contato..."
+                value={contactSearch}
+                onChange={(e) => setContactSearch(e.target.value)}
+                className="pl-9 h-9 text-sm border-0 bg-muted/50"
+              />
             </div>
           </div>
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Search className="h-5 w-5" />
-            <Phone className="h-5 w-5" />
-            <Video className="h-5 w-5" />
-            <MoreVertical className="h-5 w-5" />
-          </div>
+
+          {/* Contact list */}
+          <ScrollArea className="flex-1">
+            {filteredContacts.map((contact) => {
+              const isActive = contact.id === activeContactId;
+              return (
+                <button
+                  key={contact.id}
+                  onClick={() => setActiveContactId(contact.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 border-b border-border/50 ${
+                    isActive ? "bg-muted/70" : ""
+                  }`}
+                >
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <span className="text-lg">{contact.avatar}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-foreground truncate">{contact.name}</p>
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">{contact.lastTime}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground truncate">{contact.lastMessage}</p>
+                      {(contact.unread ?? 0) > 0 && (
+                        <span className="ml-1 flex-shrink-0 h-5 min-w-[20px] rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1">
+                          {contact.unread}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </ScrollArea>
         </div>
 
         {/* Chat area */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 space-y-2"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23888' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }}
-        >
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${
-                msg.type === "sent"
-                  ? "justify-end"
-                  : msg.type === "received"
-                  ? "justify-start"
-                  : "justify-center"
-              }`}
-            >
-              {msg.type === "system" ? (
-                <div className="bg-muted/80 text-muted-foreground text-xs px-3 py-1.5 rounded-lg max-w-md text-center">
-                  {msg.text}
-                </div>
-              ) : (
-                <div
-                  className={`max-w-[70%] rounded-lg px-3 py-2 shadow-sm ${
-                    msg.type === "sent"
-                      ? "bg-primary/15 text-foreground rounded-br-none"
-                      : "bg-card text-foreground border border-border rounded-bl-none"
-                  }`}
-                >
-                  {/* Render file content based on type */}
-                  {msg.fileUrl && msg.assetType === "audio" && (
-                    <WhatsAppAudioPlayer src={msg.fileUrl} />
-                  )}
-                  {msg.fileUrl && msg.assetType === "midia" && msg.fileType?.startsWith("video") && (
-                    <video controls className="w-full max-w-[250px] rounded my-1" src={msg.fileUrl} />
-                  )}
-                  {msg.fileUrl && msg.assetType === "midia" && !msg.fileType?.startsWith("video") && (
-                    <img src={msg.fileUrl} alt={msg.assetName} className="w-full max-w-[250px] rounded my-1" />
-                  )}
-                  {msg.fileUrl && msg.assetType === "documento" && (
-                    <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-muted/50 rounded p-2 my-1 text-xs text-primary hover:underline">
-                      <FileText className="h-4 w-4" />
-                      {msg.assetName}
-                    </a>
-                  )}
-                  {msg.text && (!msg.fileUrl || msg.assetType === "mensagem") && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                  )}
-                  <div className="flex items-center justify-end gap-1 mt-1">
-                    <span className="text-[10px] text-muted-foreground">
-                      {formatTime(msg.timestamp)}
-                    </span>
-                    {msg.type === "sent" && (
-                      <CheckCheck className="h-3.5 w-3.5 text-primary" />
-                    )}
-                  </div>
-                </div>
-              )}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/50 border-b border-border">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
+                <span className="text-lg">{activeContact.avatar}</span>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{activeContact.name}</p>
+                <p className="text-xs text-muted-foreground">{activeContact.phone} · {activeContact.status}</p>
+              </div>
             </div>
-          ))}
-        </div>
-
-        {/* Asset buttons bar */}
-        {assetButtons.length > 0 && (
-          <div className="border-t border-border bg-muted/30 px-3 py-2">
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-              {assetButtons.map((asset) => {
-                const Icon = typeIcons[asset.type] || FileText;
-                return (
-                  <button
-                    key={`${asset.type}-${asset.id}`}
-                    onClick={() => handleAssetClick(asset)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${typeColors[asset.type]}`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {asset.name}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Search className="h-5 w-5" />
+              <Phone className="h-5 w-5" />
+              <Video className="h-5 w-5" />
+              <MoreVertical className="h-5 w-5" />
             </div>
           </div>
-        )}
 
-        {/* Input bar */}
-        <div className="flex items-center gap-2 px-3 py-3 border-t border-border bg-muted/50">
-          <Smile className="h-6 w-6 text-muted-foreground cursor-pointer flex-shrink-0" />
-          <Input
-            placeholder="Digite uma mensagem (simula mensagem recebida)"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleSend();
-              }
+          {/* Messages */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto p-4 space-y-2"
+            style={{
+              backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23888' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
             }}
-            className="flex-1 border-0 bg-background shadow-none"
-          />
-          <Button
-            size="icon"
-            className="rounded-full h-10 w-10 flex-shrink-0"
-            onClick={handleSend}
-            disabled={!inputText.trim()}
           >
-            <Send className="h-5 w-5" />
-          </Button>
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${
+                  msg.type === "sent"
+                    ? "justify-end"
+                    : msg.type === "received"
+                    ? "justify-start"
+                    : "justify-center"
+                }`}
+              >
+                {msg.type === "system" ? (
+                  <div className="bg-muted/80 text-muted-foreground text-xs px-3 py-1.5 rounded-lg max-w-md text-center">
+                    {msg.text}
+                  </div>
+                ) : (
+                  <div
+                    className={`max-w-[70%] rounded-lg px-3 py-2 shadow-sm ${
+                      msg.type === "sent"
+                        ? "bg-primary/15 text-foreground rounded-br-none"
+                        : "bg-card text-foreground border border-border rounded-bl-none"
+                    }`}
+                  >
+                    {msg.fileUrl && msg.assetType === "audio" && (
+                      <WhatsAppAudioPlayer src={msg.fileUrl} />
+                    )}
+                    {msg.fileUrl && msg.assetType === "midia" && msg.fileType?.startsWith("video") && (
+                      <video controls className="w-full max-w-[250px] rounded my-1" src={msg.fileUrl} />
+                    )}
+                    {msg.fileUrl && msg.assetType === "midia" && !msg.fileType?.startsWith("video") && (
+                      <img src={msg.fileUrl} alt={msg.assetName} className="w-full max-w-[250px] rounded my-1" />
+                    )}
+                    {msg.fileUrl && msg.assetType === "documento" && (
+                      <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-muted/50 rounded p-2 my-1 text-xs text-primary hover:underline">
+                        <FileText className="h-4 w-4" />
+                        {msg.assetName}
+                      </a>
+                    )}
+                    {msg.text && (!msg.fileUrl || msg.assetType === "mensagem") && (
+                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    )}
+                    <div className="flex items-center justify-end gap-1 mt-1">
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatTime(msg.timestamp)}
+                      </span>
+                      {msg.type === "sent" && (
+                        <CheckCheck className="h-3.5 w-3.5 text-primary" />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Asset buttons bar */}
+          {assetButtons.length > 0 && (
+            <div className="border-t border-border bg-muted/30 px-3 py-2">
+              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                {assetButtons.map((asset) => {
+                  const Icon = typeIcons[asset.type] || FileText;
+                  return (
+                    <button
+                      key={`${asset.type}-${asset.id}`}
+                      onClick={() => handleAssetClick(asset)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${typeColors[asset.type]}`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {asset.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Input bar */}
+          <div className="flex items-center gap-2 px-3 py-3 border-t border-border bg-muted/50">
+            <Smile className="h-6 w-6 text-muted-foreground cursor-pointer flex-shrink-0" />
+            <Input
+              placeholder="Digite uma mensagem (simula mensagem recebida)"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              className="flex-1 border-0 bg-background shadow-none"
+            />
+            <Button
+              size="icon"
+              className="rounded-full h-10 w-10 flex-shrink-0"
+              onClick={handleSend}
+              disabled={!inputText.trim()}
+            >
+              <Send className="h-5 w-5" />
+            </Button>
+          </div>
         </div>
       </div>
 
