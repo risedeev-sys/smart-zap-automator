@@ -129,14 +129,8 @@ function isTruthyFlag(value: unknown): boolean {
 }
 
 const INITIAL_CONTACTS: Contact[] = [
-  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
-  { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
-  { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
-  { id: "4", name: "Ana Oliveira", phone: "+55 41 96666-5555", avatar: "", status: "online", lastMessage: "Vou verificar aqui", lastTime: "ontem", unread: 0 },
-  { id: "5", name: "Carlos Pereira", phone: "+55 51 95555-4444", avatar: "", status: "visto por último às 18:40", lastMessage: "Pode me enviar o catálogo?", lastTime: "ontem", unread: 1 },
-  { id: "6", name: "Juliana Costa", phone: "+55 61 94444-3333", avatar: "", status: "digitando...", lastMessage: "Qual o valor?", lastTime: "seg", unread: 3 },
-  { id: "7", name: "Pedro Almeida", phone: "+55 71 93333-2222", avatar: "", status: "online", lastMessage: "Fechado!", lastTime: "seg", unread: 0 },
-  { id: "8", name: "Grupo Vendas", phone: "5 participantes", avatar: "", status: "5 participantes", lastMessage: "Carlos: Meta batida! 🎉", lastTime: "dom", unread: 12, isGroup: true },
+  { id: "1", name: "Darck", phone: "556192039398", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
+  { id: "2", name: "Rise community", phone: "5511972734906", avatar: "", status: "online", lastMessage: "Como vai?", lastTime: "10:30", unread: 0 },
 ];
 
 const welcomeMessage = (name: string): ChatMessage => ({
@@ -145,13 +139,8 @@ const welcomeMessage = (name: string): ChatMessage => ({
   type: "system",
   timestamp: new Date(),
 });
-// Pre-built received messages for contacts with unread
 const UNREAD_MESSAGES: Record<string, string[]> = {
   "1": ["Oi, tudo bem?"],
-  "2": ["Oi, tudo bem?", "Você tem disponibilidade hoje?"],
-  "5": ["Pode me enviar o catálogo?"],
-  "6": ["Olá!", "Vi seu anúncio", "Qual o valor?"],
-  "8": ["Pedro: Bom dia pessoal", "Ana: Boa!", "Carlos: Meta batida! 🎉", "João: 🔥🔥", "Pedro: Vamos comemorar!", "Ana: Partiu!", "Carlos: 🎯", "João: Excelente trabalho!", "Pedro: Time top!", "Ana: Arrasamos", "Carlos: Próxima meta já!", "João: Bora! 💪"],
 };
 
 const typeIcons: Record<string, typeof MessageSquare> = {
