@@ -93,27 +93,51 @@
 
   async function sendTextViaDom(text) {
     try {
-      // Find the message input field
-      const input = document.querySelector('#main footer div[contenteditable="true"]');
+      // Find the message input field (multiple fallback selectors)
+      const input =
+        document.querySelector('#main div[contenteditable="true"][data-tab="10"]') ||
+        document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
+        document.querySelector('#main footer div[contenteditable="true"]') ||
+        document.querySelector('footer div[contenteditable="true"]');
       if (!input) {
         showToast("Abra um chat para enviar", true);
         return false;
       }
 
-      // Focus and insert text
+      // Focus and clear existing content
       input.focus();
-      document.execCommand("selectAll", false, null);
-      document.execCommand("delete", false, null);
-      document.execCommand("insertText", false, text);
-
-      // Dispatch input event so WhatsApp detects the change
+      await sleep(100);
+      input.textContent = '';
       input.dispatchEvent(new Event("input", { bubbles: true }));
+      await sleep(100);
 
-      // Wait a bit for the send button to appear
-      await sleep(300);
+      // Inject text via ClipboardEvent (paste) — works with React/Lexical
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", text);
+      const pasteEvent = new ClipboardEvent("paste", {
+        clipboardData: dataTransfer,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(pasteEvent);
 
-      // Click send button
-      const sendBtn = document.querySelector('#main footer span[data-icon="send"]');
+      // Wait for WhatsApp to process the paste and show send button
+      await sleep(500);
+
+      // Click send button (multiple fallback selectors)
+      let sendBtn =
+        document.querySelector('span[data-icon="send"]') ||
+        document.querySelector('button[aria-label="Send"]') ||
+        document.querySelector('button[aria-label="Enviar"]');
+
+      // If not found, wait a bit more
+      if (!sendBtn) {
+        try {
+          await waitForElement('span[data-icon="send"]', 3000);
+          sendBtn = document.querySelector('span[data-icon="send"]');
+        } catch {}
+      }
+
       if (!sendBtn) {
         showToast("Botão de enviar não encontrado", true);
         return false;
@@ -145,9 +169,11 @@
 
       // Click the attach button (the "+" or clip icon)
       const attachBtn =
+        document.querySelector('#main span[data-icon="plus"]') ||
+        document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
+        document.querySelector('#main span[data-icon="clip"]') ||
         document.querySelector('span[data-icon="plus"]') ||
-        document.querySelector('span[data-icon="attach-menu-plus"]') ||
-        document.querySelector('span[data-icon="clip"]');
+        document.querySelector('span[data-icon="attach-menu-plus"]');
       if (!attachBtn) {
         showToast("Botão de anexo não encontrado", true);
         return false;
