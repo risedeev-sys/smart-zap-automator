@@ -319,6 +319,65 @@ export default function EspacoTestePage() {
     fetchChats();
   }, [realWA.realMode, realWA.selectedInstanceId]);
 
+  // Subscribe to real-time incoming messages
+  useEffect(() => {
+    if (!realWA.realMode || !realWA.selectedInstanceId) return;
+
+    const channel = supabase
+      .channel("incoming-messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "whatsapp_incoming_messages",
+        },
+        (payload) => {
+          const msg = payload.new as any;
+          const remoteJid = msg.remote_jid || "";
+          const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+          
+          // Find the matching contact by phone
+          setContacts((prevContacts) => {
+            const matchingContact = prevContacts.find((c) => c.phone === phone);
+            if (matchingContact) {
+              // Add message to chat history
+              setChatHistory((prev) => ({
+                ...prev,
+                [matchingContact.id]: [
+                  ...(prev[matchingContact.id] ?? []),
+                  {
+                    id: msg.id || crypto.randomUUID(),
+                    text: msg.message_text || "",
+                    type: "received" as const,
+                    timestamp: new Date(msg.created_at || Date.now()),
+                  },
+                ],
+              }));
+
+              // Update last message and unread count
+              return prevContacts.map((c) =>
+                c.id === matchingContact.id
+                  ? {
+                      ...c,
+                      lastMessage: msg.message_text || "",
+                      lastTime: formatSmartTime(Date.now() / 1000),
+                      unread: (c.unread ?? 0) + (c.id === activeContactId ? 0 : 1),
+                    }
+                  : c
+              );
+            }
+            return prevContacts;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [realWA.realMode, realWA.selectedInstanceId, activeContactId]);
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

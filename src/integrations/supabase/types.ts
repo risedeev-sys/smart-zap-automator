@@ -335,6 +335,42 @@ export type Database = {
           },
         ]
       }
+      whatsapp_incoming_messages: {
+        Row: {
+          created_at: string | null
+          id: string
+          instance_id: string
+          is_group: boolean | null
+          message_text: string | null
+          remote_jid: string
+          sender_name: string | null
+          timestamp: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          instance_id: string
+          is_group?: boolean | null
+          message_text?: string | null
+          remote_jid: string
+          sender_name?: string | null
+          timestamp?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          instance_id?: string
+          is_group?: boolean | null
+          message_text?: string | null
+          remote_jid?: string
+          sender_name?: string | null
+          timestamp?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       whatsapp_instances: {
         Row: {
           created_at: string

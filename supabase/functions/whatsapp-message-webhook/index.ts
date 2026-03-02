@@ -277,8 +277,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const senderPhone = key?.remoteJid?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
-    const isGroup = key?.remoteJid?.endsWith("@g.us") || false;
+    const senderJid = key?.remoteJid || "";
+    const senderPhone = senderJid.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+    const isGroup = senderJid.endsWith("@g.us") || false;
+    const participantName = messageData.pushName || senderPhone;
 
     console.log(`[webhook] Message from ${senderPhone}: "${text}" (group: ${isGroup})`);
 
@@ -297,6 +299,21 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, skipped: true }), {
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // Save incoming message for real-time display in Espaço de Teste
+    try {
+      await supabase.from("whatsapp_incoming_messages").insert({
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        remote_jid: senderJid,
+        sender_name: participantName,
+        message_text: text,
+        is_group: isGroup,
+      });
+      console.log(`[webhook] Saved incoming message from ${participantName}`);
+    } catch (err) {
+      console.warn("[webhook] Failed to save incoming message:", err);
     }
 
     // Load user's triggers
