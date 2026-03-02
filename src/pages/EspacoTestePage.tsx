@@ -143,6 +143,16 @@ const UNREAD_MESSAGES: Record<string, string[]> = {
   "1": ["Oi, tudo bem?"],
 };
 
+const ALLOWED_REAL_CONTACT_PHONES = ["556192039398", "5511972734906"] as const;
+
+function normalizePhoneNumber(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function isAllowedRealContact(phone: string): boolean {
+  return ALLOWED_REAL_CONTACT_PHONES.includes(normalizePhoneNumber(phone) as (typeof ALLOWED_REAL_CONTACT_PHONES)[number]);
+}
+
 const typeIcons: Record<string, typeof MessageSquare> = {
   mensagem: MessageSquare,
   audio: Mic,
@@ -298,6 +308,9 @@ export default function EspacoTestePage() {
     let initialSyncDone = false;
     const lastSeenSignatureByPhone = new Map<string, string>();
 
+    // Hard guard: in real mode, keep only the two allowed contacts in local state
+    setContacts((prev) => prev.filter((contact) => isAllowedRealContact(contact.phone)));
+
     void supabase.functions
       .invoke("whatsapp-manage", {
         body: { action: "instance-ensure-webhooks", instance_id: realWA.selectedInstanceId },
@@ -343,11 +356,7 @@ export default function EspacoTestePage() {
             lastMessageSignature,
             lastMessageFromMe,
           };
-        }).filter((c) => {
-          // Only show allowed contacts
-          const allowedPhones = ["556192039398", "5511972734906"];
-          return allowedPhones.includes(c.phone);
-        });
+        }).filter((c) => isAllowedRealContact(c.phone));
 
         if (normalizedContacts.length === 0) {
           if (!initialSyncDone) {
@@ -407,12 +416,9 @@ export default function EspacoTestePage() {
           });
 
           // Keep any extra dynamic chats that are not in top 20 from API (only allowed phones)
-          const allowedPhonesSet = new Set(["556192039398", "5511972734906"]);
           prevContacts.forEach((contact) => {
-            if (contact.id.startsWith("real-") && !seenIds.has(contact.id)) {
-              if (allowedPhonesSet.has(contact.phone.replace(/\D/g, ""))) {
-                mergedContacts.push(contact);
-              }
+            if (contact.id.startsWith("real-") && !seenIds.has(contact.id) && isAllowedRealContact(contact.phone)) {
+              mergedContacts.push(contact);
             }
           });
 
@@ -534,8 +540,7 @@ export default function EspacoTestePage() {
           const messageText = msg.message_text || "";
 
           // Only allow messages from permitted contacts
-          const allowedPhones = ["556192039398", "5511972734906"];
-          if (!allowedPhones.includes(normalizedPhone)) return;
+          if (!isAllowedRealContact(normalizedPhone)) return;
           const messageId = msg.id || crypto.randomUUID();
           const messageTimestamp = new Date(msg.created_at || Date.now());
           const messageUnixTimestamp =
@@ -863,10 +868,10 @@ export default function EspacoTestePage() {
   const formatTime = (d: Date) =>
     d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-  const filteredContacts = contacts.filter((c) =>
-    c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
-    c.phone.includes(contactSearch)
-  );
+  const filteredContacts = contacts.filter((c) => {
+    if (realWA.realMode && !isAllowedRealContact(c.phone)) return false;
+    return c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.phone.includes(contactSearch);
+  });
 
   return (
     <MainLayout title="Espaço de Teste">
