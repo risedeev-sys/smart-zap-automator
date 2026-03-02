@@ -42,17 +42,36 @@ async function evoFetch(path: string, options: RequestInit = {}) {
 }
 
 async function setMessageWebhook(name: string, messageWebhookUrl: string) {
-  await evoFetch(`/webhook/set/${name}`, {
-    method: "POST",
-    body: JSON.stringify({
-      webhook: {
+  // Try the flat format first (most Evolution API versions)
+  try {
+    await evoFetch(`/webhook/set/${name}`, {
+      method: "POST",
+      body: JSON.stringify({
         url: messageWebhookUrl,
         webhook_by_events: true,
         webhook_base64: true,
         events: ["MESSAGES_UPSERT", "messages.upsert"],
-      },
-    }),
-  });
+      }),
+    });
+    return;
+  } catch (_e) {
+    // If flat fails, try wrapped in "webhook" key
+  }
+  try {
+    await evoFetch(`/webhook/set/${name}`, {
+      method: "POST",
+      body: JSON.stringify({
+        webhook: {
+          url: messageWebhookUrl,
+          webhook_by_events: true,
+          webhook_base64: true,
+          events: ["MESSAGES_UPSERT", "messages.upsert"],
+        },
+      }),
+    });
+  } catch (e2) {
+    console.warn("[setMessageWebhook] both formats failed:", e2);
+  }
 }
 
 async function createInstance(name: string, statusWebhookUrl: string, messageWebhookUrl: string) {
