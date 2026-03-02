@@ -1,4 +1,4 @@
-// Rise Zap — Content Script (barra no WhatsApp Web)
+// Rise Zap — Content Script (barra no WhatsApp Web) — Envio 100% DOM
 (function () {
   "use strict";
 
@@ -6,15 +6,13 @@
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR4bmh0Y3lqem9oeGtmd2RmcnZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyMDQ0MTEsImV4cCI6MjA4Nzc4MDQxMX0.vUFZYFr8OLaZczKjcj4I8HOpMLNNOX1yo3GhvwPuR9Y";
 
   let token = null;
-  let instanceId = null;
   let assets = { messages: [], audios: [], medias: [], documents: [], funnels: [] };
 
   // ─── Auth ──────────────────────────────────────────────
 
   async function loadAuth() {
-    const stored = await chrome.storage.local.get(["risezap_access_token", "risezap_instance_id"]);
+    const stored = await chrome.storage.local.get(["risezap_access_token"]);
     token = stored.risezap_access_token || null;
-    instanceId = stored.risezap_instance_id || null;
   }
 
   // ─── Supabase Fetch ────────────────────────────────────
@@ -42,96 +40,7 @@
     assets = { messages, audios, medias, documents, funnels };
   }
 
-  // ─── Phone Extraction ─────────────────────────────────
-
-  function extractDigitsFromJid(value) {
-    if (!value) return null;
-    const text = String(value);
-
-    // Match WhatsApp JIDs: 5511999999999@s.whatsapp.net, 1203...@g.us, ...@lid
-    const jidMatch = text.match(/(\d{8,})@(s\.whatsapp\.net|g\.us|lid)/i);
-    if (jidMatch?.[1]) return jidMatch[1];
-
-    // Fallback: any long number in the text
-    const digits = text.replace(/\D/g, "");
-    return digits.length >= 10 ? digits : null;
-  }
-
-  function getCurrentPhone() {
-    // 1) Most reliable: selected chat in sidebar usually contains data-id with JID
-    const selectedChat = document.querySelector("#pane-side [aria-selected='true']");
-    if (selectedChat) {
-      const jidCandidates = [
-        selectedChat.getAttribute("data-id"),
-        ...Array.from(selectedChat.querySelectorAll("[data-id]")).map((el) => el.getAttribute("data-id")),
-      ];
-
-      for (const candidate of jidCandidates) {
-        const digits = extractDigitsFromJid(candidate);
-        if (digits) return digits;
-      }
-    }
-
-    // 2) Header candidates (title/aria labels/spans)
-    const header = document.querySelector("#main header");
-    if (!header) return null;
-
-    const headerCandidates = [
-      ...Array.from(header.querySelectorAll("[data-id], [title], [aria-label], span[dir='auto']")).map((el) =>
-        el.getAttribute("data-id") || el.getAttribute("title") || el.getAttribute("aria-label") || el.textContent || ""
-      ),
-      header.textContent || "",
-    ];
-
-    for (const candidate of headerCandidates) {
-      const digits = extractDigitsFromJid(candidate);
-      if (digits) return digits;
-    }
-
-    // 3) Last fallback: current chat message nodes often include JID in data-id
-    const messageNodes = document.querySelectorAll("#main [data-id]");
-    for (const node of messageNodes) {
-      const digits = extractDigitsFromJid(node.getAttribute("data-id"));
-      if (digits) return digits;
-    }
-
-    return null;
-  }
-
-  // ─── Send via Edge Function ────────────────────────────
-
-  async function sendMessage(opts) {
-    if (!token || !instanceId) {
-      showToast("Configure a instância no popup da extensão", true);
-      return false;
-    }
-    const phone = getCurrentPhone();
-    if (!phone) {
-      showToast("Abra um chat para enviar", true);
-      return false;
-    }
-    try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          apikey: SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ instance_id: instanceId, phone, ...opts }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        showToast(data.error || "Erro ao enviar", true);
-        return false;
-      }
-      showToast("Mensagem enviada! ✓");
-      return true;
-    } catch {
-      showToast("Erro de conexão", true);
-      return false;
-    }
-  }
+  // ─── Signed URL ───────────────────────────────────────
 
   async function getSignedUrl(path) {
     if (!token) return null;
@@ -150,6 +59,166 @@
       return data.signedURL ? `${SUPABASE_URL}/storage/v1${data.signedURL}` : null;
     } catch {
       return null;
+    }
+  }
+
+  // ─── DOM Helpers ──────────────────────────────────────
+
+  function waitForElement(selector, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+
+      const observer = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          observer.disconnect();
+          resolve(found);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      setTimeout(() => {
+        observer.disconnect();
+        reject(new Error(`waitForElement timeout: ${selector}`));
+      }, timeout);
+    });
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // ─── Send Text via DOM ────────────────────────────────
+
+  async function sendTextViaDom(text) {
+    try {
+      // Find the message input field
+      const input = document.querySelector('#main footer div[contenteditable="true"]');
+      if (!input) {
+        showToast("Abra um chat para enviar", true);
+        return false;
+      }
+
+      // Focus and insert text
+      input.focus();
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      document.execCommand("insertText", false, text);
+
+      // Dispatch input event so WhatsApp detects the change
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      // Wait a bit for the send button to appear
+      await sleep(300);
+
+      // Click send button
+      const sendBtn = document.querySelector('#main footer span[data-icon="send"]');
+      if (!sendBtn) {
+        showToast("Botão de enviar não encontrado", true);
+        return false;
+      }
+      sendBtn.closest("button")?.click() || sendBtn.click();
+
+      return true;
+    } catch (err) {
+      console.error("[RiseZap] sendTextViaDom error:", err);
+      showToast("Erro ao enviar texto", true);
+      return false;
+    }
+  }
+
+  // ─── Download Blob ────────────────────────────────────
+
+  async function downloadAsBlob(signedUrl) {
+    const res = await fetch(signedUrl);
+    if (!res.ok) throw new Error("Failed to download file");
+    return await res.blob();
+  }
+
+  // ─── Send File via DOM ────────────────────────────────
+
+  async function sendFileViaDom(blob, fileName, mimeType) {
+    try {
+      // Determine if it's a media (image/video) or document
+      const isMedia = /^(image|video)\//.test(mimeType);
+
+      // Click the attach button (the "+" or clip icon)
+      const attachBtn =
+        document.querySelector('span[data-icon="plus"]') ||
+        document.querySelector('span[data-icon="attach-menu-plus"]') ||
+        document.querySelector('span[data-icon="clip"]');
+      if (!attachBtn) {
+        showToast("Botão de anexo não encontrado", true);
+        return false;
+      }
+      attachBtn.closest("button")?.click() || attachBtn.click();
+
+      await sleep(500);
+
+      // Find the correct file input
+      // WhatsApp Web has multiple hidden inputs — media vs document
+      const inputs = document.querySelectorAll('input[type="file"]');
+      let targetInput = null;
+
+      for (const inp of inputs) {
+        const accept = (inp.getAttribute("accept") || "").toLowerCase();
+        if (isMedia && (accept.includes("image") || accept.includes("video") || accept === "*")) {
+          targetInput = inp;
+          break;
+        }
+        if (!isMedia && (accept.includes("*") || accept.includes("application") || accept === "")) {
+          targetInput = inp;
+          break;
+        }
+      }
+
+      // Fallback: just use the first available input
+      if (!targetInput && inputs.length > 0) {
+        targetInput = isMedia ? inputs[0] : inputs[inputs.length - 1];
+      }
+
+      if (!targetInput) {
+        showToast("Input de arquivo não encontrado", true);
+        return false;
+      }
+
+      // Create File and inject via DataTransfer
+      const file = new File([blob], fileName, { type: mimeType });
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      targetInput.files = dataTransfer.files;
+
+      // Dispatch change event
+      targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      // Wait for WhatsApp preview modal to load
+      await sleep(1500);
+
+      // Click the send button in the preview modal
+      try {
+        const previewSend = await waitForElement(
+          'span[data-icon="send"], div[role="button"][aria-label*="Enviar"], div[role="button"][aria-label*="Send"]',
+          5000
+        );
+        // Find the send button that's in the modal (not in the footer)
+        const modalSendBtns = document.querySelectorAll('span[data-icon="send"]');
+        const lastSendBtn = modalSendBtns[modalSendBtns.length - 1];
+        if (lastSendBtn) {
+          lastSendBtn.closest("button")?.click() || lastSendBtn.click();
+        } else if (previewSend) {
+          previewSend.closest("button")?.click() || previewSend.click();
+        }
+      } catch {
+        showToast("Timeout aguardando preview", true);
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error("[RiseZap] sendFileViaDom error:", err);
+      showToast("Erro ao enviar arquivo", true);
+      return false;
     }
   }
 
@@ -215,9 +284,11 @@
       const btn = overlay.querySelector(".rz-btn-send");
       btn.textContent = "Enviando...";
       btn.disabled = true;
+      closeModal(); // Close our modal BEFORE interacting with WhatsApp DOM
+      await sleep(300);
       const ok = await onSend();
-      if (ok) closeModal();
-      else { btn.textContent = "Enviar ✓"; btn.disabled = false; }
+      if (ok) showToast("Mensagem enviada! ✓");
+      else showToast("Falha ao enviar", true);
     });
   }
 
@@ -265,7 +336,7 @@
       const btn = makeBtn("💬", m.name, "rz-message");
       btn.addEventListener("click", () => {
         showPreview("Enviar Mensagem", m.content || m.name, () =>
-          sendMessage({ text: m.content || m.name })
+          sendTextViaDom(m.content || m.name)
         );
       });
       bar.appendChild(btn);
@@ -278,9 +349,10 @@
         if (!a.storage_path) return showToast("Áudio sem arquivo", true);
         const url = await getSignedUrl(a.storage_path);
         if (!url) return showToast("Erro ao gerar URL do áudio", true);
-        showPreview("Enviar Áudio", `🎙 ${a.name}`, () =>
-          sendMessage({ media_url: url, media_type: "audio", mime: a.mime })
-        );
+        showPreview("Enviar Áudio", `🎙 ${a.name}`, async () => {
+          const blob = await downloadAsBlob(url);
+          return sendFileViaDom(blob, a.name, a.mime || "audio/ogg");
+        });
       });
       bar.appendChild(btn);
     });
@@ -293,9 +365,10 @@
         const url = await getSignedUrl(m.storage_path);
         if (!url) return showToast("Erro ao gerar URL da mídia", true);
         const isVideo = (m.mime || "").startsWith("video");
-        showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, () =>
-          sendMessage({ media_url: url, media_type: isVideo ? "video" : "image", mime: m.mime })
-        );
+        showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, async () => {
+          const blob = await downloadAsBlob(url);
+          return sendFileViaDom(blob, m.name, m.mime || "image/jpeg");
+        });
       });
       bar.appendChild(btn);
     });
@@ -307,9 +380,10 @@
         if (!d.storage_path) return showToast("Documento sem arquivo", true);
         const url = await getSignedUrl(d.storage_path);
         if (!url) return showToast("Erro ao gerar URL do documento", true);
-        showPreview("Enviar Documento", `📄 ${d.name}`, () =>
-          sendMessage({ media_url: url, media_type: "document", mime: d.mime, file_name: d.name })
-        );
+        showPreview("Enviar Documento", `📄 ${d.name}`, async () => {
+          const blob = await downloadAsBlob(url);
+          return sendFileViaDom(blob, d.name, d.mime || "application/pdf");
+        });
       });
       bar.appendChild(btn);
     });
@@ -332,7 +406,7 @@
     createBar();
 
     chrome.storage.onChanged.addListener(async (changes) => {
-      if (changes.risezap_access_token || changes.risezap_instance_id) {
+      if (changes.risezap_access_token) {
         await loadAuth();
         if (token) await loadAssets();
         createBar();
