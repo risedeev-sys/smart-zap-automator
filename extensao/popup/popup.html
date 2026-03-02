@@ -12,95 +12,32 @@
       color: #e9edef;
       padding: 20px;
     }
-    .logo {
-      text-align: center;
-      margin-bottom: 16px;
+    .logo { text-align: center; margin-bottom: 16px; }
+    .logo h1 { font-size: 20px; color: #00a884; margin-bottom: 4px; }
+    .logo p { font-size: 12px; color: #8696a0; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-size: 12px; color: #8696a0; margin-bottom: 4px; }
+    input, select {
+      width: 100%; padding: 10px 12px;
+      border: 1px solid #2a3942; border-radius: 8px;
+      background: #1f2c34; color: #e9edef;
+      font-size: 14px; outline: none;
     }
-    .logo h1 {
-      font-size: 20px;
-      color: #00a884;
-      margin-bottom: 4px;
-    }
-    .logo p {
-      font-size: 12px;
-      color: #8696a0;
-    }
-    .form-group {
-      margin-bottom: 12px;
-    }
-    label {
-      display: block;
-      font-size: 12px;
-      color: #8696a0;
-      margin-bottom: 4px;
-    }
-    input {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #2a3942;
-      border-radius: 8px;
-      background: #1f2c34;
-      color: #e9edef;
-      font-size: 14px;
-      outline: none;
-    }
-    input:focus { border-color: #00a884; }
+    input:focus, select:focus { border-color: #00a884; }
     .btn {
-      width: 100%;
-      padding: 10px;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      margin-top: 4px;
+      width: 100%; padding: 10px; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px;
     }
-    .btn-primary {
-      background: #00a884;
-      color: #111b21;
-    }
+    .btn-primary { background: #00a884; color: #111b21; }
     .btn-primary:hover { background: #00c896; }
-    .btn-danger {
-      background: #ea4335;
-      color: white;
-      margin-top: 8px;
-    }
-    .status {
-      text-align: center;
-      font-size: 12px;
-      margin-top: 8px;
-      min-height: 16px;
-    }
+    .btn-danger { background: #ea4335; color: white; margin-top: 8px; }
+    .status { text-align: center; font-size: 12px; margin-top: 8px; min-height: 16px; }
     .status.error { color: #ea4335; }
     .status.success { color: #00a884; }
-    .logged-in {
-      text-align: center;
-    }
-    .logged-in .user-email {
-      font-size: 14px;
-      color: #00a884;
-      margin-bottom: 4px;
-    }
-    .logged-in .user-info {
-      font-size: 12px;
-      color: #8696a0;
-      margin-bottom: 16px;
-    }
-    .instance-section {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #2a3942;
-    }
-    select {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #2a3942;
-      border-radius: 8px;
-      background: #1f2c34;
-      color: #e9edef;
-      font-size: 14px;
-      outline: none;
-    }
+    .logged-in { text-align: center; }
+    .logged-in .user-email { font-size: 14px; color: #00a884; margin-bottom: 4px; }
+    .logged-in .user-info { font-size: 12px; color: #8696a0; margin-bottom: 16px; }
+    .instance-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a3942; }
     .hidden { display: none; }
   </style>
 </head>
@@ -110,7 +47,6 @@
     <p>Automação WhatsApp</p>
   </div>
 
-  <!-- Login Form -->
   <div id="login-view">
     <div class="form-group">
       <label>E-mail</label>
@@ -124,18 +60,15 @@
     <div class="status" id="status"></div>
   </div>
 
-  <!-- Logged In View -->
   <div id="logged-view" class="logged-in hidden">
     <p class="user-email" id="user-email"></p>
     <p class="user-info">Conectado ao Rise Zap</p>
-
     <div class="instance-section">
       <label>Instância WhatsApp</label>
       <select id="instance-select">
         <option value="">Carregando...</option>
       </select>
     </div>
-
     <button class="btn btn-danger" id="btn-logout">Sair</button>
     <div class="status" id="status2"></div>
   </div>
