@@ -211,8 +211,8 @@ export default function EspacoTestePage() {
     }
   };
 
-  const activeContact = contacts.find((c) => c.id === activeContactId)!;
-  const messages = chatHistory[activeContactId] ?? [];
+  const activeContact = contacts.find((c) => c.id === activeContactId) ?? contacts[0] ?? { id: "0", name: "Carregando...", phone: "", avatar: "", status: "", lastMessage: "", lastTime: "" } as Contact;
+  const messages = chatHistory[activeContact.id] ?? [];
   const activeContactIdRef = useRef(activeContactId);
 
   useEffect(() => {
