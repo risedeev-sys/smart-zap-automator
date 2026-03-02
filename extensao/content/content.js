@@ -44,24 +44,55 @@
 
   // ─── Phone Extraction ─────────────────────────────────
 
+  function extractDigitsFromJid(value) {
+    if (!value) return null;
+    const text = String(value);
+
+    // Match WhatsApp JIDs: 5511999999999@s.whatsapp.net, 1203...@g.us, ...@lid
+    const jidMatch = text.match(/(\d{8,})@(s\.whatsapp\.net|g\.us|lid)/i);
+    if (jidMatch?.[1]) return jidMatch[1];
+
+    // Fallback: any long number in the text
+    const digits = text.replace(/\D/g, "");
+    return digits.length >= 10 ? digits : null;
+  }
+
   function getCurrentPhone() {
+    // 1) Most reliable: selected chat in sidebar usually contains data-id with JID
+    const selectedChat = document.querySelector("#pane-side [aria-selected='true']");
+    if (selectedChat) {
+      const jidCandidates = [
+        selectedChat.getAttribute("data-id"),
+        ...Array.from(selectedChat.querySelectorAll("[data-id]")).map((el) => el.getAttribute("data-id")),
+      ];
+
+      for (const candidate of jidCandidates) {
+        const digits = extractDigitsFromJid(candidate);
+        if (digits) return digits;
+      }
+    }
+
+    // 2) Header candidates (title/aria labels/spans)
     const header = document.querySelector("#main header");
     if (!header) return null;
 
-    // Try all spans in the header — look for one with 10+ digits (phone number)
-    const spans = header.querySelectorAll("span[dir='auto'], span[title]");
-    for (const span of spans) {
-      const text = (span.getAttribute("title") || span.textContent || "").trim();
-      const digits = text.replace(/\D/g, "");
-      if (digits.length >= 10) return digits;
+    const headerCandidates = [
+      ...Array.from(header.querySelectorAll("[data-id], [title], [aria-label], span[dir='auto']")).map((el) =>
+        el.getAttribute("data-id") || el.getAttribute("title") || el.getAttribute("aria-label") || el.textContent || ""
+      ),
+      header.textContent || "",
+    ];
+
+    for (const candidate of headerCandidates) {
+      const digits = extractDigitsFromJid(candidate);
+      if (digits) return digits;
     }
 
-    // Fallback: check any element in header with a phone-like pattern
-    const allText = header.textContent || "";
-    const match = allText.match(/\d[\d\s\-()]{9,}/);
-    if (match) {
-      const digits = match[0].replace(/\D/g, "");
-      if (digits.length >= 10) return digits;
+    // 3) Last fallback: current chat message nodes often include JID in data-id
+    const messageNodes = document.querySelectorAll("#main [data-id]");
+    for (const node of messageNodes) {
+      const digits = extractDigitsFromJid(node.getAttribute("data-id"));
+      if (digits) return digits;
     }
 
     return null;
