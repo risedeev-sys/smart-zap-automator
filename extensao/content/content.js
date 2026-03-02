@@ -133,8 +133,24 @@
     }
   }
 
-  function getPublicUrl(path) {
-    return `${SUPABASE_URL}/storage/v1/object/public/assets/${path}`;
+  async function getSignedUrl(path) {
+    if (!token) return null;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/assets/${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ expiresIn: 3600 }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.signedURL ? `${SUPABASE_URL}/storage/v1${data.signedURL}` : null;
+    } catch {
+      return null;
+    }
   }
 
   // ─── Toast ─────────────────────────────────────────────
@@ -258,9 +274,10 @@
     // Áudios — ciano
     assets.audios.forEach((a) => {
       const btn = makeBtn("🎙", a.name, "rz-audio");
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         if (!a.storage_path) return showToast("Áudio sem arquivo", true);
-        const url = getPublicUrl(a.storage_path);
+        const url = await getSignedUrl(a.storage_path);
+        if (!url) return showToast("Erro ao gerar URL do áudio", true);
         showPreview("Enviar Áudio", `🎙 ${a.name}`, () =>
           sendMessage({ media_url: url, media_type: "audio", mime: a.mime })
         );
@@ -271,9 +288,10 @@
     // Mídias — amarelo
     assets.medias.forEach((m) => {
       const btn = makeBtn("🖼", m.name, "rz-media");
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         if (!m.storage_path) return showToast("Mídia sem arquivo", true);
-        const url = getPublicUrl(m.storage_path);
+        const url = await getSignedUrl(m.storage_path);
+        if (!url) return showToast("Erro ao gerar URL da mídia", true);
         const isVideo = (m.mime || "").startsWith("video");
         showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, () =>
           sendMessage({ media_url: url, media_type: isVideo ? "video" : "image", mime: m.mime })
@@ -285,9 +303,10 @@
     // Documentos — rosa/magenta
     assets.documents.forEach((d) => {
       const btn = makeBtn("📄", d.name, "rz-document");
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         if (!d.storage_path) return showToast("Documento sem arquivo", true);
-        const url = getPublicUrl(d.storage_path);
+        const url = await getSignedUrl(d.storage_path);
+        if (!url) return showToast("Erro ao gerar URL do documento", true);
         showPreview("Enviar Documento", `📄 ${d.name}`, () =>
           sendMessage({ media_url: url, media_type: "document", mime: d.mime, file_name: d.name })
         );
