@@ -247,6 +247,42 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case "fetch-chats": {
+        if (!instance_id) throw new Error("instance_id is required");
+        const { data: inst } = await supabase
+          .from("whatsapp_instances")
+          .select("instance_name")
+          .eq("id", instance_id)
+          .single();
+        if (!inst) throw new Error("Instance not found");
+
+        const chats = await evoFetch(`/chat/findChats/${inst.instance_name}`, {
+          method: "POST",
+          body: JSON.stringify({ where: {} }),
+        });
+
+        // Sort by last message timestamp desc, take 10
+        const sorted = (Array.isArray(chats) ? chats : [])
+          .filter((c: any) => c.id && !c.id.endsWith("@newsletter"))
+          .sort((a: any, b: any) => {
+            const ta = a.lastMsgTimestamp || a.conversationTimestamp || 0;
+            const tb = b.lastMsgTimestamp || b.conversationTimestamp || 0;
+            return tb - ta;
+          })
+          .slice(0, 10);
+
+        result = sorted.map((c: any) => ({
+          remoteJid: c.id || c.remoteJid,
+          name: c.name || c.pushName || c.id?.split("@")[0] || "Desconhecido",
+          lastMessage: c.lastMessage?.message?.conversation
+            || c.lastMessage?.message?.extendedTextMessage?.text
+            || "",
+          timestamp: c.lastMsgTimestamp || c.conversationTimestamp || 0,
+          isGroup: c.id?.endsWith("@g.us") || false,
+        }));
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

@@ -129,6 +129,13 @@ export default function EspacoTestePage() {
     setContacts((prev) =>
       prev.map((c) => (c.id === contactId ? { ...c, unread: 0 } : c))
     );
+    // Auto-fill target phone when selecting a real contact
+    if (realWA.realMode) {
+      const contact = contacts.find((c) => c.id === contactId);
+      if (contact?.phone) {
+        realWA.setTargetPhone(contact.phone.replace(/\D/g, ""));
+      }
+    }
   };
 
   const activeContact = contacts.find((c) => c.id === activeContactId)!;
@@ -202,6 +209,71 @@ export default function EspacoTestePage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Fetch real WhatsApp chats when real mode is active
+  const [loadingChats, setLoadingChats] = useState(false);
+  useEffect(() => {
+    if (!realWA.realMode || !realWA.selectedInstanceId) {
+      setContacts(INITIAL_CONTACTS);
+      setChatHistory((prev) => {
+        const initial: Record<string, ChatMessage[]> = {};
+        INITIAL_CONTACTS.forEach((c) => {
+          initial[c.id] = prev[c.id] ?? [welcomeMessage(c.name)];
+        });
+        return initial;
+      });
+      setActiveContactId("1");
+      return;
+    }
+
+    const fetchChats = async () => {
+      setLoadingChats(true);
+      try {
+        const { data, error } = await supabase.functions.invoke("whatsapp-manage", {
+          body: { action: "fetch-chats", instance_id: realWA.selectedInstanceId },
+        });
+        if (error || data?.error) throw new Error(data?.error || error?.message);
+
+        const realContacts: Contact[] = (data as any[]).map((chat: any, i: number) => {
+          const phone = chat.remoteJid?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+          const ts = chat.timestamp ? new Date(chat.timestamp * 1000) : null;
+          const timeStr = ts
+            ? ts.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+            : "";
+          return {
+            id: `real-${i}`,
+            name: chat.name || phone,
+            phone,
+            avatar: chat.isGroup ? "👥" : "👤",
+            status: "",
+            lastMessage: chat.lastMessage || "",
+            lastTime: timeStr,
+            unread: 0,
+          };
+        });
+
+        if (realContacts.length > 0) {
+          setContacts(realContacts);
+          setActiveContactId(realContacts[0].id);
+          realWA.setTargetPhone(realContacts[0].phone);
+          const newHistory: Record<string, ChatMessage[]> = {};
+          realContacts.forEach((c) => {
+            newHistory[c.id] = [welcomeMessage(c.name)];
+          });
+          setChatHistory(newHistory);
+        } else {
+          toast.info("Nenhuma conversa encontrada nessa instância");
+        }
+      } catch (err: any) {
+        console.error("fetch-chats error:", err);
+        toast.error("Erro ao buscar conversas", { description: err.message });
+      } finally {
+        setLoadingChats(false);
+      }
+    };
+
+    fetchChats();
+  }, [realWA.realMode, realWA.selectedInstanceId]);
 
   useEffect(() => {
     if (scrollRef.current) {
