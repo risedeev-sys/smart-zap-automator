@@ -142,7 +142,8 @@
         showToast("Botão de enviar não encontrado", true);
         return false;
       }
-      sendBtn.closest("button")?.click() || sendBtn.click();
+      const sendBtnEl = sendBtn.closest("button") || sendBtn;
+      sendBtnEl.click();
 
       return true;
     } catch (err) {
@@ -178,30 +179,54 @@
         showToast("Botão de anexo não encontrado", true);
         return false;
       }
-      attachBtn.closest("button")?.click() || attachBtn.click();
-
-      await sleep(500);
+      const attachBtnEl = attachBtn.closest("button") || attachBtn;
+      attachBtnEl.click();
+      // Wait for the attach menu to fully open
+      await sleep(800);
 
       // Find the correct file input
       // WhatsApp Web has multiple hidden inputs — media vs document
-      const inputs = document.querySelectorAll('input[type="file"]');
-      let targetInput = null;
-
-      for (const inp of inputs) {
-        const accept = (inp.getAttribute("accept") || "").toLowerCase();
-        if (isMedia && (accept.includes("image") || accept.includes("video") || accept === "*")) {
-          targetInput = inp;
-          break;
+      // After clicking attach, we need to click the right sub-option first
+      const isAudio = /^audio\//.test(mimeType);
+      
+      // Try to click the correct attach sub-menu item
+      if (!isMedia && !isAudio) {
+        // For documents, click the document option in attach menu
+        const docOption = document.querySelector('span[data-icon="attach-document"]') ||
+          document.querySelector('li[data-animate-dropdown-item="3"] button') ||
+          document.querySelector('[aria-label*="Documento"]') ||
+          document.querySelector('[aria-label*="Document"]');
+        if (docOption) {
+          const docBtn = docOption.closest("button") || docOption;
+          docBtn.click();
+          await sleep(500);
         }
-        if (!isMedia && (accept.includes("*") || accept.includes("application") || accept === "")) {
-          targetInput = inp;
-          break;
+      } else {
+        // For media/audio, click the photos/videos option
+        const mediaOption = document.querySelector('span[data-icon="attach-image"]') ||
+          document.querySelector('li[data-animate-dropdown-item="1"] button') ||
+          document.querySelector('[aria-label*="Fotos"]') ||
+          document.querySelector('[aria-label*="Photos"]');
+        if (mediaOption) {
+          const mediaBtn = mediaOption.closest("button") || mediaOption;
+          mediaBtn.click();
+          await sleep(500);
         }
       }
 
-      // Fallback: just use the first available input
+      const inputs = document.querySelectorAll('input[type="file"]');
+      let targetInput = null;
+
+      // Just use the last visible/available file input (WhatsApp shows the right one based on what we clicked)
+      for (const inp of inputs) {
+        if (inp.offsetParent !== null || inp.closest('[style*="display: none"]') === null) {
+          targetInput = inp;
+        }
+      }
+
+      // Fallback: just use the last available input
       if (!targetInput && inputs.length > 0) {
-        targetInput = isMedia ? inputs[0] : inputs[inputs.length - 1];
+        targetInput = inputs[inputs.length - 1];
       }
 
       if (!targetInput) {
@@ -231,9 +256,11 @@
         const modalSendBtns = document.querySelectorAll('span[data-icon="send"]');
         const lastSendBtn = modalSendBtns[modalSendBtns.length - 1];
         if (lastSendBtn) {
-          lastSendBtn.closest("button")?.click() || lastSendBtn.click();
+          const el1 = lastSendBtn.closest("button") || lastSendBtn;
+          el1.click();
         } else if (previewSend) {
-          previewSend.closest("button")?.click() || previewSend.click();
+          const el2 = previewSend.closest("button") || previewSend;
+          el2.click();
         }
       } catch {
         showToast("Timeout aguardando preview", true);
