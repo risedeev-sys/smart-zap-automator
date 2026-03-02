@@ -1,99 +1,96 @@
 
-# Envio 100% pelo DOM do WhatsApp Web + Evolution API para automacao em background
 
-## Resumo
-A extensao passara a enviar mensagens (texto, imagens, audios, videos, documentos) diretamente pelo DOM do WhatsApp Web, sem usar a Evolution API para envios manuais. A Evolution API continua existindo no backend para automacoes com o navegador fechado (gatilhos, funis automaticos, webhooks).
+# Corrigir envio de mensagens pela extensao -- usar ClipboardEvent (paste)
 
-## O que muda na extensao
+## Problema
+O `sendTextViaDom` usa `document.execCommand('insertText')` que nao funciona no WhatsApp Web atual. O WhatsApp Web usa React + Lexical editor, e `execCommand` nao dispara os event listeners internos do React, resultando em "Falha ao enviar" porque:
+1. O texto pode nao ser inserido corretamente no campo
+2. O botao de enviar pode nao aparecer (o WhatsApp so mostra o botao quando detecta texto via seus proprios eventos)
 
-### 1. Envio de texto -- injetar no campo de digitacao
-- Localizar o campo editavel: `div[contenteditable="true"]` dentro de `#main footer`
-- Focar o campo e inserir o texto com `document.execCommand('insertText', false, text)`
-- Disparar evento `input` com `bubbles: true`
-- Aguardar e clicar no botao de enviar: `span[data-icon="send"]`
+## Solucao
+Trocar `execCommand('insertText')` por `ClipboardEvent('paste')` com `DataTransfer`, que e o metodo comprovado para injetar texto em campos React/Lexical. Tambem melhorar os seletores para cobrir variantes do DOM atual do WhatsApp Web.
 
-### 2. Envio de arquivos (imagens, videos, audios, documentos) -- injetar no input file
-- Baixar o arquivo do Supabase Storage como Blob usando signed URL (ja implementada)
-- Clicar no botao de anexo (+) do WhatsApp Web
-- Esperar o menu de opcoes aparecer
-- Selecionar a opcao correta (midia ou documento) baseado no tipo do arquivo
-- Criar um `File` a partir do Blob e injetar no `input[type="file"]` usando `DataTransfer`
-- Disparar evento `change` com `bubbles: true`
-- Aguardar o modal de preview do WhatsApp carregar (usando `MutationObserver`)
-- Clicar no botao de enviar do modal de preview
+## Alteracoes tecnicas
 
-### 3. O que sera removido do content.js
-- Funcao `sendMessage()` (envio via Edge Function)
-- Funcoes `getCurrentPhone()` e `extractDigitsFromJid()` (nao precisamos mais do telefone)
-- Variavel `instanceId` e referencia em `loadAuth()`
-- A logica de verificar instancia antes de enviar
+### Arquivo: `extensao/content/content.js`
 
-### 4. O que sera mantido
-- `getSignedUrl()` -- necessaria para baixar arquivos do Supabase Storage
-- `supaFetch()` e `loadAssets()` -- carregamento dos assets do painel
-- Todo o codigo de modal/preview/toast/barra de botoes
+#### 1. Reescrever `sendTextViaDom(text)` (linhas 94-129)
+Trocar a estrategia de insercao de texto:
 
-### 5. Novas funcoes no content.js
-
-**`waitForElement(selector, timeout)`** -- utilitario que espera um elemento aparecer no DOM usando MutationObserver com timeout configuravel (padrao 5s)
-
-**`sendTextViaDom(text)`**:
-1. Encontra o campo `div[contenteditable="true"]` no footer do chat
-2. Foca, insere texto com `execCommand`
-3. Dispara evento `input`
-4. Espera e clica em `span[data-icon="send"]`
-5. Retorna true/false
-
-**`downloadAsBlob(signedUrl)`** -- faz fetch da URL e retorna o Blob
-
-**`sendFileViaDom(blob, fileName, mimeType)`**:
-1. Clica no botao de anexo do WhatsApp (`span[data-icon="plus"]` ou `span[data-icon="attach-menu-plus"]`)
-2. Espera o menu aparecer
-3. Seleciona a opcao correta baseado no mimeType (imagem/video vs documento/audio)
-4. Localiza o `input[type="file"]` correspondente
-5. Cria `new File([blob], fileName, { type: mimeType })`
-6. Cria `DataTransfer`, adiciona o File, seta no input
-7. Dispara evento `change`
-8. Espera o preview do WhatsApp carregar
-9. Clica no botao de enviar do preview
-
-### 6. Atualizacao dos handlers dos botoes
-- **Mensagens**: `sendTextViaDom(content)` em vez de `sendMessage({ text })`
-- **Audios**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
-- **Midias**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
-- **Documentos**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
-- **Funis**: execucao sequencial de cada item com delay entre eles
-
-## O que muda no popup
-
-### popup.html e popup.js
-- Remover a secao de selecao de instancia (nao e mais necessaria para envio direto)
-- Manter apenas login/logout (o token ainda e necessario para carregar assets do Supabase)
-
-## O que NAO muda (backend permanece igual)
-
-A Evolution API e todas as Edge Functions continuam funcionando normalmente para:
-- **whatsapp-manage**: gerenciamento de instancias e QR code
-- **whatsapp-send**: envio automatizado via backend (gatilhos, funis automaticos)
-- **whatsapp-message-webhook**: recepcao de mensagens para gatilhos
-- **whatsapp-status-webhook**: status de entrega
-- Pagina de Instancias no painel web
-- Espaço de Teste com modo real
-- Hook `useRealWhatsApp`
-
-## Fluxo final
-
-```text
-[Extensao - WhatsApp Web aberto]
-  Botao clicado -> Preview -> "Enviar"
-    Texto: execCommand('insertText') -> clica send
-    Arquivo: Baixa blob -> Injeta input file -> Espera preview -> clica send
-
-[Backend - WhatsApp Web fechado]
-  Gatilho/Funil automatico -> Edge Function whatsapp-send -> Evolution API
+**Antes (nao funciona):**
+```js
+input.focus();
+document.execCommand("selectAll", false, null);
+document.execCommand("delete", false, null);
+document.execCommand("insertText", false, text);
+input.dispatchEvent(new Event("input", { bubbles: true }));
 ```
 
-## Arquivos alterados
-1. `extensao/content/content.js` -- reescrever logica de envio para DOM direto
-2. `extensao/popup/popup.html` -- remover secao de instancia
-3. `extensao/popup/popup.js` -- remover logica de instancias
+**Depois (metodo correto via paste):**
+```js
+input.focus();
+await sleep(100);
+
+// Limpar campo existente
+input.textContent = '';
+input.dispatchEvent(new Event("input", { bubbles: true }));
+await sleep(100);
+
+// Injetar texto via ClipboardEvent (paste) -- funciona com React/Lexical
+const dataTransfer = new DataTransfer();
+dataTransfer.setData("text/plain", text);
+const pasteEvent = new ClipboardEvent("paste", {
+  clipboardData: dataTransfer,
+  bubbles: true,
+  cancelable: true,
+});
+input.dispatchEvent(pasteEvent);
+```
+
+#### 2. Melhorar seletores do campo de texto (linha 97)
+Adicionar seletores alternativos para cobrir diferentes versoes do WhatsApp Web:
+
+```js
+const input =
+  document.querySelector('#main div[contenteditable="true"][data-tab="10"]') ||
+  document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
+  document.querySelector('#main footer div[contenteditable="true"]') ||
+  document.querySelector('footer div[contenteditable="true"]');
+```
+
+#### 3. Melhorar seletor do botao de enviar (linha 116)
+Adicionar fallbacks para o botao send:
+
+```js
+const sendBtn =
+  document.querySelector('span[data-icon="send"]') ||
+  document.querySelector('button[aria-label="Send"]') ||
+  document.querySelector('button[aria-label="Enviar"]');
+```
+
+#### 4. Aumentar o tempo de espera antes de procurar o botao send
+Trocar `await sleep(300)` por `await sleep(500)` para dar mais tempo ao WhatsApp processar o paste e mostrar o botao de enviar. Se nao encontrar, tentar esperar mais com `waitForElement`.
+
+#### 5. Melhorar `sendFileViaDom` -- seletores do botao de anexo (linhas 147-150)
+Adicionar mais variantes do icone de anexo:
+
+```js
+const attachBtn =
+  document.querySelector('#main span[data-icon="plus"]') ||
+  document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
+  document.querySelector('#main span[data-icon="clip"]') ||
+  document.querySelector('span[data-icon="plus"]') ||
+  document.querySelector('span[data-icon="attach-menu-plus"]');
+```
+
+## Resumo das mudancas
+- 1 arquivo alterado: `extensao/content/content.js`
+- Metodo de insercao de texto: `execCommand` trocado por `ClipboardEvent('paste')` com `DataTransfer`
+- Seletores CSS melhorados com multiplos fallbacks
+- Tempos de espera ajustados para o WhatsApp processar os eventos
+
+## Apos implementar
+O usuario precisa:
+1. Copiar o arquivo atualizado para a pasta local da extensao
+2. Ir em `chrome://extensions` e clicar em atualizar
+3. Recarregar a aba do WhatsApp Web (F5)
