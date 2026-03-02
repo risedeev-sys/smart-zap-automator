@@ -3,6 +3,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Send,
   MessageSquare,
@@ -16,6 +17,7 @@ import {
   MoreVertical,
   Search,
   CheckCheck,
+  Users,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { findMatchingTriggers, type TriggerData } from "@/utils/triggerEngine";
@@ -53,19 +55,69 @@ interface Contact {
   lastMessage?: string;
   lastTime?: string;
   unread?: number;
+  isGroup?: boolean;
+  profilePicUrl?: string;
+}
+
+// Generate consistent color from name/phone
+const AVATAR_COLORS = [
+  "bg-emerald-600", "bg-sky-600", "bg-violet-600", "bg-amber-600",
+  "bg-rose-600", "bg-teal-600", "bg-indigo-600", "bg-orange-600",
+  "bg-cyan-600", "bg-fuchsia-600", "bg-lime-600", "bg-pink-600",
+];
+
+function hashColor(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (name[0] || "?").toUpperCase();
+}
+
+function formatSmartTime(timestamp: number | string | undefined): string {
+  if (!timestamp) return "";
+  const date = typeof timestamp === "number" 
+    ? new Date(timestamp > 9999999999 ? timestamp : timestamp * 1000)
+    : new Date(timestamp);
+  if (isNaN(date.getTime())) return "";
+  
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffDays === 0) {
+    return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  } else if (diffDays === 1) {
+    return "ontem";
+  } else if (diffDays < 7) {
+    return date.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  }
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 const INITIAL_CONTACTS: Contact[] = [
-  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "👤", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
-  { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "👩", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
-  { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "👨", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
-  { id: "4", name: "Ana Oliveira", phone: "+55 41 96666-5555", avatar: "👩‍💼", status: "online", lastMessage: "Vou verificar aqui", lastTime: "ontem", unread: 0 },
-  { id: "5", name: "Carlos Pereira", phone: "+55 51 95555-4444", avatar: "👨‍💻", status: "visto por último às 18:40", lastMessage: "Pode me enviar o catálogo?", lastTime: "ontem", unread: 1 },
-  { id: "6", name: "Juliana Costa", phone: "+55 61 94444-3333", avatar: "👩‍🎓", status: "digitando...", lastMessage: "Qual o valor?", lastTime: "seg", unread: 3 },
-  { id: "7", name: "Pedro Almeida", phone: "+55 71 93333-2222", avatar: "🧑", status: "online", lastMessage: "Fechado!", lastTime: "seg", unread: 0 },
-  { id: "8", name: "Grupo Vendas", phone: "5 participantes", avatar: "👥", status: "5 participantes", lastMessage: "Carlos: Meta batida! 🎉", lastTime: "dom", unread: 12 },
+  { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
+  { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
+  { id: "3", name: "João Santos", phone: "+55 31 97777-6666", avatar: "", status: "visto por último às 09:15", lastMessage: "Obrigado pela informação!", lastTime: "09:15", unread: 0 },
+  { id: "4", name: "Ana Oliveira", phone: "+55 41 96666-5555", avatar: "", status: "online", lastMessage: "Vou verificar aqui", lastTime: "ontem", unread: 0 },
+  { id: "5", name: "Carlos Pereira", phone: "+55 51 95555-4444", avatar: "", status: "visto por último às 18:40", lastMessage: "Pode me enviar o catálogo?", lastTime: "ontem", unread: 1 },
+  { id: "6", name: "Juliana Costa", phone: "+55 61 94444-3333", avatar: "", status: "digitando...", lastMessage: "Qual o valor?", lastTime: "seg", unread: 3 },
+  { id: "7", name: "Pedro Almeida", phone: "+55 71 93333-2222", avatar: "", status: "online", lastMessage: "Fechado!", lastTime: "seg", unread: 0 },
+  { id: "8", name: "Grupo Vendas", phone: "5 participantes", avatar: "", status: "5 participantes", lastMessage: "Carlos: Meta batida! 🎉", lastTime: "dom", unread: 12, isGroup: true },
 ];
 
+const welcomeMessage = (name: string): ChatMessage => ({
+  id: "welcome",
+  text: `Conversa com ${name}. Digite uma mensagem para testar seus gatilhos, ou clique nos botões abaixo para enviar ativos.`,
+  type: "system",
+  timestamp: new Date(),
+});
 // Pre-built received messages for contacts with unread
 const UNREAD_MESSAGES: Record<string, string[]> = {
   "1": ["Oi, tudo bem?"],
@@ -91,14 +143,8 @@ const typeColors: Record<string, string> = {
   funil: "bg-emerald-600 hover:bg-emerald-700 text-white",
 };
 
-const welcomeMessage = (name: string): ChatMessage => ({
-  id: "welcome",
-  text: `Conversa com ${name}. Digite uma mensagem para testar seus gatilhos, ou clique nos botões abaixo para enviar ativos.`,
-  type: "system",
-  timestamp: new Date(),
-});
-
 export default function EspacoTestePage() {
+
   const [activeContactId, setActiveContactId] = useState<string>("1");
   const [contactSearch, setContactSearch] = useState("");
   const [contacts, setContacts] = useState<Contact[]>(INITIAL_CONTACTS);
@@ -236,19 +282,17 @@ export default function EspacoTestePage() {
 
         const realContacts: Contact[] = (data as any[]).map((chat: any, i: number) => {
           const phone = chat.remoteJid?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
-          const ts = chat.timestamp ? new Date(chat.timestamp * 1000) : null;
-          const timeStr = ts
-            ? ts.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-            : "";
           return {
             id: `real-${i}`,
             name: chat.name || phone,
             phone,
-            avatar: chat.isGroup ? "👥" : "👤",
-            status: "",
+            avatar: "",
+            status: chat.isGroup ? "grupo" : "",
             lastMessage: chat.lastMessage || "",
-            lastTime: timeStr,
-            unread: 0,
+            lastTime: formatSmartTime(chat.timestamp),
+            unread: chat.unreadCount || 0,
+            isGroup: chat.isGroup || false,
+            profilePicUrl: chat.profilePicUrl || "",
           };
         });
 
@@ -506,17 +550,17 @@ export default function EspacoTestePage() {
   return (
     <MainLayout title="Espaço de Teste">
       <div className="flex h-[calc(100vh-12rem)] max-w-5xl mx-auto border border-border rounded-lg overflow-hidden bg-card">
-        {/* Contact list sidebar */}
-        <div className="w-72 border-r border-border flex flex-col bg-card flex-shrink-0">
+        {/* Contact list sidebar - WhatsApp Web style */}
+        <div className="w-[300px] border-r border-border flex flex-col flex-shrink-0" style={{ backgroundColor: 'hsl(var(--card))' }}>
           {/* Search */}
-          <div className="p-3 border-b border-border">
+          <div className="px-3 py-2 border-b border-border/50">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Pesquisar contato..."
+                placeholder="Pesquisar ou começar uma nova conversa"
                 value={contactSearch}
                 onChange={(e) => setContactSearch(e.target.value)}
-                className="pl-9 h-9 text-sm border-0 bg-muted/50"
+                className="pl-9 h-[35px] text-[13px] border-0 bg-muted/40 rounded-lg"
               />
             </div>
           </div>
@@ -525,26 +569,45 @@ export default function EspacoTestePage() {
           <ScrollArea className="flex-1">
             {filteredContacts.map((contact) => {
               const isActive = contact.id === activeContactId;
+              const hasUnread = (contact.unread ?? 0) > 0;
+              const colorClass = hashColor(contact.name + contact.phone);
+              const initials = getInitials(contact.name);
+
               return (
                 <button
                   key={contact.id}
                   onClick={() => handleSelectContact(contact.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 border-b border-border/50 ${
-                    isActive ? "bg-muted/70" : ""
+                  className={`w-full flex items-center gap-3 px-3 py-[10px] text-left transition-colors hover:bg-muted/40 ${
+                    isActive ? "bg-muted/60" : ""
                   }`}
                 >
-                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <span className="text-lg">{contact.avatar}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
+                  {/* Avatar */}
+                  <Avatar className="h-[49px] w-[49px] flex-shrink-0">
+                    {contact.profilePicUrl ? (
+                      <AvatarImage src={contact.profilePicUrl} alt={contact.name} />
+                    ) : null}
+                    <AvatarFallback className={`${colorClass} text-white text-sm font-medium`}>
+                      {contact.isGroup ? (
+                        <Users className="h-5 w-5" />
+                      ) : (
+                        initials
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+
+                  <div className="flex-1 min-w-0 border-b border-border/30 pb-[10px]">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-foreground truncate">{contact.name}</p>
-                      <span className="text-[10px] text-muted-foreground flex-shrink-0">{contact.lastTime}</span>
+                      <p className="text-[15px] font-normal text-foreground truncate">{contact.name}</p>
+                      <span className={`text-[11px] flex-shrink-0 ml-2 ${hasUnread ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>
+                        {contact.lastTime}
+                      </span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs text-muted-foreground truncate">{contact.lastMessage}</p>
-                      {(contact.unread ?? 0) > 0 && (
-                        <span className="ml-1 flex-shrink-0 h-5 min-w-[20px] rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1">
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className="text-[13px] text-muted-foreground truncate pr-2">
+                        {contact.lastMessage}
+                      </p>
+                      {hasUnread && (
+                        <span className="flex-shrink-0 h-[20px] min-w-[20px] rounded-full bg-emerald-500 text-white text-[11px] font-bold flex items-center justify-center px-1">
                           {contact.unread}
                         </span>
                       )}
@@ -571,21 +634,32 @@ export default function EspacoTestePage() {
             sending={realWA.sending}
           />
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-muted/50 border-b border-border">
+          <div className="flex items-center justify-between px-4 py-[10px] bg-muted/50 border-b border-border">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                <span className="text-lg">{activeContact.avatar}</span>
-              </div>
+              <Avatar className="h-10 w-10">
+                {activeContact.profilePicUrl ? (
+                  <AvatarImage src={activeContact.profilePicUrl} alt={activeContact.name} />
+                ) : null}
+                <AvatarFallback className={`${hashColor(activeContact.name + activeContact.phone)} text-white text-sm font-medium`}>
+                  {activeContact.isGroup ? (
+                    <Users className="h-5 w-5" />
+                  ) : (
+                    getInitials(activeContact.name)
+                  )}
+                </AvatarFallback>
+              </Avatar>
               <div>
-                <p className="text-sm font-semibold text-foreground">{activeContact.name}</p>
-                <p className="text-xs text-muted-foreground">{activeContact.phone} · {activeContact.status}</p>
+                <p className="text-[15px] font-medium text-foreground">{activeContact.name}</p>
+                <p className="text-[12px] text-muted-foreground">
+                  {activeContact.isGroup ? activeContact.status : activeContact.phone}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Search className="h-5 w-5" />
-              <Phone className="h-5 w-5" />
-              <Video className="h-5 w-5" />
-              <MoreVertical className="h-5 w-5" />
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <Search className="h-5 w-5 cursor-pointer hover:text-foreground transition-colors" />
+              <Phone className="h-5 w-5 cursor-pointer hover:text-foreground transition-colors" />
+              <Video className="h-5 w-5 cursor-pointer hover:text-foreground transition-colors" />
+              <MoreVertical className="h-5 w-5 cursor-pointer hover:text-foreground transition-colors" />
             </div>
           </div>
 
