@@ -41,57 +41,53 @@ export interface TriggerMatchResult {
 }
 
 /**
- * Normaliza texto para comparação.
- *
- * MODO ESTRITO: mantém acentos, pontuação e capitalização.
- * O gatilho só deve disparar com texto exatamente igual ao configurado.
- */
-function normalizeText(str: string): string {
-  return str;
-}
-
-/**
  * Avalia se uma única condição passa para a mensagem dada.
  * Retorna as keywords que deram match (se houver).
  */
 function evaluateCondition(
   cond: TriggerCondition,
-  rawMessage: string
+  rawMessage: string,
+  ignoreCase: boolean
 ): { passed: boolean; matches: ConditionMatch[] } {
-  const msg = normalizeText(rawMessage);
-  const keywords = cond.keywords.map((k) => normalizeText(k));
+  const msg = ignoreCase ? rawMessage.toLowerCase() : rawMessage;
   const matches: ConditionMatch[] = [];
 
   switch (cond.type) {
     case "contém": {
-      for (let i = 0; i < keywords.length; i++) {
-        if (msg.includes(keywords[i])) {
-          matches.push({ type: cond.type, keyword: cond.keywords[i] });
+      for (const kw of cond.keywords) {
+        const normalized = ignoreCase ? kw.toLowerCase() : kw;
+        if (msg.includes(normalized)) {
+          matches.push({ type: cond.type, keyword: kw });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "igual a": {
-      for (let i = 0; i < keywords.length; i++) {
-        if (msg === keywords[i]) {
-          matches.push({ type: cond.type, keyword: cond.keywords[i] });
+      for (const kw of cond.keywords) {
+        const normalized = ignoreCase ? kw.toLowerCase() : kw;
+        if (msg === normalized) {
+          matches.push({ type: cond.type, keyword: kw });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "começa com": {
-      for (let i = 0; i < keywords.length; i++) {
-        if (msg.startsWith(keywords[i])) {
-          matches.push({ type: cond.type, keyword: cond.keywords[i] });
+      for (const kw of cond.keywords) {
+        const normalized = ignoreCase ? kw.toLowerCase() : kw;
+        if (msg.startsWith(normalized)) {
+          matches.push({ type: cond.type, keyword: kw });
         }
       }
       return { passed: matches.length > 0, matches };
     }
 
     case "não contém": {
-      const noneContained = keywords.every((kw) => !msg.includes(kw));
+      const noneContained = cond.keywords.every((kw) => {
+        const normalized = ignoreCase ? kw.toLowerCase() : kw;
+        return !msg.includes(normalized);
+      });
       if (noneContained) {
         matches.push({ type: cond.type, keyword: "(nenhuma)" });
       }
@@ -112,7 +108,7 @@ export function evaluateTrigger(trigger: TriggerData, message: string): TriggerM
   let allPassed = true;
 
   for (const cond of trigger.conditions) {
-    const { passed, matches } = evaluateCondition(cond, message);
+    const { passed, matches } = evaluateCondition(cond, message, trigger.ignore_case);
     allMatches.push(...matches);
     if (!passed) {
       allPassed = false;
