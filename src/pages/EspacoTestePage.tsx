@@ -59,6 +59,7 @@ interface Contact {
   profilePicUrl?: string;
   lastTimestamp?: number;
   lastMessageSignature?: string;
+  lastMessageFromMe?: boolean;
 }
 
 // Generate consistent color from name/phone
@@ -223,6 +224,8 @@ export default function EspacoTestePage() {
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
   const [pendingAsset, setPendingAsset] = useState<{ id: string; name: string; type: string; itemCount?: number; duration?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const processedPollMessageSignaturesRef = useRef<Set<string>>(new Set());
+  const processedRealtimeMessageSignaturesRef = useRef<Set<string>>(new Set());
   const realWA = useRealWhatsApp();
 
   const assetTables: Record<string, string> = {
@@ -326,11 +329,15 @@ export default function EspacoTestePage() {
 
         const normalizedContacts: Contact[] = ((data as any[]) ?? []).map((chat: any) => {
           const remoteJid = chat.remoteJid || "";
-          const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+          const phone = (typeof remoteJid === "string" ? remoteJid.split("@")[0] : "") || "";
           const timestamp = toUnixSeconds(chat.timestamp) || toUnixSeconds(chat.updatedAt);
           const stableId = `real-${phone || remoteJid || crypto.randomUUID()}`;
           const lastMessage = chat.lastMessage || "";
-          const lastMessageSignature = `${lastMessage}::${timestamp}`;
+          const lastMessageId = typeof chat.lastMessageId === "string" ? chat.lastMessageId : "";
+          const lastMessageFromMe = chat.lastMessageFromMe === true;
+          const lastMessageTimestamp = toUnixSeconds(chat.lastMessageTimestamp);
+          const signatureTimestamp = lastMessageTimestamp || timestamp || 0;
+          const lastMessageSignature = lastMessageId || `${lastMessage}::${signatureTimestamp}`;
 
           return {
             id: stableId,
@@ -345,6 +352,7 @@ export default function EspacoTestePage() {
             profilePicUrl: chat.profilePicUrl || "",
             lastTimestamp: timestamp,
             lastMessageSignature,
+            lastMessageFromMe,
           };
         });
 
@@ -371,16 +379,19 @@ export default function EspacoTestePage() {
             const currentTimestamp = incoming.lastTimestamp ?? 0;
             const previousSignature = previous?.lastMessageSignature ?? lastSeenSignatureByPhone.get(incoming.phone) ?? "";
             const currentSignature = incoming.lastMessageSignature ?? `${incoming.lastMessage || ""}::${currentTimestamp}`;
-            const hasNewMessage =
+            const hasNewIncomingMessage =
               initialSyncDone &&
               !!incoming.lastMessage &&
+              !incoming.lastMessageFromMe &&
               currentSignature !== previousSignature;
+            const pollMessageKey = `${incoming.id}::${currentSignature}`;
 
             if (incoming.phone && currentSignature) {
               lastSeenSignatureByPhone.set(incoming.phone, currentSignature);
             }
 
-            if (hasNewMessage) {
+            if (hasNewIncomingMessage && !processedPollMessageSignaturesRef.current.has(pollMessageKey)) {
+              processedPollMessageSignaturesRef.current.add(pollMessageKey);
               incomingMessages.push({
                 contactId: incoming.id,
                 contactName: incoming.name,
@@ -394,7 +405,7 @@ export default function EspacoTestePage() {
             return {
               ...previous,
               ...incoming,
-              unread: hasNewMessage
+              unread: hasNewIncomingMessage
                 ? (previous?.unread ?? 0) + (incoming.id === activeContactIdRef.current ? 0 : 1)
                 : (incoming.unread ?? previous?.unread ?? 0),
               lastTimestamp: Math.max(previousTimestamp, currentTimestamp),
@@ -441,12 +452,16 @@ export default function EspacoTestePage() {
                       timestamp: messageDate,
                     },
                   ];
-
-                  void processIncomingMessage(incomingMsg.text);
                 }
               });
 
               return nextHistory;
+            });
+
+            incomingMessages.forEach((incomingMsg) => {
+              if (incomingMsg.text) {
+                void processIncomingMessage(incomingMsg.text);
+              }
             });
           }
 
@@ -513,7 +528,7 @@ export default function EspacoTestePage() {
           if (msg.instance_id !== realWA.selectedInstanceId) return;
 
           const remoteJid = msg.remote_jid || "";
-          const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+          const phone = (typeof remoteJid === "string" ? remoteJid.split("@")[0] : "") || "";
           const normalizedPhone = phone.replace(/\D/g, "");
           const senderName = msg.sender_name || phone;
           const isGroup = remoteJid.endsWith("@g.us");
@@ -524,6 +539,13 @@ export default function EspacoTestePage() {
             toUnixSeconds(msg.timestamp || msg.created_at) ||
             Math.floor(messageTimestamp.getTime() / 1000);
           const messageSignature = `${messageText}::${messageUnixTimestamp}`;
+          const realtimeMessageKey = `${normalizedPhone || phone}::${messageSignature}`;
+
+          if (processedRealtimeMessageSignaturesRef.current.has(realtimeMessageKey)) return;
+          processedRealtimeMessageSignaturesRef.current.add(realtimeMessageKey);
+          if (processedRealtimeMessageSignaturesRef.current.size > 3000) {
+            processedRealtimeMessageSignaturesRef.current.clear();
+          }
 
           setContacts((prevContacts) => {
             let matchingContact = prevContacts.find(

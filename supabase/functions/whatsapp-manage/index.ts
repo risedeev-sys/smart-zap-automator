@@ -339,7 +339,7 @@ Deno.serve(async (req) => {
         // Extract WhatsApp JID from chat object
         const getJid = (c: any): string => {
           for (const val of [c.remoteJid, c.jid, c.chatId, c.id]) {
-            if (typeof val === "string" && (val.endsWith("@s.whatsapp.net") || val.endsWith("@g.us"))) {
+            if (typeof val === "string" && (val.endsWith("@s.whatsapp.net") || val.endsWith("@g.us") || val.endsWith("@lid"))) {
               return val;
             }
           }
@@ -390,12 +390,19 @@ Deno.serve(async (req) => {
             lastMsg = `${shortName}: ${lastMsg}`;
           }
 
+          const lastMessageId = c.lastMessage?.key?.id || "";
+          const lastMessageFromMe = c.lastMessage?.key?.fromMe === true;
+          const lastMessageTimestamp = toUnix(c.lastMessage?.messageTimestamp) || 0;
+
           return {
             remoteJid: jid,
             name: displayName,
             lastMessage: lastMsg,
             timestamp: c._ts,
             updatedAt: c.updatedAt || "",
+            lastMessageId,
+            lastMessageFromMe,
+            lastMessageTimestamp,
             isGroup,
             unreadCount: c.unreadCount ?? c.unreadMessages ?? 0,
             profilePicUrl: c.profilePictureUrl || c.profilePicUrl || "",
