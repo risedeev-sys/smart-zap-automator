@@ -43,10 +43,11 @@ interface TriggerMatchResult {
 
 function evaluateCondition(
   cond: TriggerCondition,
-  rawMessage: string
+  rawMessage: string,
+  ignoreCase: boolean
 ): { passed: boolean; matches: ConditionMatch[] } {
-  const msg = rawMessage;
-  const keywords = cond.keywords;
+  const msg = ignoreCase ? rawMessage.toLowerCase() : rawMessage;
+  const keywords = ignoreCase ? cond.keywords.map(k => k.toLowerCase()) : cond.keywords;
   const matches: ConditionMatch[] = [];
 
   switch (cond.type) {
@@ -91,7 +92,7 @@ function evaluateTrigger(trigger: TriggerData, message: string): TriggerMatchRes
   let allPassed = true;
 
   for (const cond of trigger.conditions) {
-    const { passed, matches } = evaluateCondition(cond, message);
+    const { passed, matches } = evaluateCondition(cond, message, trigger.ignore_case);
     allMatches.push(...matches);
     if (!passed) allPassed = false;
   }
@@ -325,9 +326,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    const senderJid = key?.remoteJid || "";
-    const senderPhone = senderJid.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
-    const isGroup = senderJid.endsWith("@g.us") || false;
+    // Handle @lid format: Evolution API may use LID JIDs with the real number in remoteJidAlt
+    const rawJid = key?.remoteJid || "";
+    const altJid = key?.remoteJidAlt || "";
+    
+    // Determine the best JID to use for replying
+    let senderJid = rawJid;
+    if (rawJid.endsWith("@lid") && altJid.endsWith("@s.whatsapp.net")) {
+      senderJid = altJid;
+      console.log(`[webhook] Using remoteJidAlt instead of @lid: ${altJid}`);
+    }
+    
+    const senderPhone = senderJid.replace("@s.whatsapp.net", "").replace("@g.us", "").replace("@lid", "") || "";
+    const isGroup = rawJid.endsWith("@g.us") || senderJid.endsWith("@g.us") || false;
     const participantName = messageData.pushName || senderPhone;
 
     console.log(`[webhook] Message from ${senderPhone}: "${text}" (group: ${isGroup})`);
@@ -401,7 +412,9 @@ Deno.serve(async (req) => {
 
     // Process each matched trigger
     for (const match of matchedTriggers) {
-      const replyTo = isGroup ? key.remoteJid : senderPhone;
+      // Always reply to the sender — use senderJid for groups, senderPhone for individuals
+      const replyTo = isGroup ? senderJid : senderPhone;
+      console.log(`[webhook] Trigger "${match.triggerName}" matched — will reply to: ${replyTo}`);
 
       // Apply trigger delay
       if (match.delaySeconds > 0) {
