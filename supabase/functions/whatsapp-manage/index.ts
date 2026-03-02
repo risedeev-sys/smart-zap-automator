@@ -155,8 +155,12 @@ Deno.serve(async (req) => {
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const webhookSecret = Deno.env.get("EVOLUTION_WEBHOOK_SECRET") || "";
-    const statusWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-status-webhook?token=${webhookSecret}`;
-    const messageWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-message-webhook?token=${webhookSecret}`;
+    if (!webhookSecret) {
+      throw new Error("EVOLUTION_WEBHOOK_SECRET is not configured");
+    }
+    const encodedWebhookToken = encodeURIComponent(webhookSecret);
+    const statusWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-status-webhook?token=${encodedWebhookToken}`;
+    const messageWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-message-webhook?token=${encodedWebhookToken}`;
 
     let result: unknown;
 
@@ -305,6 +309,13 @@ Deno.serve(async (req) => {
           .eq("id", instance_id)
           .single();
         if (!inst) throw new Error("Instance not found");
+
+        // Keep webhook active/self-healing for the selected instance
+        try {
+          await setMessageWebhook(inst.instance_name, messageWebhookUrl);
+        } catch (err) {
+          console.warn(`[fetch-chats] Failed to ensure message webhook for ${inst.instance_name}:`, err);
+        }
 
         // Fetch chats AND contacts in parallel for best data
         const [chats, contactsRaw] = await Promise.all([

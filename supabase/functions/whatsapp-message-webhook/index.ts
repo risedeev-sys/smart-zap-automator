@@ -150,18 +150,26 @@ async function sendFunnelItem(
   supabase: ReturnType<typeof createClient>
 ) {
   // Resolve the asset
-  const table = item.type === "message" ? "messages"
-    : item.type === "audio" ? "audios"
-    : item.type === "media" ? "medias"
-    : item.type === "document" ? "documents"
+  const normalizedType = item.type === "mensagem"
+    ? "message"
+    : item.type === "midia"
+    ? "media"
+    : item.type === "documento"
+    ? "document"
+    : item.type;
+
+  const table = normalizedType === "message" ? "messages"
+    : normalizedType === "audio" ? "audios"
+    : normalizedType === "media" ? "medias"
+    : normalizedType === "document" ? "documents"
     : null;
 
   if (!table) {
-    console.warn(`[sendFunnelItem] Unknown type: ${item.type}`);
+    console.warn(`[sendFunnelItem] Unknown type: ${item.type} (normalized: ${normalizedType})`);
     return;
   }
 
-  if (item.type === "message") {
+  if (normalizedType === "message") {
     const { data: msg } = await supabase
       .from("messages")
       .select("content")
@@ -190,8 +198,8 @@ async function sendFunnelItem(
 
     if (!signedData?.signedUrl) return;
 
-    const mediaType = item.type === "audio" ? "audio"
-      : item.type === "document" ? "document"
+    const mediaType = normalizedType === "audio" ? "audio"
+      : normalizedType === "document" ? "document"
       : (asset.mime?.startsWith("video") ? "video" : "image");
 
     const mimetypeMap: Record<string, string> = {
