@@ -60,7 +60,7 @@ export default function MidiasPage() {
 
     const { data: record, error } = await supabase
       .from("medias")
-      .insert({ name: newName.trim(), user_id: user.id })
+      .insert({ name: newName.trim(), user_id: user.id, metadata: { singleView, caption: newCaption.trim() } })
       .select("id, name")
       .single();
     if (error || !record) {

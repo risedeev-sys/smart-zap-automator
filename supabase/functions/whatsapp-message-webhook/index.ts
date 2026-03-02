@@ -171,7 +171,7 @@ async function sendFunnelItem(
     // Audio, media, document — need signed URL
     const { data: asset } = await supabase
       .from(table)
-      .select("storage_path, mime, name")
+      .select("storage_path, mime, name, metadata")
       .eq("id", item.asset_id)
       .single();
 
@@ -194,16 +194,22 @@ async function sendFunnelItem(
       document: "application/pdf",
     };
 
+    const metadata = (asset as any).metadata || {};
+    const sendBody: Record<string, unknown> = {
+      number: phone,
+      mediatype: mediaType,
+      media: signedData.signedUrl,
+      mimetype: asset.mime || mimetypeMap[mediaType],
+      caption: metadata.caption || "",
+      fileName: asset.name || undefined,
+    };
+    if (metadata.singleView === true) {
+      sendBody.viewOnce = true;
+    }
+
     await evoFetch(`/message/sendMedia/${instanceName}`, {
       method: "POST",
-      body: JSON.stringify({
-        number: phone,
-        mediatype: mediaType,
-        media: signedData.signedUrl,
-        mimetype: asset.mime || mimetypeMap[mediaType],
-        caption: "",
-        fileName: asset.name || undefined,
-      }),
+      body: JSON.stringify(sendBody),
     });
   }
 }

@@ -60,7 +60,7 @@ export default function AudiosPage() {
     // 1. Insert record in Supabase
     const { data: record, error } = await supabase
       .from("audios")
-      .insert({ name: newName.trim(), user_id: user.id })
+      .insert({ name: newName.trim(), user_id: user.id, metadata: { singleView, forwarded } })
       .select("id, name")
       .single();
     if (error || !record) {
