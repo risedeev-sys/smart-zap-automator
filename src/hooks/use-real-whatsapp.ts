@@ -14,6 +14,7 @@ interface SendOptions {
   mediaUrl?: string;
   mediaType?: "image" | "video" | "audio" | "document";
   caption?: string;
+  viewOnce?: boolean;
 }
 
 export function useRealWhatsApp() {
@@ -69,6 +70,7 @@ export function useRealWhatsApp() {
         body.media_url = opts.mediaUrl;
         body.media_type = opts.mediaType ?? "image";
         if (opts.caption) body.caption = opts.caption;
+        if (opts.viewOnce) body.view_once = "true";
       } else {
         body.text = opts.text ?? "";
       }

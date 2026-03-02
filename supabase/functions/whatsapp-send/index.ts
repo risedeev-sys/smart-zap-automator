@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { instance_id, phone, text, media_url, media_type, caption } = await req.json();
+    const { instance_id, phone, text, media_url, media_type, caption, view_once } = await req.json();
 
     if (!instance_id || !phone) {
       throw new Error("instance_id and phone are required");
@@ -97,15 +97,19 @@ Deno.serve(async (req) => {
         audio: "audio/mpeg",
         document: "application/pdf",
       };
+      const sendBody: Record<string, unknown> = {
+        number: phone,
+        mediatype,
+        media: media_url,
+        mimetype: mimetypeMap[mediatype],
+        caption: caption || "",
+      };
+      if (view_once === "true" || view_once === true) {
+        sendBody.viewOnce = true;
+      }
       result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
         method: "POST",
-        body: JSON.stringify({
-          number: phone,
-          mediatype,
-          media: media_url,
-          mimetype: mimetypeMap[mediatype],
-          caption: caption || "",
-        }),
+        body: JSON.stringify(sendBody),
       });
     } else {
       result = await evoFetch(`/message/sendText/${inst.instance_name}`, {

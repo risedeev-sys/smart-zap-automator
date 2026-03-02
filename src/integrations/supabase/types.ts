@@ -19,6 +19,7 @@ export type Database = {
           bytes: number | null
           created_at: string
           id: string
+          metadata: Json | null
           mime: string | null
           name: string
           storage_path: string | null
@@ -28,6 +29,7 @@ export type Database = {
           bytes?: number | null
           created_at?: string
           id?: string
+          metadata?: Json | null
           mime?: string | null
           name: string
           storage_path?: string | null
@@ -37,6 +39,7 @@ export type Database = {
           bytes?: number | null
           created_at?: string
           id?: string
+          metadata?: Json | null
           mime?: string | null
           name?: string
           storage_path?: string | null
@@ -209,6 +212,7 @@ export type Database = {
           bytes: number | null
           created_at: string
           id: string
+          metadata: Json | null
           mime: string | null
           name: string
           storage_path: string | null
@@ -218,6 +222,7 @@ export type Database = {
           bytes?: number | null
           created_at?: string
           id?: string
+          metadata?: Json | null
           mime?: string | null
           name: string
           storage_path?: string | null
@@ -227,6 +232,7 @@ export type Database = {
           bytes?: number | null
           created_at?: string
           id?: string
+          metadata?: Json | null
           mime?: string | null
           name?: string
           storage_path?: string | null

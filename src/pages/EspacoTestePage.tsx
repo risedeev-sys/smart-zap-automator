@@ -423,6 +423,7 @@ export default function EspacoTestePage() {
       let content = "";
       let fileUrl: string | null = null;
       let mime: string | null = null;
+      let metadata: any = {};
 
       if (table) {
         const { data: asset } = await supabase
@@ -435,6 +436,7 @@ export default function EspacoTestePage() {
           content = (asset as any).content ?? "";
           fileUrl = await getStorageUrl((asset as any).storage_path ?? null);
           mime = (asset as any).mime ?? null;
+          metadata = (asset as any).metadata ?? {};
         }
       }
 
@@ -459,6 +461,7 @@ export default function EspacoTestePage() {
             mediaUrl: fileUrl,
             mediaType: mediaTypeMap[item.type] ?? "image",
             caption: content || undefined,
+            viewOnce: metadata?.singleView === true,
           });
         } else if (content) {
           await realWA.sendRealMessage({ text: content });
@@ -550,6 +553,7 @@ export default function EspacoTestePage() {
     let content = "";
     let fileUrl: string | null = null;
     let mime: string | null = null;
+    let metadata: any = {};
 
     const table = assetTables[asset.type];
     if (table) {
@@ -558,6 +562,7 @@ export default function EspacoTestePage() {
         content = (data as any).content ?? "";
         fileUrl = await getStorageUrl((data as any).storage_path ?? null);
         mime = (data as any).mime ?? null;
+        metadata = (data as any).metadata ?? {};
       }
     }
 
@@ -580,7 +585,8 @@ export default function EspacoTestePage() {
       await realWA.sendRealMessage({
         mediaUrl: fileUrl,
         mediaType: mediaTypeMap[asset.type] ?? "image",
-        caption: content || undefined,
+        caption: content || metadata?.caption || undefined,
+        viewOnce: metadata?.singleView === true,
       });
     } else if (realWA.realMode && realWA.isReady && content) {
       await realWA.sendRealMessage({ text: content });
