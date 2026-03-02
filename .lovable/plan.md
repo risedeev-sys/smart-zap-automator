@@ -1,74 +1,99 @@
 
+# Envio 100% pelo DOM do WhatsApp Web + Evolution API para automacao em background
 
-# Replicar Interface Real do WhatsApp Web no Espaco de Teste
+## Resumo
+A extensao passara a enviar mensagens (texto, imagens, audios, videos, documentos) diretamente pelo DOM do WhatsApp Web, sem usar a Evolution API para envios manuais. A Evolution API continua existindo no backend para automacoes com o navegador fechado (gatilhos, funis automaticos, webhooks).
 
-## Problema Atual
-A lista de contatos no modo real mostra dados brutos: numeros em vez de nomes salvos, sem separacao visual entre grupos e contatos individuais, sem avatares diferenciados, e sem os detalhes visuais do WhatsApp Web real (checks de leitura, prefixo de remetente em grupos, etc).
+## O que muda na extensao
 
-## Mudancas Planejadas
+### 1. Envio de texto -- injetar no campo de digitacao
+- Localizar o campo editavel: `div[contenteditable="true"]` dentro de `#main footer`
+- Focar o campo e inserir o texto com `document.execCommand('insertText', false, text)`
+- Disparar evento `input` com `bubbles: true`
+- Aguardar e clicar no botao de enviar: `span[data-icon="send"]`
 
-### 1. Melhorar dados vindos da Edge Function `whatsapp-manage`
-- Extrair campo `profilePicUrl` dos contatos da Evolution API (quando disponivel)
-- Retornar campo `unreadCount` de cada chat (ja disponivel na resposta da Evolution API)
-- Melhorar extracaoo de `lastMessage` incluindo prefixo do remetente em grupos
-- Garantir que nomes de grupos venham completos (ex: "Networking - Rise Community #1")
+### 2. Envio de arquivos (imagens, videos, audios, documentos) -- injetar no input file
+- Baixar o arquivo do Supabase Storage como Blob usando signed URL (ja implementada)
+- Clicar no botao de anexo (+) do WhatsApp Web
+- Esperar o menu de opcoes aparecer
+- Selecionar a opcao correta (midia ou documento) baseado no tipo do arquivo
+- Criar um `File` a partir do Blob e injetar no `input[type="file"]` usando `DataTransfer`
+- Disparar evento `change` com `bubbles: true`
+- Aguardar o modal de preview do WhatsApp carregar (usando `MutationObserver`)
+- Clicar no botao de enviar do modal de preview
 
-### 2. Redesenhar a lista de contatos no estilo WhatsApp Web
-- **Avatares**: Usar `Avatar` component com iniciais coloridas para contatos e icone de grupo para grupos (em vez de emojis genericos)
-- **Nomes**: Exibir nome salvo (pushName) em negrito, ou numero formatado como fallback
-- **Ultima mensagem**: Mostrar com checks de leitura (azul/cinza) e prefixo do remetente em grupos
-- **Timestamp**: Alinhado a direita, formatado como "10:42", "ontem", etc.
-- **Contador de nao lidas**: Badge verde circular (estilo WhatsApp)
-- **Separacao visual**: Grupos com icone de grupo distinto, contatos com avatar de inicial
+### 3. O que sera removido do content.js
+- Funcao `sendMessage()` (envio via Edge Function)
+- Funcoes `getCurrentPhone()` e `extractDigitsFromJid()` (nao precisamos mais do telefone)
+- Variavel `instanceId` e referencia em `loadAuth()`
+- A logica de verificar instancia antes de enviar
 
-### 3. Header do chat ativo no estilo WhatsApp Web
-- Avatar com inicial ou foto do contato
-- Nome e status ("online", "digitando...", ou "clique aqui para informacoes do grupo")
-- Icones de busca, chamada de voz, video e menu (ja existem, manter)
+### 4. O que sera mantido
+- `getSignedUrl()` -- necessaria para baixar arquivos do Supabase Storage
+- `supaFetch()` e `loadAssets()` -- carregamento dos assets do painel
+- Todo o codigo de modal/preview/toast/barra de botoes
 
-### 4. Estilo visual geral
-- Background do sidebar mais escuro (whatsapp-like)
-- Hover states nos contatos
-- Linha divisoria sutil entre contatos
-- Fonte e espacamento consistentes com WhatsApp Web
+### 5. Novas funcoes no content.js
 
-## Detalhes Tecnicos
+**`waitForElement(selector, timeout)`** -- utilitario que espera um elemento aparecer no DOM usando MutationObserver com timeout configuravel (padrao 5s)
 
-### Edge Function `whatsapp-manage` - acao `fetch-chats`
-- Adicionar `unreadCount` ao retorno (campo `unreadCount` ou `unreadMessages` do chat)
-- Tentar buscar `profilePictureUrl` via endpoint `/chat/fetchProfilePicture` (com fallback silencioso)
-- Para grupos, extrair nome do grupo do campo `subject` ou `name`
+**`sendTextViaDom(text)`**:
+1. Encontra o campo `div[contenteditable="true"]` no footer do chat
+2. Foca, insere texto com `execCommand`
+3. Dispara evento `input`
+4. Espera e clica em `span[data-icon="send"]`
+5. Retorna true/false
 
-### Componente de Avatar inteligente
-- Gerar cor de fundo baseada no nome/numero (hash simples para cor consistente)
-- Mostrar iniciais (1-2 letras) para contatos
-- Mostrar icone de grupo para chats `@g.us`
+**`downloadAsBlob(signedUrl)`** -- faz fetch da URL e retorna o Blob
 
-### Formatacao de timestamps
-- Hoje: "HH:mm"
-- Ontem: "ontem"  
-- Esta semana: dia da semana ("seg", "ter", etc.)
-- Mais antigo: "dd/mm/yyyy"
+**`sendFileViaDom(blob, fileName, mimeType)`**:
+1. Clica no botao de anexo do WhatsApp (`span[data-icon="plus"]` ou `span[data-icon="attach-menu-plus"]`)
+2. Espera o menu aparecer
+3. Seleciona a opcao correta baseado no mimeType (imagem/video vs documento/audio)
+4. Localiza o `input[type="file"]` correspondente
+5. Cria `new File([blob], fileName, { type: mimeType })`
+6. Cria `DataTransfer`, adiciona o File, seta no input
+7. Dispara evento `change`
+8. Espera o preview do WhatsApp carregar
+9. Clica no botao de enviar do preview
 
-### Mapeamento de contatos reais para o formato `Contact`
+### 6. Atualizacao dos handlers dos botoes
+- **Mensagens**: `sendTextViaDom(content)` em vez de `sendMessage({ text })`
+- **Audios**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
+- **Midias**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
+- **Documentos**: `downloadAsBlob(signedUrl)` + `sendFileViaDom(blob, name, mime)`
+- **Funis**: execucao sequencial de cada item com delay entre eles
+
+## O que muda no popup
+
+### popup.html e popup.js
+- Remover a secao de selecao de instancia (nao e mais necessaria para envio direto)
+- Manter apenas login/logout (o token ainda e necessario para carregar assets do Supabase)
+
+## O que NAO muda (backend permanece igual)
+
+A Evolution API e todas as Edge Functions continuam funcionando normalmente para:
+- **whatsapp-manage**: gerenciamento de instancias e QR code
+- **whatsapp-send**: envio automatizado via backend (gatilhos, funis automaticos)
+- **whatsapp-message-webhook**: recepcao de mensagens para gatilhos
+- **whatsapp-status-webhook**: status de entrega
+- Pagina de Instancias no painel web
+- Espaço de Teste com modo real
+- Hook `useRealWhatsApp`
+
+## Fluxo final
+
 ```text
-Contact {
-  id: string
-  name: string          // pushName ou numero formatado
-  phone: string         // numero limpo para envio
-  avatar: string        // URL da foto ou vazio
-  avatarInitials: string // iniciais para fallback
-  avatarColor: string   // cor gerada por hash
-  isGroup: boolean      // true para @g.us
-  status: string
-  lastMessage: string   // com prefixo de remetente em grupos
-  lastTime: string      // formatado inteligente
-  unread: number
-}
+[Extensao - WhatsApp Web aberto]
+  Botao clicado -> Preview -> "Enviar"
+    Texto: execCommand('insertText') -> clica send
+    Arquivo: Baixa blob -> Injeta input file -> Espera preview -> clica send
+
+[Backend - WhatsApp Web fechado]
+  Gatilho/Funil automatico -> Edge Function whatsapp-send -> Evolution API
 ```
 
-### Arquivos modificados
-1. **`supabase/functions/whatsapp-manage/index.ts`** - Adicionar `unreadCount` e melhorar dados retornados no `fetch-chats`
-2. **`src/pages/EspacoTestePage.tsx`** - Redesenhar sidebar de contatos, adicionar logica de avatar/cor, melhorar formatacao de timestamps, separar visualmente grupos de contatos
-3. **`src/components/RealModePanel.tsx`** - Ajustes menores de estilo para consistencia
-
+## Arquivos alterados
+1. `extensao/content/content.js` -- reescrever logica de envio para DOM direto
+2. `extensao/popup/popup.html` -- remover secao de instancia
+3. `extensao/popup/popup.js` -- remover logica de instancias
