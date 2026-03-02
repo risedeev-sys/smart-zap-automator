@@ -99,37 +99,51 @@ Deno.serve(async (req) => {
       };
 
       const isViewOnce = view_once === "true" || view_once === true;
+      const viewOnceCompat = isViewOnce
+        ? { viewOnce: true, viewonce: true, view_once: true }
+        : {};
 
       if (mediatype === "audio") {
         const audioBody: Record<string, unknown> = {
           number: phone,
           audio: media_url,
+          audioMessage: {
+            audio: media_url,
+            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+          },
+          options: {
+            encoding: true,
+            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+          },
+          ...viewOnceCompat,
         };
-        if (isViewOnce) {
-          audioBody.viewOnce = true;
-          audioBody.viewonce = true;
-          audioBody.view_once = true;
-          audioBody.options = { viewOnce: true, view_once: true };
-        }
+
+        console.log(`[whatsapp-send] media_type=${mediatype} view_once=${isViewOnce}`);
+
         result = await evoFetch(`/message/sendWhatsAppAudio/${inst.instance_name}`, {
           method: "POST",
           body: JSON.stringify(audioBody),
         });
       } else {
+        const mimetype = mimetypeMap[mediatype];
         const sendBody: Record<string, unknown> = {
           number: phone,
           mediatype,
           media: media_url,
-          mimetype: mimetypeMap[mediatype],
+          mimetype,
           caption: caption || "",
+          mediaMessage: {
+            mediaType: mediatype,
+            mimetype,
+            caption: caption || "",
+            media: media_url,
+            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+          },
+          options: {
+            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+          },
+          ...viewOnceCompat,
         };
-        if (isViewOnce) {
-          // Compatibility: different Evolution API builds may expect different keys
-          sendBody.viewOnce = true;
-          sendBody.viewonce = true;
-          sendBody.view_once = true;
-          sendBody.options = { viewOnce: true, view_once: true };
-        }
 
         console.log(`[whatsapp-send] media_type=${mediatype} view_once=${isViewOnce}`);
 

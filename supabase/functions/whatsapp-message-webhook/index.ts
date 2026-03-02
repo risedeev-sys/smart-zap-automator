@@ -194,19 +194,26 @@ async function sendFunnelItem(
       document: "application/pdf",
     };
 
+    const metadata = (asset as any).metadata || {};
     const isViewOnce = metadata.singleView === true;
+    const viewOnceCompat = isViewOnce
+      ? { viewOnce: true, viewonce: true, view_once: true }
+      : {};
 
     if (mediaType === "audio") {
       const audioBody: Record<string, unknown> = {
         number: phone,
         audio: signedData.signedUrl,
+        audioMessage: {
+          audio: signedData.signedUrl,
+          ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+        },
+        options: {
+          encoding: true,
+          ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+        },
+        ...viewOnceCompat,
       };
-      if (isViewOnce) {
-        audioBody.viewOnce = true;
-        audioBody.viewonce = true;
-        audioBody.view_once = true;
-        audioBody.options = { viewOnce: true, view_once: true };
-      }
       await evoFetch(`/message/sendWhatsAppAudio/${instanceName}`, {
         method: "POST",
         body: JSON.stringify(audioBody),
@@ -214,20 +221,27 @@ async function sendFunnelItem(
       return;
     }
 
+    const mimetype = asset.mime || mimetypeMap[mediaType];
     const sendBody: Record<string, unknown> = {
       number: phone,
       mediatype: mediaType,
       media: signedData.signedUrl,
-      mimetype: asset.mime || mimetypeMap[mediaType],
+      mimetype,
       caption: metadata.caption || "",
       fileName: asset.name || undefined,
+      mediaMessage: {
+        mediaType,
+        mimetype,
+        caption: metadata.caption || "",
+        media: signedData.signedUrl,
+        fileName: asset.name || undefined,
+        ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+      },
+      options: {
+        ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
+      },
+      ...viewOnceCompat,
     };
-    if (isViewOnce) {
-      sendBody.viewOnce = true;
-      sendBody.viewonce = true;
-      sendBody.view_once = true;
-      sendBody.options = { viewOnce: true, view_once: true };
-    }
 
     await evoFetch(`/message/sendMedia/${instanceName}`, {
       method: "POST",
