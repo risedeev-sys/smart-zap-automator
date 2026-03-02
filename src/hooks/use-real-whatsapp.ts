@@ -18,7 +18,7 @@ interface SendOptions {
 }
 
 export function useRealWhatsApp() {
-  const [realMode, setRealMode] = useState(false);
+  const [realMode, setRealMode] = useState(true);
   const [instances, setInstances] = useState<WhatsAppInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
   const [targetPhone, setTargetPhone] = useState("");

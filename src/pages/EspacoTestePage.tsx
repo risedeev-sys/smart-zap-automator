@@ -26,7 +26,6 @@ import { getAppSettings } from "@/pages/ConfiguracoesPage";
 import { toast } from "sonner";
 import { WhatsAppAudioPlayer } from "@/components/WhatsAppAudioPlayer";
 import { useRealWhatsApp } from "@/hooks/use-real-whatsapp";
-import { RealModePanel } from "@/components/RealModePanel";
 
 interface ChatMessage {
   id: string;
@@ -202,11 +201,9 @@ export default function EspacoTestePage() {
       prev.map((c) => (c.id === contactId ? { ...c, unread: 0 } : c))
     );
     // Auto-fill target phone when selecting a real contact
-    if (realWA.realMode) {
-      const contact = contacts.find((c) => c.id === contactId);
-      if (contact?.phone) {
-        realWA.setTargetPhone(contact.phone.replace(/\D/g, ""));
-      }
+    const contact = contacts.find((c) => c.id === contactId);
+    if (contact?.phone) {
+      realWA.setTargetPhone(contact.phone.replace(/\D/g, ""));
     }
   };
 
@@ -291,16 +288,7 @@ export default function EspacoTestePage() {
   // Fetch real WhatsApp chats when real mode is active
   const [loadingChats, setLoadingChats] = useState(false);
   useEffect(() => {
-    if (!realWA.realMode || !realWA.selectedInstanceId) {
-      setContacts(INITIAL_CONTACTS);
-      setChatHistory((prev) => {
-        const initial: Record<string, ChatMessage[]> = {};
-        INITIAL_CONTACTS.forEach((c) => {
-          initial[c.id] = prev[c.id] ?? [welcomeMessage(c.name)];
-        });
-        return initial;
-      });
-      setActiveContactId("1");
+    if (!realWA.selectedInstanceId) {
       return;
     }
 
@@ -460,14 +448,7 @@ export default function EspacoTestePage() {
               return nextHistory;
             });
 
-          // Only process triggers in simulation mode — in real mode the backend webhook handles it
-          if (!realWA.realMode) {
-            incomingMessages.forEach((incomingMsg) => {
-              if (incomingMsg.text) {
-                void processIncomingMessage(incomingMsg.text);
-              }
-            });
-          }
+          // Triggers are handled by the backend webhook
           }
 
           return mergedContacts;
@@ -513,11 +494,11 @@ export default function EspacoTestePage() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [realWA.realMode, realWA.selectedInstanceId]);
+  }, [realWA.selectedInstanceId]);
 
   // Subscribe to real-time incoming messages
   useEffect(() => {
-    if (!realWA.realMode || !realWA.selectedInstanceId) return;
+    if (!realWA.selectedInstanceId) return;
 
     const channel = supabase
       .channel("incoming-messages")
@@ -623,11 +604,7 @@ export default function EspacoTestePage() {
                 : c
             );
           });
-
-          // Only process triggers in simulation mode — in real mode the backend webhook handles it
-          if (!realWA.realMode && messageText) {
-            processIncomingMessage(messageText);
-          }
+          // Triggers are handled by the backend webhook
         }
       )
       .subscribe();
@@ -709,7 +686,7 @@ export default function EspacoTestePage() {
       });
 
       // Real send for funnel items
-      if (realWA.realMode && realWA.isReady) {
+      if (realWA.isReady) {
         if (fileUrl) {
           const mediaTypeMap: Record<string, "image" | "video" | "audio" | "document"> = {
             audio: "audio",
@@ -764,12 +741,9 @@ export default function EspacoTestePage() {
     const text = inputText.trim();
     setInputText("");
 
-    if (realWA.realMode && realWA.isReady) {
-      addMessage({ text, type: "sent" });
+    addMessage({ text, type: "sent" });
+    if (realWA.isReady) {
       await realWA.sendRealMessage({ text });
-    } else {
-      addMessage({ text, type: "received" });
-      await processIncomingMessage(text);
     }
   };
 
@@ -836,7 +810,7 @@ export default function EspacoTestePage() {
     });
 
     // Real send
-    if (realWA.realMode && realWA.isReady && fileUrl) {
+    if (realWA.isReady && fileUrl) {
       const mediaTypeMap: Record<string, "image" | "video" | "audio" | "document"> = {
         audio: "audio",
         midia: mime?.startsWith("video") ? "video" : "image",
@@ -849,7 +823,7 @@ export default function EspacoTestePage() {
         caption: content || metadata?.caption || undefined,
         viewOnce: isViewOnce,
       });
-    } else if (realWA.realMode && realWA.isReady && content) {
+    } else if (realWA.isReady && content) {
       await realWA.sendRealMessage({ text: content });
     }
   };
@@ -869,7 +843,7 @@ export default function EspacoTestePage() {
     d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
   const filteredContacts = contacts.filter((c) => {
-    if (realWA.realMode && !isAllowedRealContact(c.phone)) return false;
+    if (!isAllowedRealContact(c.phone)) return false;
     return c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.phone.includes(contactSearch);
   });
 
@@ -947,18 +921,6 @@ export default function EspacoTestePage() {
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Real mode panel */}
-          <RealModePanel
-            realMode={realWA.realMode}
-            onRealModeChange={realWA.setRealMode}
-            instances={realWA.instances}
-            selectedInstanceId={realWA.selectedInstanceId}
-            onInstanceChange={realWA.handleInstanceChange}
-            targetPhone={realWA.targetPhone}
-            onTargetPhoneChange={realWA.setTargetPhone}
-            isReady={realWA.isReady}
-            sending={realWA.sending}
-          />
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-[10px] bg-muted/50 border-b border-border">
             <div className="flex items-center gap-3">
@@ -1077,7 +1039,7 @@ export default function EspacoTestePage() {
           <div className="flex items-center gap-2 px-3 py-3 border-t border-border bg-muted/50">
             <Smile className="h-6 w-6 text-muted-foreground cursor-pointer flex-shrink-0" />
             <Input
-              placeholder={realWA.realMode ? "Digite uma mensagem para enviar via WhatsApp" : "Digite uma mensagem (simula mensagem recebida)"}
+              placeholder="Digite uma mensagem para enviar via WhatsApp"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
