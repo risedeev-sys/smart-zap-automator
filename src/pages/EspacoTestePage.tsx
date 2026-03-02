@@ -529,6 +529,10 @@ export default function EspacoTestePage() {
           const senderName = msg.sender_name || phone;
           const isGroup = remoteJid.endsWith("@g.us");
           const messageText = msg.message_text || "";
+
+          // Only allow messages from permitted contacts
+          const allowedPhones = ["556192039398", "5511972734906"];
+          if (!allowedPhones.includes(normalizedPhone)) return;
           const messageId = msg.id || crypto.randomUUID();
           const messageTimestamp = new Date(msg.created_at || Date.now());
           const messageUnixTimestamp =
