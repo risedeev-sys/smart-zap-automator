@@ -23,6 +23,8 @@ import { AssetConfirmDialog } from "@/components/FunnelConfirmDialog";
 import { getAppSettings } from "@/pages/ConfiguracoesPage";
 import { toast } from "sonner";
 import { WhatsAppAudioPlayer } from "@/components/WhatsAppAudioPlayer";
+import { useRealWhatsApp } from "@/hooks/use-real-whatsapp";
+import { RealModePanel } from "@/components/RealModePanel";
 
 interface ChatMessage {
   id: string;
@@ -138,6 +140,7 @@ export default function EspacoTestePage() {
   const [assetNameCache, setAssetNameCache] = useState<Record<string, string>>({});
   const [pendingAsset, setPendingAsset] = useState<{ id: string; name: string; type: string; itemCount?: number; duration?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const realWA = useRealWhatsApp();
 
   const assetTables: Record<string, string> = {
     mensagem: "messages",
@@ -268,6 +271,24 @@ export default function EspacoTestePage() {
         fileUrl: fileUrl ?? undefined,
         fileType: mime ?? undefined,
       });
+
+      // Real send for funnel items
+      if (realWA.realMode && realWA.isReady) {
+        if (fileUrl) {
+          const mediaTypeMap: Record<string, "image" | "video" | "audio" | "document"> = {
+            audio: "audio",
+            midia: mime?.startsWith("video") ? "video" : "image",
+            documento: "document",
+          };
+          await realWA.sendRealMessage({
+            mediaUrl: fileUrl,
+            mediaType: mediaTypeMap[item.type] ?? "image",
+            caption: content || undefined,
+          });
+        } else if (content) {
+          await realWA.sendRealMessage({ text: content });
+        }
+      }
     }
 
     toast.success("Envio do funil iniciado com sucesso", {
@@ -304,8 +325,14 @@ export default function EspacoTestePage() {
     if (!inputText.trim()) return;
     const text = inputText.trim();
     setInputText("");
-    addMessage({ text, type: "received" });
-    await processIncomingMessage(text);
+
+    if (realWA.realMode && realWA.isReady) {
+      addMessage({ text, type: "sent" });
+      await realWA.sendRealMessage({ text });
+    } else {
+      addMessage({ text, type: "received" });
+      await processIncomingMessage(text);
+    }
   };
 
   const calcFunnelDuration = (items: any[]) => {
@@ -367,6 +394,22 @@ export default function EspacoTestePage() {
       fileUrl: fileUrl ?? undefined,
       fileType: mime ?? undefined,
     });
+
+    // Real send
+    if (realWA.realMode && realWA.isReady && fileUrl) {
+      const mediaTypeMap: Record<string, "image" | "video" | "audio" | "document"> = {
+        audio: "audio",
+        midia: mime?.startsWith("video") ? "video" : "image",
+        documento: "document",
+      };
+      await realWA.sendRealMessage({
+        mediaUrl: fileUrl,
+        mediaType: mediaTypeMap[asset.type] ?? "image",
+        caption: content || undefined,
+      });
+    } else if (realWA.realMode && realWA.isReady && content) {
+      await realWA.sendRealMessage({ text: content });
+    }
   };
 
   const handleConfirmAsset = async () => {
@@ -443,6 +486,18 @@ export default function EspacoTestePage() {
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0">
+          {/* Real mode panel */}
+          <RealModePanel
+            realMode={realWA.realMode}
+            onRealModeChange={realWA.setRealMode}
+            instances={realWA.instances}
+            selectedInstanceId={realWA.selectedInstanceId}
+            onInstanceChange={realWA.handleInstanceChange}
+            targetPhone={realWA.targetPhone}
+            onTargetPhoneChange={realWA.setTargetPhone}
+            isReady={realWA.isReady}
+            sending={realWA.sending}
+          />
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-muted/50 border-b border-border">
             <div className="flex items-center gap-3">
@@ -550,7 +605,7 @@ export default function EspacoTestePage() {
           <div className="flex items-center gap-2 px-3 py-3 border-t border-border bg-muted/50">
             <Smile className="h-6 w-6 text-muted-foreground cursor-pointer flex-shrink-0" />
             <Input
-              placeholder="Digite uma mensagem (simula mensagem recebida)"
+              placeholder={realWA.realMode ? "Digite uma mensagem para enviar via WhatsApp" : "Digite uma mensagem (simula mensagem recebida)"}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
