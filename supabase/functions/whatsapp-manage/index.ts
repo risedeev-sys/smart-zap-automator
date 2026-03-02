@@ -42,9 +42,10 @@ async function evoFetch(path: string, options: RequestInit = {}) {
 }
 
 async function setMessageWebhook(name: string, messageWebhookUrl: string) {
+  console.log(`[setMessageWebhook] Setting webhook for ${name} -> ${messageWebhookUrl}`);
   // Try the flat format first (most Evolution API versions)
   try {
-    await evoFetch(`/webhook/set/${name}`, {
+    const r1 = await evoFetch(`/webhook/set/${name}`, {
       method: "POST",
       body: JSON.stringify({
         url: messageWebhookUrl,
@@ -53,12 +54,14 @@ async function setMessageWebhook(name: string, messageWebhookUrl: string) {
         events: ["MESSAGES_UPSERT", "messages.upsert"],
       }),
     });
+    console.log(`[setMessageWebhook] Flat format succeeded:`, JSON.stringify(r1).slice(0, 300));
     return;
-  } catch (_e) {
-    // If flat fails, try wrapped in "webhook" key
+  } catch (e1: any) {
+    console.warn(`[setMessageWebhook] Flat format failed: ${e1?.message}`);
   }
+  // Try wrapped format
   try {
-    await evoFetch(`/webhook/set/${name}`, {
+    const r2 = await evoFetch(`/webhook/set/${name}`, {
       method: "POST",
       body: JSON.stringify({
         webhook: {
@@ -69,8 +72,9 @@ async function setMessageWebhook(name: string, messageWebhookUrl: string) {
         },
       }),
     });
-  } catch (e2) {
-    console.warn("[setMessageWebhook] both formats failed:", e2);
+    console.log(`[setMessageWebhook] Wrapped format succeeded:`, JSON.stringify(r2).slice(0, 300));
+  } catch (e2: any) {
+    console.error(`[setMessageWebhook] Both formats FAILED: ${e2?.message}`);
   }
 }
 
