@@ -40,6 +40,42 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   }
 }
 
+function parseBooleanFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function extractAssetIdFromMediaUrl(mediaUrl: string): string | null {
+  const match = mediaUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  return match?.[0] ?? null;
+}
+
+async function inferViewOnceFromAssetMetadata(
+  supabase: ReturnType<typeof createClient>,
+  mediaUrl?: string,
+): Promise<boolean> {
+  if (!mediaUrl) return false;
+
+  const assetId = extractAssetIdFromMediaUrl(mediaUrl);
+  if (!assetId) return false;
+
+  const tables: Array<"medias" | "audios"> = ["medias", "audios"];
+
+  for (const table of tables) {
+    const { data } = await supabase
+      .from(table)
+      .select("metadata")
+      .eq("id", assetId)
+      .maybeSingle();
+
+    const metadata = (data as any)?.metadata ?? {};
+    if (parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -67,7 +103,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { instance_id, phone, text, media_url, media_type, caption, view_once } = await req.json();
+    const {
+      instance_id,
+      phone,
+      text,
+      media_url,
+      media_type,
+      caption,
+      view_once,
+      viewOnce,
+      viewonce,
+    } = await req.json();
 
     if (!instance_id || !phone) {
       throw new Error("instance_id and phone are required");
@@ -98,7 +144,15 @@ Deno.serve(async (req) => {
         document: "application/pdf",
       };
 
-      const isViewOnce = view_once === "true" || view_once === true;
+      let isViewOnce =
+        parseBooleanFlag(view_once) ||
+        parseBooleanFlag(viewOnce) ||
+        parseBooleanFlag(viewonce);
+
+      if (!isViewOnce) {
+        isViewOnce = await inferViewOnceFromAssetMetadata(supabase, media_url);
+      }
+
       const viewOnceCompat = isViewOnce
         ? { viewOnce: true, viewonce: true, view_once: true }
         : {};

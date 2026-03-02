@@ -134,6 +134,12 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   }
 }
 
+// ── Helper: Parse booleans consistently ──
+
+function parseBooleanFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 // ── Helper: Send a single funnel item ──
 
 async function sendFunnelItem(
@@ -195,7 +201,7 @@ async function sendFunnelItem(
     };
 
     const metadata = (asset as any).metadata || {};
-    const isViewOnce = metadata.singleView === true;
+    const isViewOnce = parseBooleanFlag(metadata.singleView) || parseBooleanFlag(metadata.single_view);
     const viewOnceCompat = isViewOnce
       ? { viewOnce: true, viewonce: true, view_once: true }
       : {};

@@ -101,6 +101,10 @@ function formatSmartTime(timestamp: number | string | undefined): string {
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function isTruthyFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 const INITIAL_CONTACTS: Contact[] = [
   { id: "1", name: "Contato de Teste", phone: "+55 11 99999-9999", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "agora", unread: 1 },
   { id: "2", name: "Maria Silva", phone: "+55 21 98888-7777", avatar: "", status: "online", lastMessage: "Oi, tudo bem?", lastTime: "10:30", unread: 2 },
@@ -457,11 +461,12 @@ export default function EspacoTestePage() {
             midia: mime?.startsWith("video") ? "video" : "image",
             documento: "document",
           };
+          const isViewOnce = isTruthyFlag(metadata?.singleView) || isTruthyFlag(metadata?.single_view);
           await realWA.sendRealMessage({
             mediaUrl: fileUrl,
             mediaType: mediaTypeMap[item.type] ?? "image",
             caption: content || undefined,
-            viewOnce: metadata?.singleView === true,
+            viewOnce: isViewOnce,
           });
         } else if (content) {
           await realWA.sendRealMessage({ text: content });
@@ -582,11 +587,12 @@ export default function EspacoTestePage() {
         midia: mime?.startsWith("video") ? "video" : "image",
         documento: "document",
       };
+      const isViewOnce = isTruthyFlag(metadata?.singleView) || isTruthyFlag(metadata?.single_view);
       await realWA.sendRealMessage({
         mediaUrl: fileUrl,
         mediaType: mediaTypeMap[asset.type] ?? "image",
         caption: content || metadata?.caption || undefined,
-        viewOnce: metadata?.singleView === true,
+        viewOnce: isViewOnce,
       });
     } else if (realWA.realMode && realWA.isReady && content) {
       await realWA.sendRealMessage({ text: content });
