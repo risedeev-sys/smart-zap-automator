@@ -47,10 +47,24 @@
   function getCurrentPhone() {
     const header = document.querySelector("#main header");
     if (!header) return null;
-    const span = header.querySelector("span[dir='auto']");
-    if (!span) return null;
-    const digits = span.textContent.trim().replace(/\D/g, "");
-    return digits.length >= 10 ? digits : null;
+
+    // Try all spans in the header — look for one with 10+ digits (phone number)
+    const spans = header.querySelectorAll("span[dir='auto'], span[title]");
+    for (const span of spans) {
+      const text = (span.getAttribute("title") || span.textContent || "").trim();
+      const digits = text.replace(/\D/g, "");
+      if (digits.length >= 10) return digits;
+    }
+
+    // Fallback: check any element in header with a phone-like pattern
+    const allText = header.textContent || "";
+    const match = allText.match(/\d[\d\s\-()]{9,}/);
+    if (match) {
+      const digits = match[0].replace(/\D/g, "");
+      if (digits.length >= 10) return digits;
+    }
+
+    return null;
   }
 
   // ─── Send via Edge Function ────────────────────────────
