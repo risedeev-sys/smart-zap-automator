@@ -41,6 +41,18 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   }
 }
 
+async function setMessageWebhook(name: string, messageWebhookUrl: string) {
+  await evoFetch(`/webhook/set/${name}`, {
+    method: "POST",
+    body: JSON.stringify({
+      url: messageWebhookUrl,
+      webhook_by_events: true,
+      webhook_base64: true,
+      events: ["MESSAGES_UPSERT", "messages.upsert"],
+    }),
+  });
+}
+
 async function createInstance(name: string, statusWebhookUrl: string, messageWebhookUrl: string) {
   // Create instance with status webhook
   const result = await evoFetch("/instance/create", {
@@ -60,15 +72,7 @@ async function createInstance(name: string, statusWebhookUrl: string, messageWeb
 
   // Also set the message webhook via the webhook/set endpoint
   try {
-    await evoFetch(`/webhook/set/${name}`, {
-      method: "POST",
-      body: JSON.stringify({
-        url: messageWebhookUrl,
-        webhook_by_events: true,
-        webhook_base64: true,
-        events: ["MESSAGES_UPSERT"],
-      }),
-    });
+    await setMessageWebhook(name, messageWebhookUrl);
     console.log(`[createInstance] Message webhook set for ${name}`);
   } catch (err) {
     console.warn(`[createInstance] Failed to set message webhook:`, err);
@@ -165,6 +169,13 @@ Deno.serve(async (req) => {
         const evoResult = await connectInstance(inst.instance_name);
         const qrBase64 = evoResult?.base64 || null;
 
+        try {
+          await setMessageWebhook(inst.instance_name, messageWebhookUrl);
+          console.log(`[instance-connect] Message webhook ensured for ${inst.instance_name}`);
+        } catch (err) {
+          console.warn(`[instance-connect] Failed to ensure message webhook:`, err);
+        }
+
         if (qrBase64) {
           await serviceClient
             .from("whatsapp_instances")
@@ -234,6 +245,20 @@ Deno.serve(async (req) => {
           .eq("id", instance_id);
 
         result = { status };
+        break;
+      }
+
+      case "instance-ensure-webhooks": {
+        if (!instance_id) throw new Error("instance_id is required");
+        const { data: inst } = await supabase
+          .from("whatsapp_instances")
+          .select("instance_name")
+          .eq("id", instance_id)
+          .single();
+        if (!inst) throw new Error("Instance not found");
+
+        await setMessageWebhook(inst.instance_name, messageWebhookUrl);
+        result = { ok: true };
         break;
       }
 

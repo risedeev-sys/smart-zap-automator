@@ -57,6 +57,7 @@ interface Contact {
   unread?: number;
   isGroup?: boolean;
   profilePicUrl?: string;
+  lastTimestamp?: number;
 }
 
 // Generate consistent color from name/phone
@@ -190,7 +191,11 @@ export default function EspacoTestePage() {
 
   const activeContact = contacts.find((c) => c.id === activeContactId)!;
   const messages = chatHistory[activeContactId] ?? [];
+  const activeContactIdRef = useRef(activeContactId);
 
+  useEffect(() => {
+    activeContactIdRef.current = activeContactId;
+  }, [activeContactId]);
   const [inputText, setInputText] = useState("");
   const [assetButtons, setAssetButtons] = useState<AssetButton[]>([]);
   const [triggers, setTriggers] = useState<TriggerData[]>([]);
@@ -276,51 +281,188 @@ export default function EspacoTestePage() {
       return;
     }
 
-    const fetchChats = async () => {
-      setLoadingChats(true);
+    let cancelled = false;
+    let initialSyncDone = false;
+    const lastSeenTimestampByPhone = new Map<string, number>();
+
+    void supabase.functions
+      .invoke("whatsapp-manage", {
+        body: { action: "instance-ensure-webhooks", instance_id: realWA.selectedInstanceId },
+      })
+      .catch((err) => {
+        console.warn("ensure-webhooks error:", err);
+      });
+
+    const syncChats = async () => {
+      const shouldShowLoading = !initialSyncDone;
+      if (shouldShowLoading) setLoadingChats(true);
+
       try {
         const { data, error } = await supabase.functions.invoke("whatsapp-manage", {
           body: { action: "fetch-chats", instance_id: realWA.selectedInstanceId },
         });
         if (error || data?.error) throw new Error(data?.error || error?.message);
 
-        const realContacts: Contact[] = (data as any[]).map((chat: any, i: number) => {
-          const phone = chat.remoteJid?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+        const normalizedContacts: Contact[] = ((data as any[]) ?? []).map((chat: any) => {
+          const remoteJid = chat.remoteJid || "";
+          const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+          const timestamp = Number(chat.timestamp || 0);
+          const stableId = `real-${phone || remoteJid || crypto.randomUUID()}`;
+
           return {
-            id: `real-${i}`,
+            id: stableId,
             name: chat.name || phone,
             phone,
             avatar: "",
             status: chat.isGroup ? "grupo" : "",
             lastMessage: chat.lastMessage || "",
-            lastTime: formatSmartTime(chat.timestamp),
+            lastTime: formatSmartTime(timestamp),
             unread: chat.unreadCount || 0,
             isGroup: chat.isGroup || false,
             profilePicUrl: chat.profilePicUrl || "",
+            lastTimestamp: timestamp,
           };
         });
 
-        if (realContacts.length > 0) {
-          setContacts(realContacts);
-          setActiveContactId(realContacts[0].id);
-          realWA.setTargetPhone(realContacts[0].phone);
-          const newHistory: Record<string, ChatMessage[]> = {};
-          realContacts.forEach((c) => {
-            newHistory[c.id] = [welcomeMessage(c.name)];
-          });
-          setChatHistory(newHistory);
-        } else {
-          toast.info("Nenhuma conversa encontrada nessa instância");
+        if (normalizedContacts.length === 0) {
+          if (!initialSyncDone) {
+            toast.info("Nenhuma conversa encontrada nessa instância");
+          }
+          return;
         }
+
+        setContacts((prevContacts) => {
+          const prevById = new Map(prevContacts.map((c) => [c.id, c]));
+          const seenIds = new Set<string>();
+          const incomingMessages: Array<{
+            contactId: string;
+            contactName: string;
+            text: string;
+            timestamp: number;
+          }> = [];
+
+          const mergedContacts: Contact[] = normalizedContacts.map((incoming) => {
+            const previous = prevById.get(incoming.id);
+            const previousTimestamp = previous?.lastTimestamp ?? lastSeenTimestampByPhone.get(incoming.phone) ?? 0;
+            const currentTimestamp = incoming.lastTimestamp ?? 0;
+            const hasNewMessage =
+              initialSyncDone &&
+              !!incoming.lastMessage &&
+              currentTimestamp > previousTimestamp;
+
+            if (incoming.phone && currentTimestamp > 0) {
+              lastSeenTimestampByPhone.set(incoming.phone, currentTimestamp);
+            }
+
+            if (hasNewMessage) {
+              incomingMessages.push({
+                contactId: incoming.id,
+                contactName: incoming.name,
+                text: incoming.lastMessage || "",
+                timestamp: currentTimestamp,
+              });
+            }
+
+            seenIds.add(incoming.id);
+
+            return {
+              ...previous,
+              ...incoming,
+              unread: hasNewMessage
+                ? (previous?.unread ?? 0) + (incoming.id === activeContactIdRef.current ? 0 : 1)
+                : (incoming.unread ?? previous?.unread ?? 0),
+              lastTimestamp: Math.max(previousTimestamp, currentTimestamp),
+            };
+          });
+
+          // Keep any extra dynamic chats that are not in top 20 from API
+          prevContacts.forEach((contact) => {
+            if (contact.id.startsWith("real-") && !seenIds.has(contact.id)) {
+              mergedContacts.push(contact);
+            }
+          });
+
+          if (incomingMessages.length > 0) {
+            setChatHistory((prevHistory) => {
+              const nextHistory = { ...prevHistory };
+
+              incomingMessages.forEach((incomingMsg) => {
+                const contactHistory = nextHistory[incomingMsg.contactId] ?? [welcomeMessage(incomingMsg.contactName)];
+                const messageDate = new Date(
+                  incomingMsg.timestamp > 9999999999
+                    ? incomingMsg.timestamp
+                    : incomingMsg.timestamp * 1000
+                );
+
+                const alreadyExists = contactHistory.some(
+                  (m) =>
+                    m.type === "received" &&
+                    m.text === incomingMsg.text &&
+                    Math.abs(m.timestamp.getTime() - messageDate.getTime()) < 2000
+                );
+
+                if (!alreadyExists) {
+                  nextHistory[incomingMsg.contactId] = [
+                    ...contactHistory,
+                    {
+                      id: `poll-${incomingMsg.contactId}-${messageDate.getTime()}`,
+                      text: incomingMsg.text,
+                      type: "received" as const,
+                      timestamp: messageDate,
+                    },
+                  ];
+
+                  void processIncomingMessage(incomingMsg.text);
+                }
+              });
+
+              return nextHistory;
+            });
+          }
+
+          return mergedContacts;
+        });
+
+        if (!initialSyncDone && normalizedContacts.length > 0) {
+          const firstContact = normalizedContacts[0];
+          setActiveContactId((current) => (current && current !== "1" ? current : firstContact.id));
+          if (firstContact.phone) {
+            realWA.setTargetPhone(firstContact.phone);
+          }
+
+          setChatHistory((prev) => {
+            const next = { ...prev };
+            normalizedContacts.forEach((contact) => {
+              if (!next[contact.id]) {
+                next[contact.id] = [welcomeMessage(contact.name)];
+              }
+            });
+            return next;
+          });
+        }
+
+        initialSyncDone = true;
       } catch (err: any) {
-        console.error("fetch-chats error:", err);
-        toast.error("Erro ao buscar conversas", { description: err.message });
+        if (!cancelled) {
+          console.error("fetch-chats error:", err);
+          toast.error("Erro ao buscar conversas", { description: err.message });
+        }
       } finally {
-        setLoadingChats(false);
+        if (shouldShowLoading && !cancelled) {
+          setLoadingChats(false);
+        }
       }
     };
 
-    fetchChats();
+    void syncChats();
+    const intervalId = window.setInterval(() => {
+      void syncChats();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
   }, [realWA.realMode, realWA.selectedInstanceId]);
 
   // Subscribe to real-time incoming messages
@@ -338,6 +480,8 @@ export default function EspacoTestePage() {
         },
         (payload) => {
           const msg = payload.new as any;
+          if (msg.instance_id !== realWA.selectedInstanceId) return;
+
           const remoteJid = msg.remote_jid || "";
           const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
           const senderName = msg.sender_name || phone;
@@ -362,6 +506,7 @@ export default function EspacoTestePage() {
                 lastTime: formatSmartTime(Date.now() / 1000),
                 unread: 1,
                 isGroup,
+                lastTimestamp: Math.floor(messageTimestamp.getTime() / 1000),
               };
 
               // Add welcome + incoming message to chat history
@@ -402,7 +547,8 @@ export default function EspacoTestePage() {
                     ...c,
                     lastMessage: messageText,
                     lastTime: formatSmartTime(Date.now() / 1000),
-                    unread: (c.unread ?? 0) + (c.id === activeContactId ? 0 : 1),
+                    unread: (c.unread ?? 0) + (c.id === activeContactIdRef.current ? 0 : 1),
+                    lastTimestamp: Math.floor(messageTimestamp.getTime() / 1000),
                   }
                 : c
             );
@@ -419,7 +565,7 @@ export default function EspacoTestePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [realWA.realMode, realWA.selectedInstanceId, activeContactId]);
+  }, [realWA.realMode, realWA.selectedInstanceId]);
 
   useEffect(() => {
     if (scrollRef.current) {
