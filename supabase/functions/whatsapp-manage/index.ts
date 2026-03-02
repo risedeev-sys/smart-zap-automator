@@ -347,14 +347,26 @@ Deno.serve(async (req) => {
           return "";
         };
 
+        // Helper to extract a numeric unix timestamp from various formats
+        const toUnix = (v: unknown): number => {
+          if (typeof v === "number" && v > 0) return v > 9999999999 ? Math.floor(v / 1000) : v;
+          if (typeof v === "string") {
+            const n = Number(v);
+            if (Number.isFinite(n) && n > 0) return n > 9999999999 ? Math.floor(n / 1000) : n;
+            const p = Date.parse(v);
+            if (!Number.isNaN(p)) return Math.floor(p / 1000);
+          }
+          return 0;
+        };
+
         const sorted = chatArray
-          .map((c: any) => ({ ...c, _jid: getJid(c) }))
+          .map((c: any) => ({
+            ...c,
+            _jid: getJid(c),
+            _ts: toUnix(c.lastMsgTimestamp) || toUnix(c.conversationTimestamp) || toUnix(c.updatedAt) || 0,
+          }))
           .filter((c: any) => c._jid && !c._jid.endsWith("@newsletter"))
-          .sort((a: any, b: any) => {
-            const ta = a.lastMsgTimestamp || a.conversationTimestamp || a.updatedAt || 0;
-            const tb = b.lastMsgTimestamp || b.conversationTimestamp || b.updatedAt || 0;
-            return (typeof tb === "number" ? tb : 0) - (typeof ta === "number" ? ta : 0);
-          })
+          .sort((a: any, b: any) => b._ts - a._ts)
           .slice(0, 20);
 
         console.log(`[fetch-chats] ${chatArray.length} chats total, ${sorted.length} with valid JIDs`);
@@ -382,7 +394,8 @@ Deno.serve(async (req) => {
             remoteJid: jid,
             name: displayName,
             lastMessage: lastMsg,
-            timestamp: c.lastMsgTimestamp || c.conversationTimestamp || 0,
+            timestamp: c._ts,
+            updatedAt: c.updatedAt || "",
             isGroup,
             unreadCount: c.unreadCount ?? c.unreadMessages ?? 0,
             profilePicUrl: c.profilePictureUrl || c.profilePicUrl || "",
