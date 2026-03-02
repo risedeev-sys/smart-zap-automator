@@ -156,15 +156,19 @@
   // ─── Download Blob ────────────────────────────────────
 
   async function downloadAsBlob(signedUrl) {
+    console.log("[RiseZap] Downloading blob from:", signedUrl.substring(0, 80) + "...");
     const res = await fetch(signedUrl);
-    if (!res.ok) throw new Error("Failed to download file");
-    return await res.blob();
+    if (!res.ok) throw new Error(`Download falhou (HTTP ${res.status})`);
+    const blob = await res.blob();
+    console.log("[RiseZap] Blob downloaded:", blob.size, "bytes, type:", blob.type);
+    return blob;
   }
 
   // ─── Send File via DOM ────────────────────────────────
 
   async function sendFileViaDom(blob, fileName, mimeType) {
     try {
+      console.log("[RiseZap] sendFileViaDom:", fileName, mimeType, blob.size, "bytes");
       // Determine if it's a media (image/video) or document
       const isMedia = /^(image|video)\//.test(mimeType);
 
@@ -339,9 +343,14 @@
       btn.disabled = true;
       closeModal(); // Close our modal BEFORE interacting with WhatsApp DOM
       await sleep(300);
-      const ok = await onSend();
-      if (ok) showToast("Mensagem enviada! ✓");
-      else showToast("Falha ao enviar", true);
+      try {
+        const ok = await onSend();
+        if (ok) showToast("Mensagem enviada! ✓");
+        else showToast("Falha ao enviar", true);
+      } catch (err) {
+        console.error("[RiseZap] Erro no envio:", err);
+        showToast("Erro: " + (err.message || "falha desconhecida"), true);
+      }
     });
   }
 
