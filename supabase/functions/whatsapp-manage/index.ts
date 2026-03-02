@@ -45,10 +45,12 @@ async function setMessageWebhook(name: string, messageWebhookUrl: string) {
   await evoFetch(`/webhook/set/${name}`, {
     method: "POST",
     body: JSON.stringify({
-      url: messageWebhookUrl,
-      webhook_by_events: true,
-      webhook_base64: true,
-      events: ["MESSAGES_UPSERT", "messages.upsert"],
+      webhook: {
+        url: messageWebhookUrl,
+        webhook_by_events: true,
+        webhook_base64: true,
+        events: ["MESSAGES_UPSERT", "messages.upsert"],
+      },
     }),
   });
 }
