@@ -28,10 +28,7 @@
         <span class="rz-login-msg">Rise Zap — Faça login no popup da extensão</span>
       `;
     } else {
-      bar.innerHTML = `
-        <span class="rz-logo">⚡</span>
-        <span class="rz-status">Rise Zap conectado ✓</span>
-      `;
+      bar.innerHTML = `<span class="rz-logo">⚡</span>`;
     }
 
     document.body.appendChild(bar);
