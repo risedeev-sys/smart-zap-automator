@@ -1,62 +1,45 @@
 
 
-# Envio Real de WhatsApp no Espaço de Teste
+# Carregar Conversas Reais do WhatsApp no Espaco de Teste
 
 ## Objetivo
-Permitir que o usuario envie mensagens, audios, midias e documentos reais via WhatsApp diretamente pelo Espaco de Teste, utilizando a edge function `whatsapp-send` ja existente.
+Substituir os contatos fictícios na barra lateral do Espaço de Teste pelas últimas 10 conversas reais do WhatsApp, buscadas diretamente da Evolution API.
 
 ## O que muda
 
-### 1. Adicionar modo "Envio Real" na pagina de teste
-- Um toggle/switch no topo do chat: **Simulacao** vs **Envio Real**
-- Quando ativado, o sistema envia mensagens reais via Evolution API
-- Quando desativado, funciona como hoje (simulacao local)
+### 1. Nova ação na edge function `whatsapp-manage`
+Adicionar a ação `fetch-chats` que chama o endpoint da Evolution API `/chat/findChats/{instanceName}` para buscar as conversas reais. Retorna nome, número, última mensagem e timestamp.
 
-### 2. Seletor de instancia e numero destino
-- Dropdown para selecionar a instancia conectada (busca de `whatsapp_instances` com status "open")
-- Campo de input para o numero de destino (pre-preenchido com o numero da instancia selecionada para facilitar o auto-envio)
-- O numero do usuario (556192039398) sera sugerido automaticamente
+### 2. Atualizar o Espaço de Teste
+- Quando o "Modo Real" estiver ativo e uma instância selecionada, buscar automaticamente as conversas reais via `whatsapp-manage` com ação `fetch-chats`
+- Substituir a lista de contatos fictícios (`INITIAL_CONTACTS`) pelos contatos reais retornados (últimas 10 conversas)
+- Quando o modo real estiver desativado, voltar para os contatos de simulação
 
-### 3. Integracao com a edge function `whatsapp-send`
-Ao enviar no modo real, o sistema chama a edge function com os parametros corretos:
-
-- **Mensagem de texto**: envia `text` via `sendText`
-- **Audio**: busca o `storage_path`, gera URL publica e envia como `media_type: "audio"`
-- **Midia (imagem/video)**: busca o `storage_path`, gera URL publica e envia como `media_type: "image"` ou `"video"`
-- **Documento**: busca o `storage_path`, gera URL publica e envia como `media_type: "document"`
-- **Funil**: executa cada item do funil com delay real, enviando cada ativo via WhatsApp
-
-### 4. Feedback visual
-- Indicador de status do envio (enviando, enviado, falhou) em cada mensagem
-- Toast de sucesso/erro apos cada envio
-- As mensagens enviadas com sucesso aparecem com um badge "Enviado via WhatsApp"
+### 3. Mapeamento dos dados
+Cada conversa retornada da Evolution API será convertida para o formato `Contact`:
+- `name`: nome do contato ou número formatado
+- `phone`: número do WhatsApp
+- `lastMessage`: última mensagem da conversa
+- `lastTime`: horário formatado
+- `avatar`: emoji genérico (pessoa/grupo)
 
 ## Detalhes Tecnicos
 
-### Arquivo modificado: `src/pages/EspacoTestePage.tsx`
+### Edge Function `whatsapp-manage` - nova ação `fetch-chats`
 
-1. Adicionar estados: `realMode`, `selectedInstanceId`, `targetPhone`, `instances`
-2. Fetch das instancias conectadas ao montar o componente
-3. Nova funcao `sendRealMessage(phone, text, mediaUrl?, mediaType?, caption?)` que invoca:
 ```typescript
-supabase.functions.invoke("whatsapp-send", {
-  body: { instance_id, phone, text, media_url, media_type, caption }
-})
+case "fetch-chats": {
+  // Busca instância do usuário
+  // Chama Evolution API: GET /chat/findChats/{instanceName}
+  // Retorna as últimas 10 conversas ordenadas por timestamp
+}
 ```
-4. Modificar `handleSend`, `sendAsset` e `executeFunnel` para chamar `sendRealMessage` quando `realMode` estiver ativo
-5. Para ativos com arquivo (audio, midia, documento), gerar URL publica via `supabase.storage.from("assets").createSignedUrl()` antes de enviar
 
-### UI do painel de controle (acima do chat)
-- Switch com label "Envio Real via WhatsApp"
-- Ao ativar, expande um painel com:
-  - Select da instancia
-  - Input do numero destino
-  - Badge verde "Pronto para enviar" ou vermelho "Sem instancia conectada"
+### Pagina `EspacoTestePage.tsx`
 
-## Fluxo do teste
-1. Usuario ativa o modo real
-2. Seleciona a instancia "Meu tst"
-3. Numero destino ja vem preenchido com 556192039398
-4. Clica em um ativo (mensagem, audio, etc.) ou digita texto
-5. Mensagem e enviada via WhatsApp real para o proprio numero
-6. Usuario recebe no celular e confirma que funcionou
+1. Novo `useEffect` que dispara quando `realMode` e `selectedInstanceId` mudam
+2. Chama `supabase.functions.invoke("whatsapp-manage", { body: { action: "fetch-chats", instance_id } })`
+3. Converte o resultado para `Contact[]` e atualiza o estado `contacts`
+4. Ao desativar o modo real, restaura `INITIAL_CONTACTS`
+5. Ao selecionar um contato real, preenche o `targetPhone` automaticamente para envio
+
