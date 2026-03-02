@@ -458,11 +458,14 @@ export default function EspacoTestePage() {
               return nextHistory;
             });
 
+          // Only process triggers in simulation mode — in real mode the backend webhook handles it
+          if (!realWA.realMode) {
             incomingMessages.forEach((incomingMsg) => {
               if (incomingMsg.text) {
                 void processIncomingMessage(incomingMsg.text);
               }
             });
+          }
           }
 
           return mergedContacts;
@@ -616,8 +619,8 @@ export default function EspacoTestePage() {
             );
           });
 
-          // Also process triggers for incoming messages
-          if (messageText) {
+          // Only process triggers in simulation mode — in real mode the backend webhook handles it
+          if (!realWA.realMode && messageText) {
             processIncomingMessage(messageText);
           }
         }
