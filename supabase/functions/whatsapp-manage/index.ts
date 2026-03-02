@@ -41,21 +41,40 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   }
 }
 
-async function createInstance(name: string, webhookUrl: string) {
-  return evoFetch("/instance/create", {
+async function createInstance(name: string, statusWebhookUrl: string, messageWebhookUrl: string) {
+  // Create instance with status webhook
+  const result = await evoFetch("/instance/create", {
     method: "POST",
     body: JSON.stringify({
       instanceName: name,
       integration: "WHATSAPP-BAILEYS",
       qrcode: true,
       webhook: {
-        url: webhookUrl,
+        url: statusWebhookUrl,
         byEvents: false,
         base64: true,
-        events: ["CONNECTION_UPDATE", "QRCODE_UPDATED"],
+        events: ["CONNECTION_UPDATE", "QRCODE_UPDATED", "MESSAGES_UPSERT"],
       },
     }),
   });
+
+  // Also set the message webhook via the webhook/set endpoint
+  try {
+    await evoFetch(`/webhook/set/${name}`, {
+      method: "POST",
+      body: JSON.stringify({
+        url: messageWebhookUrl,
+        webhook_by_events: true,
+        webhook_base64: true,
+        events: ["MESSAGES_UPSERT"],
+      }),
+    });
+    console.log(`[createInstance] Message webhook set for ${name}`);
+  } catch (err) {
+    console.warn(`[createInstance] Failed to set message webhook:`, err);
+  }
+
+  return result;
 }
 
 async function getConnectionState(name: string) {
@@ -107,14 +126,15 @@ Deno.serve(async (req) => {
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const webhookSecret = Deno.env.get("EVOLUTION_WEBHOOK_SECRET") || "";
-    const webhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-status-webhook?token=${webhookSecret}`;
+    const statusWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-status-webhook?token=${webhookSecret}`;
+    const messageWebhookUrl = `${SUPABASE_URL}/functions/v1/whatsapp-message-webhook?token=${webhookSecret}`;
 
     let result: unknown;
 
     switch (action) {
       case "instance-create": {
         if (!instance_name) throw new Error("instance_name is required");
-        const evoResult = await createInstance(instance_name, webhookUrl);
+        const evoResult = await createInstance(instance_name, statusWebhookUrl, messageWebhookUrl);
         const qrBase64 = evoResult?.qrcode?.base64 || null;
 
         const { data, error } = await serviceClient
