@@ -15,6 +15,8 @@ interface SendOptions {
   mediaType?: "image" | "video" | "audio" | "document";
   caption?: string;
   viewOnce?: boolean;
+  mime?: string;
+  fileName?: string;
 }
 
 export function useRealWhatsApp() {
@@ -71,6 +73,8 @@ export function useRealWhatsApp() {
         body.media_type = opts.mediaType ?? "image";
         if (opts.caption) body.caption = opts.caption;
         if (opts.viewOnce) body.view_once = "true";
+        if (opts.mime) body.mime = opts.mime;
+        if (opts.fileName) body.file_name = opts.fileName;
       } else {
         body.text = opts.text ?? "";
       }
