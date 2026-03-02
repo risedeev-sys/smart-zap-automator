@@ -43,39 +43,69 @@ async function evoFetch(path: string, options: RequestInit = {}) {
 
 async function setMessageWebhook(name: string, messageWebhookUrl: string) {
   console.log(`[setMessageWebhook] Setting webhook for ${name} -> ${messageWebhookUrl}`);
-  // Try the flat format first (most Evolution API versions)
-  try {
-    const r1 = await evoFetch(`/webhook/set/${name}`, {
-      method: "POST",
-      body: JSON.stringify({
-        url: messageWebhookUrl,
-        webhook_by_events: true,
-        webhook_base64: true,
-        events: ["MESSAGES_UPSERT", "messages.upsert"],
-      }),
-    });
-    console.log(`[setMessageWebhook] Flat format succeeded:`, JSON.stringify(r1).slice(0, 300));
-    return;
-  } catch (e1: any) {
-    console.warn(`[setMessageWebhook] Flat format failed: ${e1?.message}`);
-  }
-  // Try wrapped format
-  try {
-    const r2 = await evoFetch(`/webhook/set/${name}`, {
-      method: "POST",
-      body: JSON.stringify({
+
+  const events = ["MESSAGES_UPSERT"];
+  const attempts = [
+    {
+      label: "wrapped_snake_case",
+      body: {
         webhook: {
+          enabled: true,
           url: messageWebhookUrl,
           webhook_by_events: true,
           webhook_base64: true,
-          events: ["MESSAGES_UPSERT", "messages.upsert"],
+          events,
         },
-      }),
-    });
-    console.log(`[setMessageWebhook] Wrapped format succeeded:`, JSON.stringify(r2).slice(0, 300));
-  } catch (e2: any) {
-    console.error(`[setMessageWebhook] Both formats FAILED: ${e2?.message}`);
+      },
+    },
+    {
+      label: "wrapped_camel_case",
+      body: {
+        webhook: {
+          enabled: true,
+          url: messageWebhookUrl,
+          byEvents: true,
+          base64: true,
+          events,
+        },
+      },
+    },
+    {
+      label: "instance_wrapped",
+      body: {
+        instance: {
+          webhook: {
+            enabled: true,
+            url: messageWebhookUrl,
+            webhook_by_events: true,
+            webhook_base64: true,
+            events,
+          },
+        },
+      },
+    },
+  ];
+
+  let lastError: unknown = null;
+
+  for (const attempt of attempts) {
+    try {
+      const response = await evoFetch(`/webhook/set/${name}`, {
+        method: "POST",
+        body: JSON.stringify(attempt.body),
+      });
+      console.log(`[setMessageWebhook] ${attempt.label} succeeded:`, JSON.stringify(response).slice(0, 300));
+      return;
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[setMessageWebhook] ${attempt.label} failed: ${msg}`);
+    }
   }
+
+  throw new Error(
+    `[setMessageWebhook] All payload formats failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 async function createInstance(name: string, statusWebhookUrl: string, messageWebhookUrl: string) {

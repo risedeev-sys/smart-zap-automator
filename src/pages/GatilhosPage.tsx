@@ -125,15 +125,35 @@ export default function GatilhosPage() {
   };
 
   // CRUD
+  const normalizeConditions = (conditions: TriggerCondition[]): TriggerCondition[] => {
+    return conditions
+      .map((condition) => ({
+        ...condition,
+        keywords: condition.keywords.map((kw) => kw.trim()).filter(Boolean),
+      }))
+      .filter((condition) => condition.keywords.length > 0);
+  };
+
   const handleSaveAdd = async () => {
     if (!addName.trim()) return;
+
+    const normalizedConditions = normalizeConditions(addConditions);
+    if (normalizedConditions.length === 0) {
+      toast({
+        title: "Adicione ao menos uma condição",
+        description: "O gatilho precisa de pelo menos uma palavra-chave para disparar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     const payload = {
       name: addName.trim(),
       enabled: true,
-      conditions: addConditions.filter((c) => c.keywords.length > 0) as unknown as import("@/integrations/supabase/types").Json,
+      conditions: normalizedConditions as unknown as import("@/integrations/supabase/types").Json,
       funnel_id: addFunnelId || null,
       delay_seconds: 0,
       send_to_groups: false,
@@ -157,16 +177,32 @@ export default function GatilhosPage() {
 
   const handleSaveEdit = async () => {
     if (!selectedTrigger || !editName.trim()) return;
+
+    const normalizedConditions = normalizeConditions(editConditions);
+    if (normalizedConditions.length === 0) {
+      toast({
+        title: "Adicione ao menos uma condição",
+        description: "O gatilho precisa de pelo menos uma palavra-chave para disparar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const payload = {
       name: editName.trim(),
-      conditions: editConditions.filter((c) => c.keywords.length > 0) as unknown as import("@/integrations/supabase/types").Json,
+      conditions: normalizedConditions as unknown as import("@/integrations/supabase/types").Json,
       funnel_id: editFunnelId || null,
     };
     const { error } = await supabase.from("triggers").update(payload).eq("id", selectedTrigger.id);
     if (error) {
       toast({ title: "Erro ao atualizar", description: error.message, variant: "destructive" });
     } else {
-      setTriggers((prev) => prev.map((t) => t.id === selectedTrigger.id ? { ...t, name: payload.name, conditions: editConditions.filter((c) => c.keywords.length > 0), funnel_id: payload.funnel_id } : t));
+      setTriggers((prev) => prev.map((t) => t.id === selectedTrigger.id ? {
+        ...t,
+        name: payload.name,
+        conditions: normalizedConditions,
+        funnel_id: payload.funnel_id,
+      } : t));
       setEditModalOpen(false);
       toast({ title: "Gatilho atualizado!" });
     }
