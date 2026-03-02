@@ -343,6 +343,10 @@ export default function EspacoTestePage() {
             lastMessageSignature,
             lastMessageFromMe,
           };
+        }).filter((c) => {
+          // Only show allowed contacts
+          const allowedPhones = ["556192039398", "5511972734906"];
+          return allowedPhones.includes(c.phone);
         });
 
         if (normalizedContacts.length === 0) {
