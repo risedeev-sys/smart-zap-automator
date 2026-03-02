@@ -169,112 +169,131 @@
   async function sendFileViaDom(blob, fileName, mimeType) {
     try {
       console.log("[RiseZap] sendFileViaDom:", fileName, mimeType, blob.size, "bytes");
-      // Determine if it's a media (image/video) or document
       const isMedia = /^(image|video)\//.test(mimeType);
+      const isAudio = /^audio\//.test(mimeType);
 
-      // Click the attach button (the "+" or clip icon)
       const attachBtn =
         document.querySelector('#main span[data-icon="plus"]') ||
         document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
         document.querySelector('#main span[data-icon="clip"]') ||
         document.querySelector('span[data-icon="plus"]') ||
         document.querySelector('span[data-icon="attach-menu-plus"]');
+
       if (!attachBtn) {
         showToast("Botão de anexo não encontrado", true);
         return false;
       }
+
       const attachBtnEl = attachBtn.closest("button") || attachBtn;
       attachBtnEl.click();
-      // Wait for the attach menu to fully open
-      await sleep(800);
+      await sleep(700);
 
-      // Find the correct file input
-      // WhatsApp Web has multiple hidden inputs — media vs document
-      // After clicking attach, we need to click the right sub-option first
-      const isAudio = /^audio\//.test(mimeType);
-      
-      // Try to click the correct attach sub-menu item
       if (!isMedia && !isAudio) {
-        // For documents, click the document option in attach menu
-        const docOption = document.querySelector('span[data-icon="attach-document"]') ||
+        const docOption =
+          document.querySelector('span[data-icon="attach-document"]') ||
           document.querySelector('li[data-animate-dropdown-item="3"] button') ||
           document.querySelector('[aria-label*="Documento"]') ||
           document.querySelector('[aria-label*="Document"]');
+
         if (docOption) {
           const docBtn = docOption.closest("button") || docOption;
           docBtn.click();
-          await sleep(500);
         }
       } else {
-        // For media/audio, click the photos/videos option
-        const mediaOption = document.querySelector('span[data-icon="attach-image"]') ||
+        const mediaOption =
+          document.querySelector('span[data-icon="attach-image"]') ||
           document.querySelector('li[data-animate-dropdown-item="1"] button') ||
           document.querySelector('[aria-label*="Fotos"]') ||
           document.querySelector('[aria-label*="Photos"]');
+
         if (mediaOption) {
           const mediaBtn = mediaOption.closest("button") || mediaOption;
           mediaBtn.click();
-          await sleep(500);
         }
       }
 
-      const inputs = document.querySelectorAll('input[type="file"]');
-      let targetInput = null;
+      await sleep(500);
 
-      // Just use the last visible/available file input (WhatsApp shows the right one based on what we clicked)
-      for (const inp of inputs) {
-        if (inp.offsetParent !== null || inp.closest('[style*="display: none"]') === null) {
-          targetInput = inp;
-        }
-      }
-
-      // Fallback: just use the last available input
-      if (!targetInput && inputs.length > 0) {
-        targetInput = inputs[inputs.length - 1];
-      }
-
-      if (!targetInput) {
+      const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+      if (!allInputs.length) {
         showToast("Input de arquivo não encontrado", true);
         return false;
       }
 
-      // Create File and inject via DataTransfer
-      const file = new File([blob], fileName, { type: mimeType });
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      targetInput.files = dataTransfer.files;
-
-      // Dispatch change event
-      targetInput.dispatchEvent(new Event("change", { bubbles: true }));
-
-      // Wait for WhatsApp preview modal to load
-      await sleep(1500);
-
-      // Click the send button in the preview modal
-      try {
-        const previewSend = await waitForElement(
-          'span[data-icon="send"], div[role="button"][aria-label*="Enviar"], div[role="button"][aria-label*="Send"]',
-          5000
+      const getAccept = (input) => (input.getAttribute("accept") || "").toLowerCase();
+      const typeMatched = allInputs.filter((input) => {
+        const accept = getAccept(input);
+        if (!accept || accept === "*" || accept === "*/*") return true;
+        if (isMedia) return accept.includes("image") || accept.includes("video");
+        if (isAudio) return accept.includes("audio");
+        return (
+          accept.includes("application") ||
+          accept.includes("document") ||
+          accept.includes(".pdf") ||
+          accept.includes(".doc")
         );
-        // Find the send button that's in the modal (not in the footer)
-        const modalSendBtns = document.querySelectorAll('span[data-icon="send"]');
-        const lastSendBtn = modalSendBtns[modalSendBtns.length - 1];
-        if (lastSendBtn) {
-          const el1 = lastSendBtn.closest("button") || lastSendBtn;
-          el1.click();
-        } else if (previewSend) {
-          const el2 = previewSend.closest("button") || previewSend;
-          el2.click();
+      });
+
+      const candidates = (typeMatched.length ? typeMatched : allInputs).reverse();
+
+      const file = new File([blob], fileName, {
+        type: mimeType || blob.type || "application/octet-stream",
+      });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+
+      const findModalSendButton = () => {
+        const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
+        if (!modal) return null;
+
+        return (
+          modal.querySelector('button[aria-label*="Enviar"]') ||
+          modal.querySelector('button[aria-label*="Send"]') ||
+          modal.querySelector('div[role="button"][aria-label*="Enviar"]') ||
+          modal.querySelector('div[role="button"][aria-label*="Send"]') ||
+          modal.querySelector('span[data-icon="send"]')
+        );
+      };
+
+      let previewOpened = false;
+      for (const input of candidates) {
+        try {
+          input.files = dt.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          await sleep(600);
+          if (findModalSendButton()) {
+            previewOpened = true;
+            break;
+          }
+        } catch (e) {
+          console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
         }
-      } catch {
-        showToast("Timeout aguardando preview", true);
+      }
+
+      if (!previewOpened) {
+        showToast("Não consegui abrir preview do arquivo", true);
         return false;
       }
 
+      let modalSendBtn = null;
+      for (let i = 0; i < 15; i++) {
+        modalSendBtn = findModalSendButton();
+        if (modalSendBtn) break;
+        await sleep(300);
+      }
+
+      if (!modalSendBtn) {
+        showToast("Botão de enviar do preview não encontrado", true);
+        return false;
+      }
+
+      const sendEl = modalSendBtn.closest("button, [role='button']") || modalSendBtn;
+      sendEl.click();
       return true;
     } catch (err) {
       console.error("[RiseZap] sendFileViaDom error:", err);
-      showToast("Erro ao enviar arquivo", true);
+      showToast("Erro ao enviar arquivo: " + (err.message || "falha desconhecida"), true);
       return false;
     }
   }
