@@ -2,10 +2,14 @@
 (function () {
   "use strict";
 
+  const SUPABASE_URL = "https://txnhtcyjzohxkfwdfrvh.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR4bmh0Y3lqem9oeGtmd2RmcnZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyMDQ0MTEsImV4cCI6MjA4Nzc4MDQxMX0.vUFZYFr8OLaZczKjcj4I8HOpMLNNOX1yo3GhvwPuR9Y";
+
   let token = null;
   let instanceId = null;
+  let assets = { messages: [], audios: [], medias: [], documents: [], funnels: [] };
 
-  // --- Auth ---
+  // ─── Auth ──────────────────────────────────────────────
 
   async function loadAuth() {
     const stored = await chrome.storage.local.get(["risezap_access_token", "risezap_instance_id"]);
@@ -13,7 +17,156 @@
     instanceId = stored.risezap_instance_id || null;
   }
 
-  // --- Bar ---
+  // ─── Supabase Fetch ────────────────────────────────────
+
+  async function supaFetch(table, select) {
+    if (!token) return [];
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/${table}?select=${encodeURIComponent(select)}&order=created_at.desc`,
+        { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
+  }
+
+  async function loadAssets() {
+    const [messages, audios, medias, documents, funnels] = await Promise.all([
+      supaFetch("messages", "id,name,content"),
+      supaFetch("audios", "id,name,storage_path,mime"),
+      supaFetch("medias", "id,name,storage_path,mime"),
+      supaFetch("documents", "id,name,storage_path,mime"),
+      supaFetch("funnels", "id,name,favorite"),
+    ]);
+    assets = { messages, audios, medias, documents, funnels };
+  }
+
+  // ─── Phone Extraction ─────────────────────────────────
+
+  function getCurrentPhone() {
+    const header = document.querySelector("#main header");
+    if (!header) return null;
+    const span = header.querySelector("span[dir='auto']");
+    if (!span) return null;
+    const digits = span.textContent.trim().replace(/\D/g, "");
+    return digits.length >= 10 ? digits : null;
+  }
+
+  // ─── Send via Edge Function ────────────────────────────
+
+  async function sendMessage(opts) {
+    if (!token || !instanceId) {
+      showToast("Configure a instância no popup da extensão", true);
+      return false;
+    }
+    const phone = getCurrentPhone();
+    if (!phone) {
+      showToast("Abra um chat para enviar", true);
+      return false;
+    }
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ instance_id: instanceId, phone, ...opts }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        showToast(data.error || "Erro ao enviar", true);
+        return false;
+      }
+      showToast("Mensagem enviada! ✓");
+      return true;
+    } catch {
+      showToast("Erro de conexão", true);
+      return false;
+    }
+  }
+
+  function getPublicUrl(path) {
+    return `${SUPABASE_URL}/storage/v1/object/public/assets/${path}`;
+  }
+
+  // ─── Toast ─────────────────────────────────────────────
+
+  function showToast(msg, isError = false) {
+    const old = document.getElementById("risezap-toast");
+    if (old) old.remove();
+    const t = document.createElement("div");
+    t.id = "risezap-toast";
+    t.textContent = msg;
+    Object.assign(t.style, {
+      position: "fixed", bottom: "52px", left: "50%",
+      transform: "translateX(-50%)", padding: "8px 20px",
+      borderRadius: "8px", fontSize: "13px", fontWeight: "600",
+      zIndex: "100001", color: "white", fontFamily: "'Segoe UI', sans-serif",
+      background: isError ? "#dc2626" : "#00a884",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+    });
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  // ─── Modal ─────────────────────────────────────────────
+
+  function closeModal() {
+    const o = document.getElementById("risezap-overlay");
+    if (o) o.remove();
+  }
+
+  function openModal(title, bodyHTML) {
+    closeModal();
+    const overlay = document.createElement("div");
+    overlay.id = "risezap-overlay";
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+    overlay.innerHTML = `
+      <div id="risezap-modal">
+        <div class="rz-modal-header">
+          <h3>${title}</h3>
+          <button class="rz-modal-close">&times;</button>
+        </div>
+        <div class="rz-modal-body">${bodyHTML}</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector(".rz-modal-close").addEventListener("click", closeModal);
+    return overlay;
+  }
+
+  function showPreview(title, content, onSend) {
+    const html = `
+      <div class="rz-preview">
+        <div class="rz-bubble">${escapeHtml(content)}</div>
+        <div class="rz-actions">
+          <button class="rz-btn-cancel">Cancelar</button>
+          <button class="rz-btn-send">Enviar ✓</button>
+        </div>
+      </div>
+    `;
+    const overlay = openModal(title, html);
+    overlay.querySelector(".rz-btn-cancel").addEventListener("click", closeModal);
+    overlay.querySelector(".rz-btn-send").addEventListener("click", async () => {
+      const btn = overlay.querySelector(".rz-btn-send");
+      btn.textContent = "Enviando...";
+      btn.disabled = true;
+      const ok = await onSend();
+      if (ok) closeModal();
+      else { btn.textContent = "Enviar ✓"; btn.disabled = false; }
+    });
+  }
+
+  function escapeHtml(text) {
+    const d = document.createElement("div");
+    d.textContent = text || "";
+    return d.innerHTML;
+  }
+
+  // ─── Build Bar ─────────────────────────────────────────
 
   function createBar() {
     const old = document.getElementById("risezap-bar");
@@ -27,28 +180,101 @@
         <span class="rz-logo">⚡</span>
         <span class="rz-login-msg">Rise Zap — Faça login no popup da extensão</span>
       `;
-    } else {
-      bar.innerHTML = `<span class="rz-logo">⚡</span>`;
+      document.body.appendChild(bar);
+      return;
     }
+
+    // Logo
+    bar.innerHTML = `<span class="rz-logo">⚡</span>`;
+
+    // Funis — roxo
+    assets.funnels.forEach((f) => {
+      const btn = makeBtn("🎯", f.name, "rz-funnel");
+      btn.addEventListener("click", () => {
+        showPreview("Disparar Funil", `🎯 ${f.name}\n\nTodos os itens serão enviados em sequência.`, async () => {
+          showToast(`Funil "${f.name}" disparado`);
+          return true;
+        });
+      });
+      bar.appendChild(btn);
+    });
+
+    // Mensagens — verde
+    assets.messages.forEach((m) => {
+      const btn = makeBtn("💬", m.name, "rz-message");
+      btn.addEventListener("click", () => {
+        showPreview("Enviar Mensagem", m.content || m.name, () =>
+          sendMessage({ text: m.content || m.name })
+        );
+      });
+      bar.appendChild(btn);
+    });
+
+    // Áudios — ciano
+    assets.audios.forEach((a) => {
+      const btn = makeBtn("🎙", a.name, "rz-audio");
+      btn.addEventListener("click", () => {
+        if (!a.storage_path) return showToast("Áudio sem arquivo", true);
+        const url = getPublicUrl(a.storage_path);
+        showPreview("Enviar Áudio", `🎙 ${a.name}`, () =>
+          sendMessage({ media_url: url, media_type: "audio", mime: a.mime })
+        );
+      });
+      bar.appendChild(btn);
+    });
+
+    // Mídias — amarelo
+    assets.medias.forEach((m) => {
+      const btn = makeBtn("🖼", m.name, "rz-media");
+      btn.addEventListener("click", () => {
+        if (!m.storage_path) return showToast("Mídia sem arquivo", true);
+        const url = getPublicUrl(m.storage_path);
+        const isVideo = (m.mime || "").startsWith("video");
+        showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, () =>
+          sendMessage({ media_url: url, media_type: isVideo ? "video" : "image", mime: m.mime })
+        );
+      });
+      bar.appendChild(btn);
+    });
+
+    // Documentos — rosa/magenta
+    assets.documents.forEach((d) => {
+      const btn = makeBtn("📄", d.name, "rz-document");
+      btn.addEventListener("click", () => {
+        if (!d.storage_path) return showToast("Documento sem arquivo", true);
+        const url = getPublicUrl(d.storage_path);
+        showPreview("Enviar Documento", `📄 ${d.name}`, () =>
+          sendMessage({ media_url: url, media_type: "document", mime: d.mime, file_name: d.name })
+        );
+      });
+      bar.appendChild(btn);
+    });
 
     document.body.appendChild(bar);
   }
 
-  // --- Init ---
+  function makeBtn(icon, label, cls) {
+    const btn = document.createElement("button");
+    btn.className = `rz-btn ${cls}`;
+    btn.innerHTML = `<span class="rz-icon">${icon}</span>${escapeHtml(label)}`;
+    return btn;
+  }
+
+  // ─── Init ──────────────────────────────────────────────
 
   async function init() {
     await loadAuth();
+    if (token) await loadAssets();
     createBar();
 
-    // React to login/logout from popup
     chrome.storage.onChanged.addListener(async (changes) => {
       if (changes.risezap_access_token || changes.risezap_instance_id) {
         await loadAuth();
+        if (token) await loadAssets();
         createBar();
       }
     });
 
-    // Re-inject if WhatsApp removes it
     setInterval(() => {
       if (!document.getElementById("risezap-bar")) createBar();
     }, 3000);
