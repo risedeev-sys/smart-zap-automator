@@ -114,6 +114,8 @@ Deno.serve(async (req) => {
       view_once,
       viewOnce,
       viewonce,
+      mime: clientMime,
+      file_name,
     } = body;
 
     if (!instance_id || !phone) {
@@ -144,6 +146,8 @@ Deno.serve(async (req) => {
         audio: "audio/mpeg",
         document: "application/pdf",
       };
+      // Use client-provided mime if available, otherwise fall back to map
+      const mimetype = clientMime || mimetypeMap[mediatype];
 
       let isViewOnce =
         parseBooleanFlag(view_once) ||
@@ -180,18 +184,19 @@ Deno.serve(async (req) => {
           body: JSON.stringify(audioBody),
         });
       } else {
-        const mimetype = mimetypeMap[mediatype];
         const sendBody: Record<string, unknown> = {
           number: phone,
           mediatype,
           media: media_url,
           mimetype,
           caption: caption || "",
+          ...(file_name ? { fileName: file_name } : {}),
           mediaMessage: {
             mediaType: mediatype,
             mimetype,
             caption: caption || "",
             media: media_url,
+            ...(file_name ? { fileName: file_name } : {}),
             ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
           },
           options: {
@@ -200,7 +205,7 @@ Deno.serve(async (req) => {
           ...viewOnceCompat,
         };
 
-        console.log(`[whatsapp-send] media_type=${mediatype} view_once=${isViewOnce}`);
+        console.log(`[whatsapp-send] media_type=${mediatype} mime=${mimetype} fileName=${file_name || "(auto)"} view_once=${isViewOnce}`);
 
         result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
           method: "POST",

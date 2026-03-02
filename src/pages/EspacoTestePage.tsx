@@ -699,6 +699,8 @@ export default function EspacoTestePage() {
             mediaType: mediaTypeMap[item.type] ?? "image",
             caption: content || undefined,
             viewOnce: isViewOnce,
+            mime: mime || undefined,
+            fileName: assetName || undefined,
           });
         } else if (content) {
           await realWA.sendRealMessage({ text: content });
@@ -822,6 +824,8 @@ export default function EspacoTestePage() {
         mediaType: mediaTypeMap[asset.type] ?? "image",
         caption: content || metadata?.caption || undefined,
         viewOnce: isViewOnce,
+        mime: mime || undefined,
+        fileName: asset.name || undefined,
       });
     } else if (realWA.isReady && content) {
       await realWA.sendRealMessage({ text: content });
