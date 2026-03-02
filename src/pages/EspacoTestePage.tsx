@@ -58,6 +58,7 @@ interface Contact {
   isGroup?: boolean;
   profilePicUrl?: string;
   lastTimestamp?: number;
+  lastMessageSignature?: string;
 }
 
 // Generate consistent color from name/phone
@@ -100,6 +101,26 @@ function formatSmartTime(timestamp: number | string | undefined): string {
     return date.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
   }
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function toUnixSeconds(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 9999999999 ? Math.floor(value / 1000) : value;
+  }
+
+  if (typeof value === "string") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return asNumber > 9999999999 ? Math.floor(asNumber / 1000) : asNumber;
+    }
+
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return Math.floor(parsed / 1000);
+    }
+  }
+
+  return 0;
 }
 
 function isTruthyFlag(value: unknown): boolean {
@@ -283,7 +304,7 @@ export default function EspacoTestePage() {
 
     let cancelled = false;
     let initialSyncDone = false;
-    const lastSeenTimestampByPhone = new Map<string, number>();
+    const lastSeenSignatureByPhone = new Map<string, string>();
 
     void supabase.functions
       .invoke("whatsapp-manage", {
@@ -306,8 +327,10 @@ export default function EspacoTestePage() {
         const normalizedContacts: Contact[] = ((data as any[]) ?? []).map((chat: any) => {
           const remoteJid = chat.remoteJid || "";
           const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
-          const timestamp = Number(chat.timestamp || 0);
+          const timestamp = toUnixSeconds(chat.timestamp) || toUnixSeconds(chat.updatedAt);
           const stableId = `real-${phone || remoteJid || crypto.randomUUID()}`;
+          const lastMessage = chat.lastMessage || "";
+          const lastMessageSignature = `${lastMessage}::${timestamp}`;
 
           return {
             id: stableId,
@@ -315,12 +338,13 @@ export default function EspacoTestePage() {
             phone,
             avatar: "",
             status: chat.isGroup ? "grupo" : "",
-            lastMessage: chat.lastMessage || "",
+            lastMessage,
             lastTime: formatSmartTime(timestamp),
             unread: chat.unreadCount || 0,
             isGroup: chat.isGroup || false,
             profilePicUrl: chat.profilePicUrl || "",
             lastTimestamp: timestamp,
+            lastMessageSignature,
           };
         });
 
@@ -343,15 +367,17 @@ export default function EspacoTestePage() {
 
           const mergedContacts: Contact[] = normalizedContacts.map((incoming) => {
             const previous = prevById.get(incoming.id);
-            const previousTimestamp = previous?.lastTimestamp ?? lastSeenTimestampByPhone.get(incoming.phone) ?? 0;
+            const previousTimestamp = previous?.lastTimestamp ?? 0;
             const currentTimestamp = incoming.lastTimestamp ?? 0;
+            const previousSignature = previous?.lastMessageSignature ?? lastSeenSignatureByPhone.get(incoming.phone) ?? "";
+            const currentSignature = incoming.lastMessageSignature ?? `${incoming.lastMessage || ""}::${currentTimestamp}`;
             const hasNewMessage =
               initialSyncDone &&
               !!incoming.lastMessage &&
-              currentTimestamp > previousTimestamp;
+              currentSignature !== previousSignature;
 
-            if (incoming.phone && currentTimestamp > 0) {
-              lastSeenTimestampByPhone.set(incoming.phone, currentTimestamp);
+            if (incoming.phone && currentSignature) {
+              lastSeenSignatureByPhone.set(incoming.phone, currentSignature);
             }
 
             if (hasNewMessage) {
@@ -372,6 +398,7 @@ export default function EspacoTestePage() {
                 ? (previous?.unread ?? 0) + (incoming.id === activeContactIdRef.current ? 0 : 1)
                 : (incoming.unread ?? previous?.unread ?? 0),
               lastTimestamp: Math.max(previousTimestamp, currentTimestamp),
+              lastMessageSignature: currentSignature || previous?.lastMessageSignature,
             };
           });
 
@@ -388,11 +415,14 @@ export default function EspacoTestePage() {
 
               incomingMessages.forEach((incomingMsg) => {
                 const contactHistory = nextHistory[incomingMsg.contactId] ?? [welcomeMessage(incomingMsg.contactName)];
-                const messageDate = new Date(
-                  incomingMsg.timestamp > 9999999999
-                    ? incomingMsg.timestamp
-                    : incomingMsg.timestamp * 1000
-                );
+                const messageDate =
+                  incomingMsg.timestamp > 0
+                    ? new Date(
+                        incomingMsg.timestamp > 9999999999
+                          ? incomingMsg.timestamp
+                          : incomingMsg.timestamp * 1000
+                      )
+                    : new Date();
 
                 const alreadyExists = contactHistory.some(
                   (m) =>
@@ -484,29 +514,38 @@ export default function EspacoTestePage() {
 
           const remoteJid = msg.remote_jid || "";
           const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+          const normalizedPhone = phone.replace(/\D/g, "");
           const senderName = msg.sender_name || phone;
           const isGroup = remoteJid.endsWith("@g.us");
           const messageText = msg.message_text || "";
           const messageId = msg.id || crypto.randomUUID();
           const messageTimestamp = new Date(msg.created_at || Date.now());
+          const messageUnixTimestamp =
+            toUnixSeconds(msg.timestamp || msg.created_at) ||
+            Math.floor(messageTimestamp.getTime() / 1000);
+          const messageSignature = `${messageText}::${messageUnixTimestamp}`;
 
           setContacts((prevContacts) => {
-            let matchingContact = prevContacts.find((c) => c.phone === phone);
+            let matchingContact = prevContacts.find(
+              (c) => c.phone.replace(/\D/g, "") === normalizedPhone
+            );
 
             // If contact doesn't exist yet, create it dynamically
             if (!matchingContact) {
-              const newContactId = `real-dynamic-${phone}`;
+              const contactPhone = normalizedPhone || phone;
+              const newContactId = `real-dynamic-${contactPhone}`;
               const newContact: Contact = {
                 id: newContactId,
                 name: senderName,
-                phone,
+                phone: contactPhone,
                 avatar: "",
                 status: isGroup ? "grupo" : "",
                 lastMessage: messageText,
-                lastTime: formatSmartTime(Date.now() / 1000),
+                lastTime: formatSmartTime(messageUnixTimestamp),
                 unread: 1,
                 isGroup,
-                lastTimestamp: Math.floor(messageTimestamp.getTime() / 1000),
+                lastTimestamp: messageUnixTimestamp,
+                lastMessageSignature: messageSignature,
               };
 
               // Add welcome + incoming message to chat history
@@ -546,9 +585,10 @@ export default function EspacoTestePage() {
                 ? {
                     ...c,
                     lastMessage: messageText,
-                    lastTime: formatSmartTime(Date.now() / 1000),
+                    lastTime: formatSmartTime(messageUnixTimestamp),
                     unread: (c.unread ?? 0) + (c.id === activeContactIdRef.current ? 0 : 1),
-                    lastTimestamp: Math.floor(messageTimestamp.getTime() / 1000),
+                    lastTimestamp: messageUnixTimestamp,
+                    lastMessageSignature: messageSignature,
                   }
                 : c
             );
