@@ -309,22 +309,37 @@ Deno.serve(async (req) => {
             const tb = b.lastMsgTimestamp || b.conversationTimestamp || b.updatedAt || 0;
             return (typeof tb === "number" ? tb : 0) - (typeof ta === "number" ? ta : 0);
           })
-          .slice(0, 10);
+          .slice(0, 20);
 
         console.log(`[fetch-chats] ${chatArray.length} chats total, ${sorted.length} with valid JIDs`);
 
         result = sorted.map((c: any) => {
           const jid = c._jid;
           const phone = jid.split("@")[0];
-          const displayName = nameMap[jid] || c.name || c.pushName || c.contact?.pushName || phone || "Desconhecido";
+          const isGroup = jid.endsWith("@g.us");
+          const displayName = isGroup
+            ? (c.subject || c.name || nameMap[jid] || phone)
+            : (nameMap[jid] || c.name || c.pushName || c.contact?.pushName || phone || "Desconhecido");
+
+          // Extract last message with sender prefix for groups
+          let lastMsg = c.lastMessage?.message?.conversation
+            || c.lastMessage?.message?.extendedTextMessage?.text
+            || c.lastMessage?.body || "";
+          if (isGroup && lastMsg && c.lastMessage?.key?.participant) {
+            const senderJid = c.lastMessage.key.participant;
+            const senderName = nameMap[senderJid] || senderJid.split("@")[0];
+            const shortName = senderName.split(" ")[0];
+            lastMsg = `${shortName}: ${lastMsg}`;
+          }
+
           return {
             remoteJid: jid,
             name: displayName,
-            lastMessage: c.lastMessage?.message?.conversation
-              || c.lastMessage?.message?.extendedTextMessage?.text
-              || c.lastMessage?.body || "",
+            lastMessage: lastMsg,
             timestamp: c.lastMsgTimestamp || c.conversationTimestamp || 0,
-            isGroup: jid.endsWith("@g.us"),
+            isGroup,
+            unreadCount: c.unreadCount ?? c.unreadMessages ?? 0,
+            profilePicUrl: c.profilePictureUrl || c.profilePicUrl || "",
           };
         });
         break;
