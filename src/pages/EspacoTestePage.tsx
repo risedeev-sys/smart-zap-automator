@@ -340,39 +340,78 @@ export default function EspacoTestePage() {
           const msg = payload.new as any;
           const remoteJid = msg.remote_jid || "";
           const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-          
-          // Find the matching contact by phone
+          const senderName = msg.sender_name || phone;
+          const isGroup = remoteJid.endsWith("@g.us");
+          const messageText = msg.message_text || "";
+          const messageId = msg.id || crypto.randomUUID();
+          const messageTimestamp = new Date(msg.created_at || Date.now());
+
           setContacts((prevContacts) => {
-            const matchingContact = prevContacts.find((c) => c.phone === phone);
-            if (matchingContact) {
-              // Add message to chat history
+            let matchingContact = prevContacts.find((c) => c.phone === phone);
+
+            // If contact doesn't exist yet, create it dynamically
+            if (!matchingContact) {
+              const newContactId = `real-dynamic-${phone}`;
+              const newContact: Contact = {
+                id: newContactId,
+                name: senderName,
+                phone,
+                avatar: "",
+                status: isGroup ? "grupo" : "",
+                lastMessage: messageText,
+                lastTime: formatSmartTime(Date.now() / 1000),
+                unread: 1,
+                isGroup,
+              };
+
+              // Add welcome + incoming message to chat history
               setChatHistory((prev) => ({
                 ...prev,
-                [matchingContact.id]: [
-                  ...(prev[matchingContact.id] ?? []),
+                [newContactId]: [
+                  welcomeMessage(senderName),
                   {
-                    id: msg.id || crypto.randomUUID(),
-                    text: msg.message_text || "",
+                    id: messageId,
+                    text: messageText,
                     type: "received" as const,
-                    timestamp: new Date(msg.created_at || Date.now()),
+                    timestamp: messageTimestamp,
                   },
                 ],
               }));
 
-              // Update last message and unread count
-              return prevContacts.map((c) =>
-                c.id === matchingContact.id
-                  ? {
-                      ...c,
-                      lastMessage: msg.message_text || "",
-                      lastTime: formatSmartTime(Date.now() / 1000),
-                      unread: (c.unread ?? 0) + (c.id === activeContactId ? 0 : 1),
-                    }
-                  : c
-              );
+              return [newContact, ...prevContacts];
             }
-            return prevContacts;
+
+            // Contact exists — add message to chat history
+            setChatHistory((prev) => ({
+              ...prev,
+              [matchingContact!.id]: [
+                ...(prev[matchingContact!.id] ?? []),
+                {
+                  id: messageId,
+                  text: messageText,
+                  type: "received" as const,
+                  timestamp: messageTimestamp,
+                },
+              ],
+            }));
+
+            // Update last message and unread count
+            return prevContacts.map((c) =>
+              c.id === matchingContact!.id
+                ? {
+                    ...c,
+                    lastMessage: messageText,
+                    lastTime: formatSmartTime(Date.now() / 1000),
+                    unread: (c.unread ?? 0) + (c.id === activeContactId ? 0 : 1),
+                  }
+                : c
+            );
           });
+
+          // Also process triggers for incoming messages
+          if (messageText) {
+            processIncomingMessage(messageText);
+          }
         }
       )
       .subscribe();
