@@ -18,7 +18,7 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
   console.log(`[evoFetch] ${options.method || "GET"} ${url}`);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     const res = await fetch(url, {
       ...options,
@@ -103,6 +103,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    const body = await req.json();
     const {
       instance_id,
       phone,
@@ -113,7 +114,7 @@ Deno.serve(async (req) => {
       view_once,
       viewOnce,
       viewonce,
-    } = await req.json();
+    } = body;
 
     if (!instance_id || !phone) {
       throw new Error("instance_id and phone are required");
@@ -230,14 +231,13 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error("whatsapp-send error:", err);
 
-    // Log failure (best-effort, don't let logging errors mask the original)
+    // Log failure (best-effort)
     try {
       const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-      const body = await req.clone().json().catch(() => ({}));
       await supabaseAdmin.from("whatsapp_message_logs").insert({
-        user_id: body?.user_id_fallback || "00000000-0000-0000-0000-000000000000",
-        instance_id: body?.instance_id || "00000000-0000-0000-0000-000000000000",
-        phone: body?.phone || "unknown",
+        user_id: "00000000-0000-0000-0000-000000000000",
+        instance_id: "00000000-0000-0000-0000-000000000000",
+        phone: "unknown",
         status: "failed",
         error: err instanceof Error ? err.message : "Internal error",
       });
