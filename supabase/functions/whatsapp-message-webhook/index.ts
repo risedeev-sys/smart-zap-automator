@@ -194,7 +194,26 @@ async function sendFunnelItem(
       document: "application/pdf",
     };
 
-    const metadata = (asset as any).metadata || {};
+    const isViewOnce = metadata.singleView === true;
+
+    if (mediaType === "audio") {
+      const audioBody: Record<string, unknown> = {
+        number: phone,
+        audio: signedData.signedUrl,
+      };
+      if (isViewOnce) {
+        audioBody.viewOnce = true;
+        audioBody.viewonce = true;
+        audioBody.view_once = true;
+        audioBody.options = { viewOnce: true, view_once: true };
+      }
+      await evoFetch(`/message/sendWhatsAppAudio/${instanceName}`, {
+        method: "POST",
+        body: JSON.stringify(audioBody),
+      });
+      return;
+    }
+
     const sendBody: Record<string, unknown> = {
       number: phone,
       mediatype: mediaType,
@@ -203,8 +222,11 @@ async function sendFunnelItem(
       caption: metadata.caption || "",
       fileName: asset.name || undefined,
     };
-    if (metadata.singleView === true) {
+    if (isViewOnce) {
       sendBody.viewOnce = true;
+      sendBody.viewonce = true;
+      sendBody.view_once = true;
+      sendBody.options = { viewOnce: true, view_once: true };
     }
 
     await evoFetch(`/message/sendMedia/${instanceName}`, {

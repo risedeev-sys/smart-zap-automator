@@ -97,20 +97,47 @@ Deno.serve(async (req) => {
         audio: "audio/mpeg",
         document: "application/pdf",
       };
-      const sendBody: Record<string, unknown> = {
-        number: phone,
-        mediatype,
-        media: media_url,
-        mimetype: mimetypeMap[mediatype],
-        caption: caption || "",
-      };
-      if (view_once === "true" || view_once === true) {
-        sendBody.viewOnce = true;
+
+      const isViewOnce = view_once === "true" || view_once === true;
+
+      if (mediatype === "audio") {
+        const audioBody: Record<string, unknown> = {
+          number: phone,
+          audio: media_url,
+        };
+        if (isViewOnce) {
+          audioBody.viewOnce = true;
+          audioBody.viewonce = true;
+          audioBody.view_once = true;
+          audioBody.options = { viewOnce: true, view_once: true };
+        }
+        result = await evoFetch(`/message/sendWhatsAppAudio/${inst.instance_name}`, {
+          method: "POST",
+          body: JSON.stringify(audioBody),
+        });
+      } else {
+        const sendBody: Record<string, unknown> = {
+          number: phone,
+          mediatype,
+          media: media_url,
+          mimetype: mimetypeMap[mediatype],
+          caption: caption || "",
+        };
+        if (isViewOnce) {
+          // Compatibility: different Evolution API builds may expect different keys
+          sendBody.viewOnce = true;
+          sendBody.viewonce = true;
+          sendBody.view_once = true;
+          sendBody.options = { viewOnce: true, view_once: true };
+        }
+
+        console.log(`[whatsapp-send] media_type=${mediatype} view_once=${isViewOnce}`);
+
+        result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
+          method: "POST",
+          body: JSON.stringify(sendBody),
+        });
       }
-      result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
-        method: "POST",
-        body: JSON.stringify(sendBody),
-      });
     } else {
       result = await evoFetch(`/message/sendText/${inst.instance_name}`, {
         method: "POST",
