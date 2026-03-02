@@ -256,43 +256,54 @@ Deno.serve(async (req) => {
           .single();
         if (!inst) throw new Error("Instance not found");
 
-        const chats = await evoFetch(`/chat/findChats/${inst.instance_name}`, {
-          method: "POST",
-          body: JSON.stringify({ where: {} }),
-        });
+        // Fetch chats AND contacts in parallel for best data
+        const [chats, contactsRaw] = await Promise.all([
+          evoFetch(`/chat/findChats/${inst.instance_name}`, {
+            method: "POST",
+            body: JSON.stringify({ where: {} }),
+          }),
+          evoFetch(`/chat/findContacts/${inst.instance_name}`, {
+            method: "POST",
+            body: JSON.stringify({ where: {} }),
+          }).catch(() => []),
+        ]);
 
-        // Log first chat to understand structure
         const chatArray = Array.isArray(chats) ? chats : [];
+        const contactArray = Array.isArray(contactsRaw) ? contactsRaw : [];
+
+        // Log raw structure for debugging
         if (chatArray.length > 0) {
-          console.log("[fetch-chats] Sample chat keys:", Object.keys(chatArray[0]));
-          console.log("[fetch-chats] Sample chat:", JSON.stringify(chatArray[0]).slice(0, 500));
+          console.log("[fetch-chats] Chat keys:", Object.keys(chatArray[0]));
+          console.log("[fetch-chats] Chat sample:", JSON.stringify(chatArray[0]).slice(0, 800));
+        }
+        if (contactArray.length > 0) {
+          console.log("[fetch-chats] Contact keys:", Object.keys(contactArray[0]));
+          console.log("[fetch-chats] Contact sample:", JSON.stringify(contactArray[0]).slice(0, 500));
         }
 
-        // Try to find the actual WhatsApp JID from various possible fields
+        // Build name lookup from contacts endpoint (remoteJid -> name)
+        const nameMap: Record<string, string> = {};
+        for (const ct of contactArray) {
+          const jid = ct.remoteJid || "";
+          const name = ct.pushName || ct.name || "";
+          if (jid && name) nameMap[jid] = name;
+        }
+        console.log(`[fetch-chats] Name map: ${Object.keys(nameMap).length} entries`);
+
+        // Extract WhatsApp JID from chat object
         const getJid = (c: any): string => {
-          // Check common field names for the WhatsApp JID
-          const candidates = [c.remoteJid, c.jid, c.chatId, c.id];
-          for (const val of candidates) {
+          for (const val of [c.remoteJid, c.jid, c.chatId, c.id]) {
             if (typeof val === "string" && (val.endsWith("@s.whatsapp.net") || val.endsWith("@g.us"))) {
               return val;
             }
           }
-          // Check nested objects
           if (c.contact?.remoteJid) return c.contact.remoteJid;
-          if (c.chat?.remoteJid) return c.chat.remoteJid;
-          // Fallback: return whatever id we have
-          return c.remoteJid || c.id || "";
+          return "";
         };
 
-        // Sort by last message timestamp desc, take 10
         const sorted = chatArray
           .map((c: any) => ({ ...c, _jid: getJid(c) }))
-          .filter((c: any) => {
-            const jid = c._jid;
-            return jid && !jid.endsWith("@newsletter") && (
-              jid.endsWith("@s.whatsapp.net") || jid.endsWith("@g.us")
-            );
-          })
+          .filter((c: any) => c._jid && !c._jid.endsWith("@newsletter"))
           .sort((a: any, b: any) => {
             const ta = a.lastMsgTimestamp || a.conversationTimestamp || a.updatedAt || 0;
             const tb = b.lastMsgTimestamp || b.conversationTimestamp || b.updatedAt || 0;
@@ -300,18 +311,22 @@ Deno.serve(async (req) => {
           })
           .slice(0, 10);
 
-        console.log(`[fetch-chats] Found ${chatArray.length} total, ${sorted.length} with valid JIDs`);
+        console.log(`[fetch-chats] ${chatArray.length} chats total, ${sorted.length} with valid JIDs`);
 
-        result = sorted.map((c: any) => ({
-          remoteJid: c._jid,
-          name: c.name || c.pushName || c.contact?.pushName || c._jid?.split("@")[0] || "Desconhecido",
-          lastMessage: c.lastMessage?.message?.conversation
-            || c.lastMessage?.message?.extendedTextMessage?.text
-            || c.lastMessage?.body
-            || "",
-          timestamp: c.lastMsgTimestamp || c.conversationTimestamp || 0,
-          isGroup: c._jid?.endsWith("@g.us") || false,
-        }));
+        result = sorted.map((c: any) => {
+          const jid = c._jid;
+          const phone = jid.split("@")[0];
+          const displayName = nameMap[jid] || c.name || c.pushName || c.contact?.pushName || phone || "Desconhecido";
+          return {
+            remoteJid: jid,
+            name: displayName,
+            lastMessage: c.lastMessage?.message?.conversation
+              || c.lastMessage?.message?.extendedTextMessage?.text
+              || c.lastMessage?.body || "",
+            timestamp: c.lastMsgTimestamp || c.conversationTimestamp || 0,
+            isGroup: jid.endsWith("@g.us"),
+          };
+        });
         break;
       }
 
