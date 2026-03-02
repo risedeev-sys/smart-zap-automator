@@ -406,10 +406,13 @@ export default function EspacoTestePage() {
             };
           });
 
-          // Keep any extra dynamic chats that are not in top 20 from API
+          // Keep any extra dynamic chats that are not in top 20 from API (only allowed phones)
+          const allowedPhonesSet = new Set(["556192039398", "5511972734906"]);
           prevContacts.forEach((contact) => {
             if (contact.id.startsWith("real-") && !seenIds.has(contact.id)) {
-              mergedContacts.push(contact);
+              if (allowedPhonesSet.has(contact.phone.replace(/\D/g, ""))) {
+                mergedContacts.push(contact);
+              }
             }
           });
 
