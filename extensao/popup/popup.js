@@ -18,50 +18,12 @@ async function supabaseLogin(email, password) {
   return res.json();
 }
 
-async function fetchInstances(token) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/whatsapp_instances?status=eq.open&select=id,instance_name,phone_number`,
-    { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` } }
-  );
-  return res.json();
-}
-
 // --- Views ---
 
-async function showLoggedIn(email, token, savedInstanceId) {
+function showLoggedIn(email) {
   document.getElementById("login-view").classList.add("hidden");
   document.getElementById("logged-view").classList.remove("hidden");
   document.getElementById("user-email").textContent = email;
-
-  try {
-    const instances = await fetchInstances(token);
-    const select = document.getElementById("instance-select");
-    select.innerHTML = "";
-
-    if (!instances.length) {
-      select.innerHTML = '<option value="">Nenhuma instância conectada</option>';
-      return;
-    }
-
-    instances.forEach((inst) => {
-      const opt = document.createElement("option");
-      opt.value = inst.id;
-      opt.textContent = inst.instance_name + (inst.phone_number ? ` (${inst.phone_number})` : "");
-      select.appendChild(opt);
-    });
-
-    if (savedInstanceId) select.value = savedInstanceId;
-
-    select.addEventListener("change", () => {
-      chrome.storage.local.set({ risezap_instance_id: select.value });
-    });
-
-    if (!savedInstanceId && instances.length) {
-      chrome.storage.local.set({ risezap_instance_id: instances[0].id });
-    }
-  } catch {
-    showStatus("status2", "Erro ao carregar instâncias", true);
-  }
 }
 
 // --- Events ---
@@ -88,7 +50,7 @@ document.getElementById("btn-login").addEventListener("click", async () => {
     });
 
     showStatus("status", "Login realizado!", false);
-    showLoggedIn(data.user?.email || email, data.access_token, null);
+    showLoggedIn(data.user?.email || email);
   } catch {
     showStatus("status", "Erro de conexão", true);
   }
@@ -97,7 +59,7 @@ document.getElementById("btn-login").addEventListener("click", async () => {
 document.getElementById("btn-logout").addEventListener("click", async () => {
   await chrome.storage.local.remove([
     "risezap_access_token", "risezap_refresh_token",
-    "risezap_user_email", "risezap_user_id", "risezap_instance_id",
+    "risezap_user_email", "risezap_user_id",
   ]);
   document.getElementById("login-view").classList.remove("hidden");
   document.getElementById("logged-view").classList.add("hidden");
@@ -108,9 +70,9 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
 
 (async () => {
   const stored = await chrome.storage.local.get([
-    "risezap_access_token", "risezap_user_email", "risezap_instance_id",
+    "risezap_access_token", "risezap_user_email",
   ]);
   if (stored.risezap_access_token) {
-    showLoggedIn(stored.risezap_user_email, stored.risezap_access_token, stored.risezap_instance_id);
+    showLoggedIn(stored.risezap_user_email);
   }
 })();
