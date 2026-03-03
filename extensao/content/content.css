@@ -1,4 +1,4 @@
-/* Rise Zap — Barra inferior no WhatsApp Web */
+/* Rise Zap — Barra inferior no WhatsApp Web (estilo ZapVoice) */
 
 #risezap-bar {
   position: fixed;
@@ -7,32 +7,34 @@
   z-index: 99999;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  background: #1a1a2e;
-  border-top: 1px solid #2a3942;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(10, 10, 20, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #2a3942 transparent;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
   font-family: 'Segoe UI', sans-serif;
   box-sizing: border-box;
 }
 
-#risezap-bar::-webkit-scrollbar { height: 3px; }
-#risezap-bar::-webkit-scrollbar-thumb { background: #2a3942; border-radius: 2px; }
+#risezap-bar::-webkit-scrollbar { height: 4px; }
+#risezap-bar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
 #risezap-bar .rz-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  min-width: 26px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
   border-radius: 50%;
   background: #00a884;
   color: #111b21;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: bold;
   flex-shrink: 0;
   cursor: default;
@@ -43,40 +45,42 @@
   font-size: 13px;
 }
 
-/* Botões */
+/* Botões — estilo ZapVoice: altos, largos, semi-transparentes */
 #risezap-bar .rz-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: none;
-  border-radius: 14px;
-  font-size: 11px;
-  font-weight: 600;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
   font-family: 'Segoe UI', sans-serif;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: filter 0.15s, transform 0.1s;
+  transition: all 0.15s ease;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.5px;
+  line-height: 1;
 }
 
 #risezap-bar .rz-btn:hover {
-  filter: brightness(1.15);
+  filter: brightness(1.25);
   transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 #risezap-bar .rz-btn:active { transform: translateY(0); }
 
-#risezap-bar .rz-btn .rz-icon { font-size: 12px; }
+#risezap-bar .rz-btn .rz-icon { font-size: 14px; }
 
-/* Cores por tipo — inspirado no ZapVoice */
-#risezap-bar .rz-btn.rz-funnel   { background: #7c3aed; color: #e0ff00; }
-#risezap-bar .rz-btn.rz-message  { background: #00a884; color: white; }
-#risezap-bar .rz-btn.rz-audio    { background: #d97706; color: white; }
-#risezap-bar .rz-btn.rz-media    { background: #0891b2; color: white; }
-#risezap-bar .rz-btn.rz-document { background: #c026d3; color: white; }
+/* Cores por tipo — semi-transparente estilo ZapVoice */
+#risezap-bar .rz-btn.rz-funnel   { background: rgba(124, 58, 237, 0.55); color: #e0ff00; border-color: rgba(124, 58, 237, 0.4); }
+#risezap-bar .rz-btn.rz-message  { background: rgba(0, 168, 132, 0.5); color: #fff; border-color: rgba(0, 168, 132, 0.35); }
+#risezap-bar .rz-btn.rz-audio    { background: rgba(6, 182, 212, 0.5); color: #00e5ff; border-color: rgba(6, 182, 212, 0.35); }
+#risezap-bar .rz-btn.rz-media    { background: rgba(217, 119, 6, 0.5); color: #fbbf24; border-color: rgba(217, 119, 6, 0.35); }
+#risezap-bar .rz-btn.rz-document { background: rgba(192, 38, 211, 0.5); color: #f0abfc; border-color: rgba(192, 38, 211, 0.35); }
 
 /* Overlay modal */
 #risezap-overlay {
