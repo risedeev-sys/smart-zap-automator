@@ -463,7 +463,9 @@
 
         if (!ok) {
           console.error(`[RiseZap] Funnel item ${i + 1}/${items.length} FAILED: ${asset.resolvedType}`);
-          showToast(`Falha no item ${i + 1}. Funil interrompido.`, true);
+          if (!document.getElementById("risezap-toast")) {
+            showToast(`Falha no item ${i + 1}. Funil interrompido.`, true);
+          }
           return false;
         }
 

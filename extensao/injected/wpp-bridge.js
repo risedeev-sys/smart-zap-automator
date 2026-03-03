@@ -96,15 +96,16 @@
           respond(false, "Failed to fetch file: HTTP " + res.status);
           return;
         }
-        const blob = await res.blob();
-        // Convert blob to base64 data URI for wa-js compatibility
-        content = await blobToBase64(blob);
+
+        // IMPORTANT: keep as Blob for large files (videos), avoiding base64 inflation.
+        // wa-js supports Blob/File directly in sendFileMessage.
+        content = await res.blob();
       } else {
         respond(false, "No URL provided for file send.");
         return;
       }
     } catch (err) {
-      respond(false, "Failed to fetch/convert file: " + (err.message || err));
+      respond(false, "Failed to fetch file: " + (err.message || err));
       return;
     }
 
@@ -209,17 +210,6 @@
   };
 
   // ─── Helpers ───────────────────────────────────────────
-
-  function blobToBase64(blob) {
-    return new Promise(function (resolve, reject) {
-      const reader = new FileReader();
-      reader.onloadend = function () {
-        resolve(reader.result); // data:mime;base64,...
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
 
   // ─── Init ──────────────────────────────────────────────
 
