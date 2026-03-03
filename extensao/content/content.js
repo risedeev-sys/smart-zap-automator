@@ -687,10 +687,26 @@
     window.addEventListener("resize", positionBar);
   }
 
+  // Map CSS class to emblem image filename
+  const EMBLEM_MAP = {
+    "rz-audio": "emblem-audio.png",
+    "rz-media": "emblem-media.png",
+    "rz-funnel": "emblem-funnel.png",
+    "rz-message": "emblem-message.png",
+    "rz-document": "emblem-document.png",
+  };
+
   function makeBtn(icon, label, cls) {
     const btn = document.createElement("button");
     btn.className = `rz-btn ${cls}`;
-    btn.innerHTML = `<span class="rz-icon">${icon}</span>${escapeHtml(label)}`;
+    
+    const emblemFile = EMBLEM_MAP[cls];
+    if (emblemFile) {
+      const imgUrl = chrome.runtime.getURL(`icons/${emblemFile}`);
+      btn.innerHTML = `<img src="${imgUrl}" class="rz-emblem" alt="" />${escapeHtml(label)}`;
+    } else {
+      btn.innerHTML = `<span class="rz-icon">${icon}</span>${escapeHtml(label)}`;
+    }
     return btn;
   }
 
