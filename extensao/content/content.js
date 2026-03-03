@@ -436,7 +436,7 @@
         const item = items[i];
 
         const delayMs = ((item.delay_min || 0) * 60 + (item.delay_sec || 0)) * 1000;
-        if (delayMs > 0 && i > 0) {
+        if (delayMs > 0) {
           console.log(`[RiseZap] Funnel delay: ${delayMs / 1000}s before item ${i + 1}`);
           await sleep(delayMs);
         }
