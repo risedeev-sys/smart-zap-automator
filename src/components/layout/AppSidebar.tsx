@@ -69,21 +69,21 @@ export function AppSidebar() {
                     asChild
                     disabled={item.disabled}
                     tooltip={collapsed ? item.title : undefined}
-                    className="h-12"
+                    className="h-14"
                   >
                     {item.disabled ? (
-                      <span className="flex items-center gap-4 opacity-40 cursor-not-allowed px-3 py-3 text-[17px]">
-                        <item.icon className={`h-6 w-6 flex-shrink-0 ${item.color}`} />
+                      <span className="flex items-center gap-4 opacity-40 cursor-not-allowed px-3 py-3 text-lg">
+                        <item.icon className={`h-7 w-7 flex-shrink-0 ${item.color}`} />
                         {!collapsed && <span>{item.title}</span>}
                       </span>
                     ) : (
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
-                        className="flex items-center gap-4 px-3 py-3 rounded-md text-[17px] text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                        className="flex items-center gap-4 px-3 py-3 rounded-md text-lg text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
                         activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                       >
-                        <item.icon className={`h-6 w-6 flex-shrink-0 ${item.color}`} />
+                        <item.icon className={`h-7 w-7 flex-shrink-0 ${item.color}`} />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
                     )}
