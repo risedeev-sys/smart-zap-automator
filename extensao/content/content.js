@@ -115,7 +115,7 @@
       : ["messages", "audios", "medias", "documents"];
 
     for (const table of tablePlan) {
-      const rows = await supaFetch(table, "id,name,content,storage_path,mime,bytes", `&id=eq.${assetId}`);
+      const rows = await supaFetch(table, "id,name,content,storage_path,mime,bytes,metadata", `&id=eq.${assetId}`);
       if (!rows.length) continue;
 
       const resolvedType = getAssetTypeByTable(table);
@@ -279,6 +279,7 @@
       caption: undefined,
       fileName: asset.name || undefined,
       asViewOnce: !!(asset.metadata?.singleView || asset.metadata?.single_view),
+      mime: asset.mime || undefined,
     };
 
     console.log("[RiseZap] sendFileViaBridge:", {
@@ -288,12 +289,14 @@
     });
 
     // Send event and wait for response
+    const timeoutMs = (sendType === "video") ? 120000 : 60000;
+
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
-        showToast("Timeout: bridge não respondeu em 30s", true);
+        showToast(`Timeout: bridge não respondeu em ${timeoutMs / 1000}s`, true);
         resolve(false);
-      }, 30000);
+      }, timeoutMs);
 
       function handler(evt) {
         const detail = evt.detail || {};
