@@ -586,9 +586,7 @@
       return;
     }
 
-    // Bridge status indicator
-    const statusIcon = isBridgeReady() ? "🟢" : "🟡";
-    bar.innerHTML = `<span class="rz-logo">⚡</span><span class="rz-bridge-status" title="${isBridgeReady() ? 'Bridge ativo' : 'Aguardando bridge...'}">${statusIcon}</span>`;
+    bar.innerHTML = ``;
 
     // Funis — roxo
     assets.funnels.forEach((f) => {
