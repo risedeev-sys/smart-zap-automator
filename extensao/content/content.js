@@ -677,14 +677,6 @@
 
     positionBar();
     window.addEventListener("resize", positionBar);
-
-    // Push WhatsApp UI up so bar doesn't cover the chat input
-    const barH = bar.offsetHeight || 32;
-    const appEl = document.getElementById("app");
-    if (appEl) {
-      appEl.style.height = `calc(100vh - ${barH}px)`;
-      appEl.style.overflow = "hidden";
-    }
   }
 
   function makeBtn(icon, label, cls) {
