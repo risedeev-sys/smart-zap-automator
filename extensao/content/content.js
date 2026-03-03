@@ -305,6 +305,102 @@
     return { blob: normalizedBlob, mime: normalizedMime, fileName: normalizedFileName };
   }
 
+  function getSupportedOpusMimeType() {
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+      return null;
+    }
+
+    const candidates = [
+      "audio/ogg;codecs=opus",
+      "audio/webm;codecs=opus",
+      "audio/ogg",
+      "audio/webm",
+    ];
+
+    for (const candidate of candidates) {
+      if (MediaRecorder.isTypeSupported(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  async function convertAudioToOpusBlob(blob) {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    const opusMime = getSupportedOpusMimeType();
+
+    if (!AudioContextCtor || !opusMime) {
+      return { blob, mime: (blob.type || "audio/ogg").toLowerCase(), converted: false };
+    }
+
+    let audioContext = null;
+
+    try {
+      audioContext = new AudioContextCtor();
+      const sourceArrayBuffer = await blob.arrayBuffer();
+      const decodedAudio = await audioContext.decodeAudioData(sourceArrayBuffer.slice(0));
+
+      const destination = audioContext.createMediaStreamDestination();
+      const source = audioContext.createBufferSource();
+      source.buffer = decodedAudio;
+      source.connect(destination);
+
+      const chunks = [];
+
+      await new Promise((resolve, reject) => {
+        let stopped = false;
+        const recorder = new MediaRecorder(destination.stream, { mimeType: opusMime });
+
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            chunks.push(event.data);
+          }
+        };
+
+        recorder.onerror = (event) => {
+          reject(event.error || new Error("MediaRecorder error"));
+        };
+
+        recorder.onstop = () => {
+          if (!stopped) {
+            stopped = true;
+            resolve();
+          }
+        };
+
+        source.onended = () => {
+          if (recorder.state !== "inactive") {
+            recorder.stop();
+          }
+        };
+
+        recorder.start(120);
+        source.start(0);
+      });
+
+      const opusBlob = chunks.length ? new Blob(chunks, { type: opusMime }) : null;
+      if (!opusBlob || !opusBlob.size) {
+        return { blob, mime: (blob.type || "audio/ogg").toLowerCase(), converted: false };
+      }
+
+      return { blob: opusBlob, mime: opusMime.toLowerCase(), converted: true };
+    } catch (err) {
+      console.warn("[RiseZap] Falha ao converter áudio para opus:", err);
+      return { blob, mime: (blob.type || "audio/ogg").toLowerCase(), converted: false };
+    } finally {
+      if (audioContext && typeof audioContext.close === "function") {
+        try { await audioContext.close(); } catch {}
+      }
+    }
+  }
+
+  function buildPttFileName(mimeType) {
+    const mime = (mimeType || "").toLowerCase();
+    const ext = mime.includes("webm") ? "webm" : "ogg";
+    return `PTT-${Date.now()}.${ext}`;
+  }
+
   // ─── Attachment Menu Navigation ────────────────────────
 
   function getAttachmentToggle() {
@@ -566,21 +662,30 @@
     const disabledByProp = "disabled" in clickable ? Boolean(clickable.disabled) : false;
     if (disabledByAttr || disabledByProp) return null;
 
+    const style = window.getComputedStyle(clickable);
+    if (!style || style.display === "none" || style.visibility === "hidden") return null;
+    if (clickable.getClientRects && clickable.getClientRects().length === 0) return null;
+
     return clickable;
   }
 
   function getSendButtonCandidate() {
     const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
     const main = document.querySelector("#main");
-    const roots = [main, modal, document].filter(Boolean);
+    const roots = [modal, main, document].filter(Boolean);
 
     const selectors = [
       "button[data-testid='compose-btn-send']",
+      "button[data-testid='media-send']",
+      "button[data-testid='ptt-send']",
       "button[aria-label*='Enviar']",
       "button[aria-label*='Send']",
       "[role='button'][aria-label*='Enviar']",
       "[role='button'][aria-label*='Send']",
       "span[data-testid='send'][data-icon='send']",
+      "span[data-testid='send']",
+      "span[data-testid='media-send']",
+      "span[data-testid='ptt-send']",
       "span[data-icon='send']",
       "span[data-icon='send-filled']",
       "span[data-icon='wds-ic-send-filled']",
@@ -590,17 +695,18 @@
 
     for (const root of roots) {
       for (const selector of selectors) {
-        const found = root.querySelector?.(selector);
-        if (!found) continue;
+        const foundNodes = root.querySelectorAll?.(selector) || [];
 
-        const actionable = isActionEnabled(found);
-        if (!actionable) continue;
+        for (const found of foundNodes) {
+          const actionable = isActionEnabled(found);
+          if (!actionable) continue;
 
-        if (main && actionable instanceof Element && root === document && !actionable.closest("#main")) {
-          continue;
+          if (main && actionable instanceof Element && root === document && !actionable.closest("#main") && !actionable.closest("[aria-modal='true']")) {
+            continue;
+          }
+
+          return actionable;
         }
-
-        return actionable;
       }
     }
 
@@ -652,13 +758,17 @@
       const dt = new DataTransfer();
       dt.items.add(file);
 
+      if (typeof dt.dropEffect !== "undefined") dt.dropEffect = "copy";
+      if (typeof dt.effectAllowed !== "undefined") dt.effectAllowed = "all";
+
+      dropTarget.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true }));
       dispatchDragEvent(dropTarget, "dragenter", dt);
       dispatchDragEvent(dropTarget, "dragover", dt);
       dispatchDragEvent(dropTarget, "drop", dt);
 
-      await sleep(380);
+      await sleep(420);
 
-      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(bytes / 220)));
+      const prepareTimeout = Math.min(60000, Math.max(12000, Math.floor(bytes / 90)));
       const sendBtn = await waitForSendButton(prepareTimeout);
       if (!sendBtn) return false;
 
@@ -673,19 +783,30 @@
   async function sendFileViaDom(blob, fileName, mimeType, forcedKind = null) {
     try {
       const normalized = await normalizeUploadAsset(blob, fileName, mimeType);
-      const uploadBlob = normalized.blob;
-      const sourceFileName = normalized.fileName;
       const normalizedMime = normalized.mime;
       const inferredAudio = normalizedMime.startsWith("audio/");
       const inferredMedia = /^(image|video)\//.test(normalizedMime);
       const targetKind = forcedKind || (inferredAudio ? "audio" : inferredMedia ? "media" : "document");
-      const effectiveMime = targetKind === "audio"
+
+      let workingBlob = normalized.blob;
+      let workingMime = targetKind === "audio"
         ? (normalizedMime.startsWith("audio/") ? normalizedMime : "audio/ogg")
         : normalizedMime;
+      let workingFileName = normalized.fileName;
+
+      if (targetKind === "audio") {
+        const converted = await convertAudioToOpusBlob(workingBlob);
+        if (converted?.blob) {
+          workingBlob = converted.blob;
+          workingMime = converted.mime || workingMime;
+        }
+        workingFileName = buildPttFileName(workingMime);
+      }
 
       const extensionMap = {
         "audio/ogg": "ogg",
         "audio/opus": "ogg",
+        "audio/webm": "webm",
         "audio/mpeg": "mp3",
         "audio/mp4": "m4a",
         "audio/wav": "wav",
@@ -695,16 +816,30 @@
         "application/pdf": "pdf",
       };
 
-      const hasExtension = /\.[a-z0-9]{2,8}$/i.test(sourceFileName || "");
-      const fallbackExt = extensionMap[effectiveMime] || (targetKind === "audio" ? "ogg" : "bin");
-      const safeFileName = hasExtension ? sourceFileName : `${sourceFileName || "arquivo"}.${fallbackExt}`;
-      const file = new File([uploadBlob], safeFileName, { type: effectiveMime });
+      const mimeBase = (workingMime || "").split(";")[0].trim().toLowerCase();
+      const hasExtension = /\.[a-z0-9]{2,8}$/i.test(workingFileName || "");
+      const fallbackExt = extensionMap[mimeBase] || (targetKind === "audio" ? "ogg" : "bin");
+      const safeFileName = targetKind === "audio"
+        ? buildPttFileName(workingMime)
+        : hasExtension
+          ? workingFileName
+          : `${workingFileName || "arquivo"}.${fallbackExt}`;
 
-      console.log("[RiseZap] sendFileViaDom:", safeFileName, effectiveMime, uploadBlob.size, "bytes", "kind:", targetKind);
+      const file = new File([workingBlob], safeFileName, { type: workingMime });
+
+      console.log("[RiseZap] sendFileViaDom:", safeFileName, workingMime, workingBlob.size, "bytes", "kind:", targetKind);
 
       if (targetKind === "audio") {
-        const sentByDrop = await trySendAudioViaDrop(file, uploadBlob.size);
+        const sentByDrop = await trySendAudioViaDrop(file, workingBlob.size);
         if (sentByDrop) return true;
+
+        await sleep(450);
+
+        const sentByDropRetry = await trySendAudioViaDrop(file, workingBlob.size);
+        if (sentByDropRetry) return true;
+
+        showToast("Falha ao enviar como áudio de voz", true);
+        return false;
       }
 
       const baselineInputs = [...document.querySelectorAll("input[type='file']")];
@@ -742,20 +877,7 @@
         return false;
       }
 
-      let selectedKind = classifyInputKind(fileInput);
-
-      if (targetKind === "audio" && !isStrictAudioInput(fileInput)) {
-        await openAttachmentMenu();
-        const retryAudioOption = await clickAttachmentOption("audio");
-        const retryAudioInput = retryAudioOption.input || await findFileInputForKind("audio", [], retryAudioOption.element);
-        if (retryAudioInput && isStrictAudioInput(retryAudioInput)) {
-          fileInput = retryAudioInput;
-          selectedKind = classifyInputKind(fileInput);
-        } else {
-          showToast("Não consegui selecionar o input de áudio do WhatsApp", true);
-          return false;
-        }
-      }
+      const selectedKind = classifyInputKind(fileInput);
 
       console.log("[RiseZap] Found file input:", {
         accept: fileInput.getAttribute("accept") || "(none)",
@@ -771,7 +893,7 @@
       fileInput.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       fileInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
 
-      const prepareTimeout = Math.min(60000, Math.max(9000, Math.floor(uploadBlob.size / 120)));
+      const prepareTimeout = Math.min(60000, Math.max(9000, Math.floor(workingBlob.size / 120)));
       const sendBtn = await waitForSendButton(prepareTimeout);
 
       if (!sendBtn) {
