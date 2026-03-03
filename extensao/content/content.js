@@ -557,36 +557,63 @@
 
   // ─── Send File via DOM ────────────────────────────────
 
+  function isActionEnabled(node) {
+    if (!node) return null;
+    const clickable = node.closest?.("button, [role='button']") || node;
+    if (!clickable || !clickable.isConnected) return null;
+
+    const disabledByAttr = clickable.getAttribute?.("aria-disabled") === "true";
+    const disabledByProp = "disabled" in clickable ? Boolean(clickable.disabled) : false;
+    if (disabledByAttr || disabledByProp) return null;
+
+    return clickable;
+  }
+
   function getSendButtonCandidate() {
     const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
-    const lookupRoot = modal || document;
+    const main = document.querySelector("#main");
+    const roots = [main, modal, document].filter(Boolean);
 
-    const directButton =
-      lookupRoot.querySelector("button[data-testid='compose-btn-send']") ||
-      lookupRoot.querySelector("button[aria-label*='Enviar']") ||
-      lookupRoot.querySelector("button[aria-label*='Send']") ||
-      lookupRoot.querySelector("[role='button'][aria-label*='Enviar']") ||
-      lookupRoot.querySelector("[role='button'][aria-label*='Send']");
+    const selectors = [
+      "button[data-testid='compose-btn-send']",
+      "button[aria-label*='Enviar']",
+      "button[aria-label*='Send']",
+      "[role='button'][aria-label*='Enviar']",
+      "[role='button'][aria-label*='Send']",
+      "span[data-testid='send'][data-icon='send']",
+      "span[data-icon='send']",
+      "span[data-icon='send-filled']",
+      "span[data-icon='wds-ic-send-filled']",
+      "span[data-icon='ptt-send']",
+      "[data-icon*='send']",
+    ];
 
-    if (directButton) return directButton;
+    for (const root of roots) {
+      for (const selector of selectors) {
+        const found = root.querySelector?.(selector);
+        if (!found) continue;
 
-    const iconBtn =
-      lookupRoot.querySelector("span[data-icon='send']") ||
-      lookupRoot.querySelector("span[data-icon='send-filled']") ||
-      lookupRoot.querySelector("span[data-icon='wds-ic-send-filled']") ||
-      lookupRoot.querySelector("[data-icon*='send']");
+        const actionable = isActionEnabled(found);
+        if (!actionable) continue;
 
-    return iconBtn ? (iconBtn.closest("button, [role='button']") || iconBtn) : null;
+        if (main && actionable instanceof Element && root === document && !actionable.closest("#main")) {
+          continue;
+        }
+
+        return actionable;
+      }
+    }
+
+    return null;
   }
 
   async function waitForSendButton(timeoutMs) {
     const startedAt = Date.now();
-    let sendBtn = null;
 
     while (Date.now() - startedAt < timeoutMs) {
-      sendBtn = getSendButtonCandidate();
+      const sendBtn = getSendButtonCandidate();
       if (sendBtn) return sendBtn;
-      await sleep(200);
+      await sleep(180);
     }
 
     return null;
@@ -744,7 +771,7 @@
       fileInput.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       fileInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
 
-      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
+      const prepareTimeout = Math.min(60000, Math.max(9000, Math.floor(uploadBlob.size / 120)));
       const sendBtn = await waitForSendButton(prepareTimeout);
 
       if (!sendBtn) {
