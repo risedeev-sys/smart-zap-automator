@@ -320,7 +320,17 @@
     if (resolvedType === "audio") {
       sendType = "audio";
     } else if (resolvedType === "media") {
-      sendType = (asset.mime || "").startsWith("video") ? "video" : "image";
+      const mime = String(asset.mime || "").toLowerCase();
+      const storagePath = String(asset.storage_path || "").toLowerCase();
+      const name = String(asset.name || "").toLowerCase();
+      const videoExtPattern = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
+      const isVideo =
+        mime.startsWith("video/") ||
+        videoExtPattern.test(storagePath) ||
+        videoExtPattern.test(name) ||
+        asset.metadata?.mediaType === "video";
+
+      sendType = isVideo ? "video" : "image";
     } else if (resolvedType === "document") {
       sendType = "document";
     } else {
@@ -356,7 +366,7 @@
     });
 
     // Send event and wait for response
-    const timeoutMs = sendType === "video" ? 180000 : 60000;
+    const timeoutMs = sendType === "video" ? 240000 : 60000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {

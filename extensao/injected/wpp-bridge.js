@@ -48,6 +48,71 @@
     }
   }
 
+  // ─── Bridge Helpers ────────────────────────────────────
+
+  async function fetchBlobWithTimeout(targetUrl, timeoutMs) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function () {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const res = await fetch(targetUrl, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      return await res.blob();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async function withTimeout(promise, timeoutMs, label) {
+    let timeoutId;
+
+    const timeoutPromise = new Promise(function (_, reject) {
+      timeoutId = setTimeout(function () {
+        reject(new Error(`${label} timeout after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  function ensureSendableContent(content, type, fileName, mime) {
+    if (!(content instanceof Blob)) {
+      return content;
+    }
+
+    if (type !== "video" && type !== "document") {
+      return content;
+    }
+
+    if (typeof File === "undefined") {
+      return content;
+    }
+
+    const defaultName = type === "video" ? "video.mp4" : "file";
+    const normalizedName = (fileName && String(fileName).trim()) || defaultName;
+    const hasExt = normalizedName.includes(".");
+    const fallbackExt = type === "video" ? ".mp4" : "";
+    const finalName = hasExt ? normalizedName : `${normalizedName}${fallbackExt}`;
+    const finalMime = mime || content.type || (type === "video" ? "video/mp4" : "application/octet-stream");
+
+    return new File([content], finalName, {
+      type: finalMime,
+    });
+  }
+
   // ─── Send Handler ──────────────────────────────────────
 
   window.addEventListener("risezap:send", async function (evt) {
@@ -90,6 +155,7 @@
 
     let content;
     const fetchErrors = [];
+    const fetchTimeoutMs = type === "video" ? 120000 : 45000;
 
     const candidates = [
       { value: blobUrl, label: "blobUrl" },
@@ -107,11 +173,7 @@
 
     for (const candidate of candidates) {
       try {
-        const res = await fetch(candidate.value, { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        content = await res.blob();
+        content = await fetchBlobWithTimeout(candidate.value, fetchTimeoutMs);
         break;
       } catch (err) {
         fetchErrors.push(`${candidate.label}: ${err.message || err}`);
@@ -150,7 +212,9 @@
         options = {
           type: "video",
           caption: caption || undefined,
+          filename: fileName || "video.mp4",
           mimetype: mime || "video/mp4",
+          waitForAck: false,
         };
         if (asViewOnce) options.isViewOnce = true;
         break;
@@ -159,6 +223,7 @@
         options = {
           type: "document",
           filename: fileName || "file",
+          mimetype: mime || undefined,
         };
         break;
 
@@ -172,11 +237,21 @@
         break;
     }
 
+    const sendableContent = ensureSendableContent(content, type, fileName, options.mimetype || mime);
+
     // ─── Send via WPP ─────────────────────────────────
 
     try {
-      console.log("[RiseZap:Bridge] Sending:", { chatId: chatId.toString(), type, isPtt });
-      await WPP.chat.sendFileMessage(chatId, content, options);
+      const sendTimeoutMs = type === "video" ? 240000 : 90000;
+      console.log("[RiseZap:Bridge] Sending:", {
+        chatId: chatId.toString(),
+        type,
+        isPtt,
+        waitForAck: options.waitForAck ?? true,
+      });
+
+      await withTimeout(WPP.chat.sendFileMessage(chatId, sendableContent, options), sendTimeoutMs, "sendFileMessage");
+
       console.log("[RiseZap:Bridge] Sent successfully");
       respond(true);
     } catch (err) {
