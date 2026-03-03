@@ -17,11 +17,11 @@
 
   // ─── Supabase Fetch ────────────────────────────────────
 
-  async function supaFetch(table, select) {
+  async function supaFetch(table, select, extraParams = "") {
     if (!token) return [];
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/${table}?select=${encodeURIComponent(select)}&order=created_at.desc`,
+        `${SUPABASE_URL}/rest/v1/${table}?select=${encodeURIComponent(select)}${extraParams}&order=created_at.desc`,
         { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) return [];
@@ -38,6 +38,36 @@
       supaFetch("funnels", "id,name,favorite"),
     ]);
     assets = { messages, audios, medias, documents, funnels };
+  }
+
+  // ─── Funnel Items Loader ──────────────────────────────
+
+  async function loadFunnelItems(funnelId) {
+    return supaFetch(
+      "funnel_items",
+      "id,type,asset_id,position,delay_min,delay_sec",
+      `&funnel_id=eq.${funnelId}&order=position.asc`
+    );
+  }
+
+  async function resolveAsset(type, assetId) {
+    const normalizedType = type === "mensagem" ? "message"
+      : type === "midia" ? "media"
+      : type === "documento" ? "document"
+      : type;
+
+    const table = normalizedType === "message" ? "messages"
+      : normalizedType === "audio" ? "audios"
+      : normalizedType === "media" ? "medias"
+      : normalizedType === "document" ? "documents"
+      : null;
+
+    if (!table) return null;
+
+    const rows = await supaFetch(table, "id,name,content,storage_path,mime", `&id=eq.${assetId}`);
+    if (!rows.length) return null;
+
+    return { ...rows[0], resolvedType: normalizedType, table };
   }
 
   // ─── Signed URL ───────────────────────────────────────
@@ -89,11 +119,17 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  const normalizeLabel = (value) =>
+    (value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+
   // ─── Send Text via DOM ────────────────────────────────
 
   async function sendTextViaDom(text) {
     try {
-      // Find the message input field (multiple fallback selectors)
       const input =
         document.querySelector('#main div[contenteditable="true"][data-tab="10"]') ||
         document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
@@ -104,14 +140,12 @@
         return false;
       }
 
-      // Focus and clear existing content
       input.focus();
       await sleep(100);
       input.textContent = '';
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await sleep(100);
 
-      // Inject text via ClipboardEvent (paste) — works with React/Lexical
       const dataTransfer = new DataTransfer();
       dataTransfer.setData("text/plain", text);
       const pasteEvent = new ClipboardEvent("paste", {
@@ -121,16 +155,13 @@
       });
       input.dispatchEvent(pasteEvent);
 
-      // Wait for WhatsApp to process the paste and show send button
       await sleep(500);
 
-      // Click send button (multiple fallback selectors)
       let sendBtn =
         document.querySelector('span[data-icon="send"]') ||
         document.querySelector('button[aria-label="Send"]') ||
         document.querySelector('button[aria-label="Enviar"]');
 
-      // If not found, wait a bit more
       if (!sendBtn) {
         try {
           await waitForElement('span[data-icon="send"]', 3000);
@@ -218,6 +249,83 @@
     return { blob: normalizedBlob, mime: normalizedMime, fileName: normalizedFileName };
   }
 
+  // ─── Attachment Menu Navigation ────────────────────────
+  // This is the KEY fix: we must click the correct menu option
+  // (Fotos e vídeos, Áudio, Documento) BEFORE looking for file inputs.
+  // Without this, WhatsApp never renders the correct input[type=file].
+
+  function getAttachmentToggle() {
+    const selectors = [
+      "#main button span[data-icon='plus']",
+      "#main button span[data-icon='attach-menu-plus']",
+      "#main button span[data-icon='clip']",
+      "#main span[data-icon='plus']",
+      "#main span[data-icon='attach-menu-plus']",
+      "#main span[data-icon='clip']",
+      "button[aria-label*='Anexar']",
+      "button[title*='Anexar']",
+      "button[aria-label*='Attach']",
+      "button[title*='Attach']",
+    ];
+
+    for (const selector of selectors) {
+      const found = document.querySelector(selector);
+      if (!found) continue;
+      const clickable = found.closest("button, [role='button']") || found;
+      return clickable;
+    }
+
+    return null;
+  }
+
+  async function openAttachmentMenu() {
+    const toggle = getAttachmentToggle();
+    if (!toggle) {
+      console.warn("[RiseZap] Attachment toggle not found");
+      return false;
+    }
+    toggle.click();
+    await sleep(400);
+    return true;
+  }
+
+  async function clickAttachmentOption(targetKind) {
+    // Map targetKind to the menu label patterns
+    const labelPatterns = {
+      media: ["fotos e videos", "fotos e vídeos", "photos & videos", "photos and videos", "photo"],
+      audio: ["audio", "áudio"],
+      document: ["documento", "document"],
+    };
+
+    const patterns = labelPatterns[targetKind] || labelPatterns.document;
+
+    // Look for clickable menu items with matching text
+    const candidates = document.querySelectorAll(
+      "#main li, #main button, #main [role='button'], " +
+      "[data-animate-dropdown-item='true'], " +
+      "li[tabindex], li[role='menuitem'], " +
+      "div[role='button'], span[role='button']"
+    );
+
+    for (const el of candidates) {
+      const text = normalizeLabel(el.textContent || "");
+      const ariaLabel = normalizeLabel(el.getAttribute("aria-label") || "");
+      const combined = `${text} ${ariaLabel}`;
+
+      for (const pattern of patterns) {
+        if (combined.includes(normalizeLabel(pattern))) {
+          console.log(`[RiseZap] Clicking menu option: "${el.textContent?.trim()}" for targetKind=${targetKind}`);
+          el.click();
+          await sleep(500);
+          return true;
+        }
+      }
+    }
+
+    console.warn(`[RiseZap] Menu option not found for targetKind=${targetKind}`);
+    return false;
+  }
+
   // ─── Send File via DOM ────────────────────────────────
 
   async function sendFileViaDom(blob, fileName, mimeType) {
@@ -237,7 +345,6 @@
         "audio/wav": "wav",
         "image/jpeg": "jpg",
         "image/png": "png",
-        "image/webp": "webp",
         "video/mp4": "mp4",
         "application/pdf": "pdf",
       };
@@ -248,170 +355,68 @@
 
       console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, uploadBlob.size, "bytes", "kind:", targetKind);
 
-      const normalizeLabel = (value) =>
-        (value || "")
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-          .trim();
-
-      const menuSignals = ["documento", "fotos e videos", "audio", "nova figurinha", "document", "photos", "sticker"];
-
-      const isAttachmentMenuOpen = () => {
-        const controls = document.querySelectorAll("#main button, #main [role='button'], #main li");
-        for (const el of controls) {
-          const text = normalizeLabel(el.textContent || "");
-          if (!text) continue;
-          if (menuSignals.some((signal) => text.includes(signal))) return true;
-        }
+      // STEP 1: Open attachment menu
+      const menuOpened = await openAttachmentMenu();
+      if (!menuOpened) {
+        showToast("Não encontrei o botão de anexar", true);
         return false;
-      };
+      }
 
-      const getAttachmentToggle = () => {
-        const selectors = [
-          "#main button span[data-icon='plus']",
-          "#main button span[data-icon='attach-menu-plus']",
-          "#main button span[data-icon='clip']",
-          "#main span[data-icon='plus']",
-          "#main span[data-icon='attach-menu-plus']",
-          "#main span[data-icon='clip']",
-          "button[aria-label*='Anexar']",
-          "button[title*='Anexar']",
-          "button[aria-label*='Attach']",
-          "button[title*='Attach']",
-        ];
+      // STEP 2: Click the correct menu option (Fotos e vídeos / Áudio / Documento)
+      const optionClicked = await clickAttachmentOption(targetKind);
+      if (!optionClicked) {
+        console.warn("[RiseZap] Could not click menu option, trying direct input injection");
+      }
 
-        for (const selector of selectors) {
-          const found = document.querySelector(selector);
-          if (!found) continue;
-          const clickable = found.closest("button, [role='button']") || found;
-          const text = normalizeLabel(clickable.textContent || "");
-          const label = normalizeLabel(clickable.getAttribute("aria-label") || clickable.getAttribute("title") || "");
-          const composite = `${text} ${label}`;
-          if (/document|fotos|videos|audio|figurinha|sticker/.test(composite)) continue;
-          return clickable;
-        }
-
-        return null;
-      };
-
-      const isDocumentAccept = (accept) =>
-        !accept ||
-        accept === "*" ||
-        accept === "*/*" ||
-        accept.includes("application") ||
-        accept.includes("text") ||
-        accept.includes("document") ||
-        accept.includes(".pdf") ||
-        accept.includes(".doc") ||
-        accept.includes(".xls") ||
-        accept.includes(".ppt");
-
-      const getInputContext = (input) => {
-        const owner =
-          input.closest("[role='button']") ||
-          input.closest("button") ||
-          input.closest("li") ||
-          input.closest("label") ||
-          input.parentElement;
-
-        const parts = [
-          owner?.textContent,
-          owner?.getAttribute?.("aria-label"),
-          owner?.getAttribute?.("title"),
-          owner?.getAttribute?.("data-testid"),
-          owner?.className,
-          input.getAttribute("data-testid"),
-          input.className,
-        ];
-
-        return normalizeLabel(parts.filter(Boolean).join(" "));
-      };
-
-      const classifyInput = (input) => {
-        const accept = (input.getAttribute("accept") || "").toLowerCase();
-        const context = getInputContext(input);
-
-        const looksLikeSticker =
-          /figurinha|sticker|new sticker/.test(context) ||
-          (accept.includes("image/webp") && !accept.includes("image/jpeg") && !accept.includes("image/png"));
-
-        if (looksLikeSticker) return "sticker";
-        if (accept.includes("audio")) return "audio";
-        if (accept.includes("image") || accept.includes("video")) return "media";
-        if (isDocumentAccept(accept)) return "document";
-        return "unknown";
-      };
-
-      const scoreInput = (input) => {
-        const accept = (input.getAttribute("accept") || "").toLowerCase();
-        const kind = classifyInput(input);
-
-        if (kind === "sticker") return -999;
-
-        let score = 0;
-
-        if (targetKind === "media") {
-          if (kind === "media") score += 40;
-          if (accept.includes("image") || accept.includes("video")) score += 10;
-          if (accept.includes("webp") && !accept.includes("jpeg") && !accept.includes("png")) score -= 50;
-        } else if (targetKind === "audio") {
-          if (kind === "audio") score += 45;
-          if (accept.includes("audio")) score += 10;
-        } else {
-          if (kind === "document") score += 40;
-        }
-
-        if (accept.includes(resolvedMime.split("/")[0])) score += 6;
-        if (input.closest("#main")) score += 6;
-
-        return score;
-      };
-
-      const getCandidateInputs = () => {
-        const raw = [
-          ...document.querySelectorAll("#main input[type='file']"),
-          ...document.querySelectorAll("input[type='file']"),
-        ];
-
-        const unique = [];
-        const seen = new Set();
-
-        for (const input of raw) {
-          if (!input || seen.has(input) || input.disabled || !input.isConnected) continue;
-          seen.add(input);
-          unique.push(input);
-        }
-
-        const strict = unique.filter((input) => {
-          const kind = classifyInput(input);
-          if (kind === "sticker") return false;
-          if (targetKind === "media") return kind === "media";
-          if (targetKind === "audio") return kind === "audio";
-          return kind === "document";
-        });
-
-        const pool = strict.length ? strict : unique.filter((input) => classifyInput(input) !== "sticker");
-
-        return pool
-          .map((input, index) => ({ input, score: scoreInput(input), index }))
-          .filter((row) => row.score > -100)
-          .sort((a, b) => (b.score - a.score) || (b.index - a.index))
-          .map((row) => row.input);
-      };
-
+      // STEP 3: Wait for file input to appear
       const file = new File([uploadBlob], safeFileName, { type: resolvedMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
-      const setFilesOnInput = (input) => {
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
-        if (setter) setter.call(input, dt.files);
-        else input.files = dt.files;
+      await sleep(300);
 
-        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-      };
+      // Find the file input that WhatsApp just rendered
+      let fileInput = null;
+      for (let attempt = 0; attempt < 25; attempt++) {
+        const inputs = [...document.querySelectorAll("input[type='file']")];
+        // Get the most recently added input (usually last in DOM)
+        // Filter out sticker inputs
+        const valid = inputs.filter((inp) => {
+          const accept = (inp.getAttribute("accept") || "").toLowerCase();
+          // Skip sticker-only inputs
+          if (accept === "image/webp" || accept === ".webp") return false;
+          if (!inp.isConnected || inp.disabled) return false;
+          return true;
+        });
+
+        if (valid.length > 0) {
+          // Prefer the last one (most recently added by WhatsApp after menu click)
+          fileInput = valid[valid.length - 1];
+          break;
+        }
+        await sleep(150);
+      }
+
+      if (!fileInput) {
+        showToast("Input de arquivo não encontrado", true);
+        return false;
+      }
+
+      console.log("[RiseZap] Found file input:", {
+        accept: fileInput.getAttribute("accept") || "(none)",
+        id: fileInput.id || "(none)",
+      });
+
+      // STEP 4: Inject file into the input (WITHOUT calling input.click())
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
+      if (setter) setter.call(fileInput, dt.files);
+      else fileInput.files = dt.files;
+
+      fileInput.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      fileInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+
+      // STEP 5: Wait for WhatsApp to process and show send button
+      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
 
       const findSendButton = () => {
         const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
@@ -437,24 +442,21 @@
         return null;
       };
 
-      const waitForPreparedState = async (timeoutMs) => {
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < timeoutMs) {
-          const sendBtn = findSendButton();
-          if (sendBtn) return sendBtn;
-          await sleep(180);
-        }
-        return null;
-      };
+      let sendBtn = null;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < prepareTimeout) {
+        sendBtn = findSendButton();
+        if (sendBtn) break;
+        await sleep(200);
+      }
 
-      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
-
-      const simulateDropUpload = async () => {
+      // Fallback: try drop if input injection didn't work
+      if (!sendBtn) {
+        console.log("[RiseZap] Input injection didn't trigger send UI, trying drop fallback");
         const dropTargets = [
           document.querySelector("#main [role='application']"),
           document.querySelector("#main"),
           document.querySelector("#main footer"),
-          document.querySelector("#main div[contenteditable='true']"),
         ].filter(Boolean);
 
         for (const target of dropTargets) {
@@ -465,88 +467,17 @@
             target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
             target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
 
-            const sendBtn = await waitForPreparedState(prepareTimeout);
-            if (sendBtn) return sendBtn;
+            const dropStart = Date.now();
+            while (Date.now() - dropStart < 5000) {
+              sendBtn = findSendButton();
+              if (sendBtn) break;
+              await sleep(200);
+            }
+            if (sendBtn) break;
           } catch (e) {
-            console.warn("[RiseZap] Falha no fallback de drop", e);
+            console.warn("[RiseZap] Drop fallback failed", e);
           }
         }
-
-        return null;
-      };
-
-      const simulatePasteImageUpload = async () => {
-        if (!resolvedMime.startsWith("image/")) return null;
-        const input =
-          document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
-          document.querySelector('#main footer div[contenteditable="true"]') ||
-          document.querySelector('footer div[contenteditable="true"]');
-
-        if (!input) return null;
-
-        input.focus();
-        await sleep(80);
-
-        const clipboard = new DataTransfer();
-        clipboard.items.add(file);
-        const pasteEvent = new ClipboardEvent("paste", {
-          bubbles: true,
-          cancelable: true,
-          clipboardData: clipboard,
-        });
-
-        input.dispatchEvent(pasteEvent);
-        return await waitForPreparedState(prepareTimeout);
-      };
-
-      let candidates = getCandidateInputs();
-
-      if (!candidates.length) {
-        const toggle = getAttachmentToggle();
-        if (toggle && !isAttachmentMenuOpen()) {
-          toggle.click();
-          await sleep(220);
-        }
-
-        for (let i = 0; i < 20; i++) {
-          candidates = getCandidateInputs();
-          if (candidates.length) break;
-          await sleep(120);
-        }
-      }
-
-      console.log(
-        "[RiseZap] Candidate inputs:",
-        candidates.map((input) => ({
-          accept: input.getAttribute("accept") || "(sem accept)",
-          kind: classifyInput(input),
-          score: scoreInput(input),
-        }))
-      );
-
-      let sendBtn = null;
-      for (const input of candidates) {
-        try {
-          console.log("[RiseZap] Trying input", {
-            targetKind,
-            accept: input.getAttribute("accept") || "(sem accept)",
-            kind: classifyInput(input),
-          });
-
-          setFilesOnInput(input);
-          sendBtn = await waitForPreparedState(prepareTimeout);
-          if (sendBtn) break;
-        } catch (e) {
-          console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
-        }
-      }
-
-      if (!sendBtn && targetKind === "media") {
-        sendBtn = await simulatePasteImageUpload();
-      }
-
-      if (!sendBtn) {
-        sendBtn = await simulateDropUpload();
       }
 
       if (!sendBtn) {
@@ -561,6 +492,74 @@
       showToast("Erro ao enviar arquivo: " + (err.message || "falha desconhecida"), true);
       return false;
     }
+  }
+
+  // ─── Send Funnel via DOM (sequential) ──────────────────
+
+  async function sendFunnelViaDom(funnelId, funnelName) {
+    const items = await loadFunnelItems(funnelId);
+    if (!items || items.length === 0) {
+      showToast(`Funil "${funnelName}" está vazio`, true);
+      return false;
+    }
+
+    showToast(`Enviando funil "${funnelName}" (${items.length} itens)...`);
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
+      // Apply item delay
+      const delayMs = ((item.delay_min || 0) * 60 + (item.delay_sec || 0)) * 1000;
+      if (delayMs > 0 && i > 0) {
+        console.log(`[RiseZap] Funnel delay: ${delayMs / 1000}s before item ${i + 1}`);
+        await sleep(delayMs);
+      }
+
+      const asset = await resolveAsset(item.type, item.asset_id);
+      if (!asset) {
+        console.warn(`[RiseZap] Could not resolve asset: type=${item.type}, id=${item.asset_id}`);
+        showToast(`Item ${i + 1} não encontrado, pulando...`, true);
+        continue;
+      }
+
+      let ok = false;
+
+      if (asset.resolvedType === "message") {
+        ok = await sendTextViaDom(asset.content || asset.name);
+      } else {
+        // Audio, media, document — need to download and send
+        if (!asset.storage_path) {
+          showToast(`Item ${i + 1} sem arquivo, pulando...`, true);
+          continue;
+        }
+
+        const signedUrl = await getSignedUrl(asset.storage_path);
+        if (!signedUrl) {
+          showToast(`Erro ao gerar URL do item ${i + 1}`, true);
+          continue;
+        }
+
+        const blob = await downloadAsBlob(signedUrl);
+        const defaultMime = asset.resolvedType === "audio" ? "audio/ogg"
+          : asset.resolvedType === "document" ? "application/pdf"
+          : "image/jpeg";
+        ok = await sendFileViaDom(blob, asset.name, asset.mime || defaultMime);
+      }
+
+      if (ok) {
+        console.log(`[RiseZap] Funnel item ${i + 1}/${items.length} sent: ${asset.resolvedType}`);
+      } else {
+        console.error(`[RiseZap] Funnel item ${i + 1}/${items.length} FAILED: ${asset.resolvedType}`);
+      }
+
+      // Small gap between items to let WhatsApp process
+      if (i < items.length - 1) {
+        await sleep(1500);
+      }
+    }
+
+    showToast(`Funil "${funnelName}" concluído! ✓`);
+    return true;
   }
 
   // ─── Toast ─────────────────────────────────────────────
@@ -580,7 +579,7 @@
       boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
     });
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+    setTimeout(() => t.remove(), 4000);
   }
 
   // ─── Modal ─────────────────────────────────────────────
@@ -625,12 +624,12 @@
       const btn = overlay.querySelector(".rz-btn-send");
       btn.textContent = "Enviando...";
       btn.disabled = true;
-      closeModal(); // Close our modal BEFORE interacting with WhatsApp DOM
+      closeModal();
       await sleep(300);
       try {
         const ok = await onSend();
         if (ok) {
-          showToast("Mensagem enviada! ✓");
+          showToast("Enviado com sucesso! ✓");
         } else if (!document.getElementById("risezap-toast")) {
           showToast("Falha ao enviar", true);
         }
@@ -665,7 +664,6 @@
       return;
     }
 
-    // Logo
     bar.innerHTML = `<span class="rz-logo">⚡</span>`;
 
     // Funis — roxo
@@ -673,8 +671,7 @@
       const btn = makeBtn("🎯", f.name, "rz-funnel");
       btn.addEventListener("click", () => {
         showPreview("Disparar Funil", `🎯 ${f.name}\n\nTodos os itens serão enviados em sequência.`, async () => {
-          showToast(`Funil "${f.name}" disparado`);
-          return true;
+          return sendFunnelViaDom(f.id, f.name);
         });
       });
       bar.appendChild(btn);
