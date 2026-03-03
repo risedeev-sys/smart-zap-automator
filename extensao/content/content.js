@@ -768,6 +768,19 @@
     });
 
     document.body.appendChild(bar);
+
+    // Push WhatsApp content up so bar doesn't overlap chat input
+    const appEl = document.getElementById("app") || document.querySelector("[data-app]") || document.querySelector("#main");
+    if (appEl) {
+      appEl.style.paddingBottom = "36px";
+    }
+    // Also adjust the main app wrapper
+    const appWrap = document.querySelector("._app, .app-wrapper-web, [id='app']");
+    if (appWrap && appWrap !== appEl) {
+      appWrap.style.paddingBottom = "36px";
+    }
+    // Fallback: push body itself
+    document.body.style.paddingBottom = "36px";
   }
 
   function makeBtn(icon, label, cls) {
