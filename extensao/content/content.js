@@ -160,34 +160,132 @@
 
   // ─── Extract Current Chat Phone from WhatsApp Web DOM ──
 
+  let lastDetectedPhone = null;
+
+  function extractPhoneFromText(text) {
+    if (!text) return null;
+    // Remove common formatting: +, spaces, dashes, parens
+    const digits = text.replace(/[\s\-\(\)\+]/g, '');
+    // Valid phone: 10-15 digits, optionally starting with country code
+    if (/^\d{10,15}$/.test(digits)) return digits;
+    return null;
+  }
+
   function getCurrentChatPhone() {
-    // Strategy 1: Parse phone from message data-id attributes (most reliable)
-    // Messages have data-id like "true_5511999999999@s.whatsapp.net_3EB0..."
-    // or "false_5511999999999@s.whatsapp.net_3EB0..."
+    // Strategy 1: data-id on message rows (most reliable)
     const msgRows = document.querySelectorAll('#main div[data-id]');
     for (const row of msgRows) {
       const dataId = row.getAttribute('data-id') || '';
       const match = dataId.match(/(\d{10,15})@s\.whatsapp\.net/);
-      if (match) return match[1];
+      if (match) {
+        lastDetectedPhone = match[1];
+        return match[1];
+      }
     }
 
-    // Strategy 2: Header title (works for unsaved contacts showing phone number)
-    const headerSpan = document.querySelector('#main header span[title]');
-    if (headerSpan) {
-      const title = headerSpan.getAttribute('title') || '';
-      const digits = title.replace(/[^0-9]/g, '');
-      if (digits.length >= 10 && digits.length <= 15) return digits;
+    // Strategy 2: data-id on any element inside #main (broader search)
+    const allDataIds = document.querySelectorAll('#main [data-id]');
+    for (const el of allDataIds) {
+      const dataId = el.getAttribute('data-id') || '';
+      const match = dataId.match(/(\d{10,15})@s\.whatsapp\.net/);
+      if (match) {
+        lastDetectedPhone = match[1];
+        return match[1];
+      }
     }
 
-    // Strategy 3: Chat subtitle (sometimes shows phone for saved contacts)
-    const subtitleCandidates = document.querySelectorAll('#main header span[title]');
-    for (const el of subtitleCandidates) {
-      const text = el.getAttribute('title') || '';
-      const digits = text.replace(/[^0-9]/g, '');
-      if (digits.length >= 10 && digits.length <= 15) return digits;
+    // Strategy 3: Header span with title attribute
+    const headerSpans = document.querySelectorAll('#main header span[title]');
+    for (const span of headerSpans) {
+      const phone = extractPhoneFromText(span.getAttribute('title'));
+      if (phone) {
+        lastDetectedPhone = phone;
+        return phone;
+      }
     }
+
+    // Strategy 4: Header with dir="auto" or role elements
+    const headerTexts = document.querySelectorAll('#main header [dir="auto"], #main header [role="button"]');
+    for (const el of headerTexts) {
+      const phone = extractPhoneFromText(el.textContent);
+      if (phone) {
+        lastDetectedPhone = phone;
+        return phone;
+      }
+    }
+
+    // Strategy 5: Look for phone in any aria-label in header
+    const ariaEls = document.querySelectorAll('#main header [aria-label]');
+    for (const el of ariaEls) {
+      const label = el.getAttribute('aria-label') || '';
+      const match = label.match(/(\+?\d[\d\s\-]{8,16}\d)/);
+      if (match) {
+        const phone = extractPhoneFromText(match[1]);
+        if (phone) {
+          lastDetectedPhone = phone;
+          return phone;
+        }
+      }
+    }
+
+    // Strategy 6: Contact info panel (right side panel when open)
+    const contactInfoSpans = document.querySelectorAll('[data-testid="contact-info-subtitle"] span');
+    for (const span of contactInfoSpans) {
+      const phone = extractPhoneFromText(span.textContent);
+      if (phone) {
+        lastDetectedPhone = phone;
+        return phone;
+      }
+    }
+
+    // Strategy 7: Use last detected phone for this session
+    if (lastDetectedPhone) return lastDetectedPhone;
 
     return null;
+  }
+
+  // ─── Manual Phone Input Fallback ─────────────────────
+
+  function askPhoneManually() {
+    return new Promise((resolve) => {
+      const html = `
+        <div class="rz-preview">
+          <p style="margin-bottom:12px;color:#aaa;font-size:13px;">
+            Não foi possível detectar o número automaticamente.<br>
+            Digite o número do destinatário (com DDD e código do país):
+          </p>
+          <input type="text" id="rz-manual-phone" placeholder="5511999999999"
+            style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid #444;
+            background:#2a2a2a;color:white;font-size:15px;outline:none;margin-bottom:12px;" />
+          <div class="rz-actions">
+            <button class="rz-btn-cancel">Cancelar</button>
+            <button class="rz-btn-send">Confirmar</button>
+          </div>
+        </div>
+      `;
+      const overlay = openModal("Número do Destinatário", html);
+      const input = overlay.querySelector('#rz-manual-phone');
+      input.focus();
+
+      overlay.querySelector('.rz-btn-cancel').addEventListener('click', () => {
+        closeModal();
+        resolve(null);
+      });
+      overlay.querySelector('.rz-btn-send').addEventListener('click', () => {
+        const raw = (input.value || '').replace(/[\s\-\(\)\+]/g, '');
+        closeModal();
+        if (/^\d{10,15}$/.test(raw)) {
+          lastDetectedPhone = raw;
+          resolve(raw);
+        } else {
+          showToast("Número inválido. Use formato: 5511999999999", true);
+          resolve(null);
+        }
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') overlay.querySelector('.rz-btn-send').click();
+      });
+    });
   }
 
   // ─── Load User's Connected WhatsApp Instance ──────────
@@ -210,10 +308,10 @@
       return false;
     }
 
-    const phone = getCurrentChatPhone();
+    let phone = getCurrentChatPhone();
     if (!phone) {
-      showToast("Não foi possível detectar o número do chat atual. Abra uma conversa.", true);
-      return false;
+      phone = await askPhoneManually();
+      if (!phone) return false;
     }
 
     const body = {
