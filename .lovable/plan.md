@@ -1,96 +1,48 @@
 
 
-# Corrigir envio de mensagens pela extensao -- usar ClipboardEvent (paste)
+# Diagnóstico e Correção — Áudio enviado como Documento + Imagem enviada como Sticker
 
-## Problema
-O `sendTextViaDom` usa `document.execCommand('insertText')` que nao funciona no WhatsApp Web atual. O WhatsApp Web usa React + Lexical editor, e `execCommand` nao dispara os event listeners internos do React, resultando em "Falha ao enviar" porque:
-1. O texto pode nao ser inserido corretamente no campo
-2. O botao de enviar pode nao aparecer (o WhatsApp so mostra o botao quando detecta texto via seus proprios eventos)
+## Análise de Causa Raiz
 
-## Solucao
-Trocar `execCommand('insertText')` por `ClipboardEvent('paste')` com `DataTransfer`, que e o metodo comprovado para injetar texto em campos React/Lexical. Tambem melhorar os seletores para cobrir variantes do DOM atual do WhatsApp Web.
+### Bug 1: Áudio chega como documento (arquivo "innerblom" 4MB)
 
-## Alteracoes tecnicas
+A Edge Function `whatsapp-send` (linha 165-185) usa o endpoint `/message/sendWhatsAppAudio/` com `encoding: true`. Este flag instrui a Evolution API a re-codificar o áudio para formato OGG/Opus PTT (push-to-talk). Para arquivos grandes (4MB), a re-codificação pode falhar silenciosamente ou exceder o timeout, fazendo a Evolution API enviar o arquivo como documento genérico.
 
-### Arquivo: `extensao/content/content.js`
+Além disso, o body do áudio inclui campos redundantes e possivelmente conflitantes (`audio`, `audioMessage.audio`, `options.encoding`) que podem confundir a Evolution API dependendo da versão.
 
-#### 1. Reescrever `sendTextViaDom(text)` (linhas 94-129)
-Trocar a estrategia de insercao de texto:
+### Bug 2: Imagem chega como sticker do WhatsApp
 
-**Antes (nao funciona):**
-```js
-input.focus();
-document.execCommand("selectAll", false, null);
-document.execCommand("delete", false, null);
-document.execCommand("insertText", false, text);
-input.dispatchEvent(new Event("input", { bubbles: true }));
+Na Edge Function `whatsapp-send` (linha 192), o caption é sempre enviado como string vazia quando não fornecido:
+```typescript
+caption: caption || "",
 ```
 
-**Depois (metodo correto via paste):**
-```js
-input.focus();
-await sleep(100);
+Na Evolution API, imagens enviadas com `caption: ""` (string vazia) e dimensões pequenas são interpretadas automaticamente como **stickers** pelo WhatsApp. A solução é não incluir o campo `caption` no payload quando ele é vazio/undefined.
 
-// Limpar campo existente
-input.textContent = '';
-input.dispatchEvent(new Event("input", { bubbles: true }));
-await sleep(100);
+---
 
-// Injetar texto via ClipboardEvent (paste) -- funciona com React/Lexical
-const dataTransfer = new DataTransfer();
-dataTransfer.setData("text/plain", text);
-const pasteEvent = new ClipboardEvent("paste", {
-  clipboardData: dataTransfer,
-  bubbles: true,
-  cancelable: true,
-});
-input.dispatchEvent(pasteEvent);
-```
+## Correções Planejadas
 
-#### 2. Melhorar seletores do campo de texto (linha 97)
-Adicionar seletores alternativos para cobrir diferentes versoes do WhatsApp Web:
+### Arquivo: `supabase/functions/whatsapp-send/index.ts`
 
-```js
-const input =
-  document.querySelector('#main div[contenteditable="true"][data-tab="10"]') ||
-  document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
-  document.querySelector('#main footer div[contenteditable="true"]') ||
-  document.querySelector('footer div[contenteditable="true"]');
-```
+**Correção 1 — Áudio**: Simplificar o payload do `sendWhatsAppAudio` removendo campos redundantes. Desabilitar `encoding` quando o arquivo já estiver em formato OGG ou quando for grande (>2MB), para evitar timeout na re-codificação. Aumentar timeout para 60s em envios de áudio.
 
-#### 3. Melhorar seletor do botao de enviar (linha 116)
-Adicionar fallbacks para o botao send:
+**Correção 2 — Imagem/Mídia**: Não enviar `caption` como string vazia. Se não houver caption real, omitir o campo do payload completamente. Isso impede que a Evolution API interprete a imagem como sticker.
 
-```js
-const sendBtn =
-  document.querySelector('span[data-icon="send"]') ||
-  document.querySelector('button[aria-label="Send"]') ||
-  document.querySelector('button[aria-label="Enviar"]');
-```
+### Mudanças específicas:
 
-#### 4. Aumentar o tempo de espera antes de procurar o botao send
-Trocar `await sleep(300)` por `await sleep(500)` para dar mais tempo ao WhatsApp processar o paste e mostrar o botao de enviar. Se nao encontrar, tentar esperar mais com `waitForElement`.
+1. Na branch de áudio (linhas 166-185):
+   - Verificar se o mime é `audio/ogg` → `encoding: false` (já está no formato correto)
+   - Para outros formatos de áudio, manter `encoding: true` apenas se arquivo < 2MB
+   - Simplificar payload removendo campos duplicados (`audioMessage` é redundante)
 
-#### 5. Melhorar `sendFileViaDom` -- seletores do botao de anexo (linhas 147-150)
-Adicionar mais variantes do icone de anexo:
+2. Na branch de mídia (linhas 187-213):
+   - Mudar `caption: caption || ""` para `...(caption ? { caption } : {})` — omitir campo quando vazio
+   - Aplicar o mesmo no `mediaMessage` interno
 
-```js
-const attachBtn =
-  document.querySelector('#main span[data-icon="plus"]') ||
-  document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
-  document.querySelector('#main span[data-icon="clip"]') ||
-  document.querySelector('span[data-icon="plus"]') ||
-  document.querySelector('span[data-icon="attach-menu-plus"]');
-```
+3. No `evoFetch` (linha 20-21):
+   - Aumentar timeout de 30s para 60s para suportar encoding de áudios grandes
 
-## Resumo das mudancas
-- 1 arquivo alterado: `extensao/content/content.js`
-- Metodo de insercao de texto: `execCommand` trocado por `ClipboardEvent('paste')` com `DataTransfer`
-- Seletores CSS melhorados com multiplos fallbacks
-- Tempos de espera ajustados para o WhatsApp processar os eventos
+### Nenhuma mudança no frontend necessária
+O frontend (`EspacoTestePage.tsx` e `use-real-whatsapp.ts`) já passa os dados corretamente. Os bugs são exclusivamente na Edge Function.
 
-## Apos implementar
-O usuario precisa:
-1. Copiar o arquivo atualizado para a pasta local da extensao
-2. Ir em `chrome://extensions` e clicar em atualizar
-3. Recarregar a aba do WhatsApp Web (F5)
