@@ -290,6 +290,9 @@
 
       const setFilesOnInput = (input) => {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
+        try {
+          input.click();
+        } catch {}
         if (setter) setter.call(input, dt.files);
         else input.files = dt.files;
 
@@ -301,20 +304,22 @@
         const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
         const lookupRoot = modal || document;
 
-        const iconBtn =
-          lookupRoot.querySelector('span[data-icon="send"]') ||
-          lookupRoot.querySelector('span[data-icon="send-filled"]') ||
-          lookupRoot.querySelector('span[data-icon="wds-ic-send-filled"]');
-
-        if (iconBtn) return iconBtn.closest("button, [role='button']") || iconBtn;
-
-        const labeledBtn =
+        const directButton =
+          lookupRoot.querySelector('button[data-testid="compose-btn-send"]') ||
           lookupRoot.querySelector('button[aria-label*="Enviar"]') ||
           lookupRoot.querySelector('button[aria-label*="Send"]') ||
           lookupRoot.querySelector('[role="button"][aria-label*="Enviar"]') ||
           lookupRoot.querySelector('[role="button"][aria-label*="Send"]');
 
-        if (labeledBtn) return labeledBtn;
+        if (directButton) return directButton;
+
+        const iconBtn =
+          lookupRoot.querySelector('span[data-icon="send"]') ||
+          lookupRoot.querySelector('span[data-icon="send-filled"]') ||
+          lookupRoot.querySelector('span[data-icon="wds-ic-send-filled"]') ||
+          lookupRoot.querySelector('[data-icon*="send"]');
+
+        if (iconBtn) return iconBtn.closest("button, [role='button']") || iconBtn;
 
         const chatSend =
           document.querySelector('#main footer button span[data-icon="send"]') ||
@@ -322,7 +327,8 @@
           document.querySelector('footer button span[data-icon="send"]') ||
           document.querySelector('footer span[data-icon="send"]') ||
           document.querySelector('#main footer button[aria-label="Send"]') ||
-          document.querySelector('#main footer button[aria-label="Enviar"]');
+          document.querySelector('#main footer button[aria-label="Enviar"]') ||
+          document.querySelector('#main footer button[data-testid="compose-btn-send"]');
 
         return chatSend ? chatSend.closest("button, [role='button']") || chatSend : null;
       };
@@ -337,7 +343,33 @@
         return null;
       };
 
-      const prepareTimeout = Math.min(12000, Math.max(3000, Math.floor(blob.size / 300000)));
+      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(blob.size / 250)));
+
+      const simulateDropUpload = async () => {
+        const dropTargets = [
+          document.querySelector('#main'),
+          document.querySelector('#main [role="application"]'),
+          document.querySelector('#main footer'),
+          document.querySelector('#main div[contenteditable="true"]'),
+        ].filter(Boolean);
+
+        for (const target of dropTargets) {
+          try {
+            const dropTransfer = new DataTransfer();
+            dropTransfer.items.add(file);
+            target.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
+            target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
+            target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
+
+            const sendBtn = await waitForPreparedState(prepareTimeout);
+            if (sendBtn) return sendBtn;
+          } catch (e) {
+            console.warn("[RiseZap] Falha no fallback de drop", e);
+          }
+        }
+
+        return null;
+      };
 
       let sendBtn = null;
       for (const input of candidates) {
@@ -348,6 +380,10 @@
         } catch (e) {
           console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
         }
+      }
+
+      if (!sendBtn) {
+        sendBtn = await simulateDropUpload();
       }
 
       if (!sendBtn) {
