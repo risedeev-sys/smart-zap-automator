@@ -404,37 +404,68 @@
     return { matched: false, element: null, input: null };
   }
 
-  function classifyInputKind(input) {
-    const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
-    if (!accept) return "generic";
+  function getAcceptTokens(input) {
+    return (input.getAttribute("accept") || "")
+      .toLowerCase()
+      .split(",")
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
 
-    const tokens = accept.split(",").map((token) => token.trim()).filter(Boolean);
-    const hasStickerOnly = tokens.length > 0 && tokens.every((token) => token === "image/webp" || token === ".webp");
-    if (hasStickerOnly) return "sticker";
-
-    const hasAudio = tokens.some((token) =>
+  function hasAudioAccept(tokens) {
+    return tokens.some((token) =>
       token.startsWith("audio/") ||
       token.includes("opus") ||
-      [".ogg", ".mp3", ".m4a", ".wav", ".aac"].includes(token)
+      [".ogg", ".mp3", ".m4a", ".wav", ".aac", ".opus"].includes(token)
     );
+  }
 
-    const hasMedia = tokens.some((token) =>
+  function hasMediaAccept(tokens) {
+    return tokens.some((token) =>
       token.startsWith("image/") ||
       token.startsWith("video/") ||
       [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".webm", ".3gp"].includes(token)
     );
+  }
 
-    const hasDocument = tokens.some((token) =>
+  function hasDocumentAccept(tokens) {
+    return tokens.some((token) =>
       token === "*/*" ||
       token.startsWith("application/") ||
       token.startsWith("text/") ||
       [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".csv", ".txt"].includes(token)
     );
+  }
 
-    if (hasAudio && !hasMedia && !hasDocument) return "audio";
-    if (hasMedia && !hasAudio) return "media";
-    if (hasDocument && !hasMedia && !hasAudio) return "document";
-    if (hasDocument && !hasMedia) return "document";
+  function isStrictAudioInput(input) {
+    const tokens = getAcceptTokens(input);
+    if (tokens.length > 0 && hasAudioAccept(tokens) && !hasDocumentAccept(tokens)) return true;
+
+    const hints = [
+      input.getAttribute("id") || "",
+      input.getAttribute("name") || "",
+      input.getAttribute("class") || "",
+      input.getAttribute("aria-label") || "",
+      input.closest("label,li,button,div")?.textContent || "",
+    ].join(" ").toLowerCase();
+
+    return hasAudioAccept(tokens) || hints.includes("audio") || hints.includes("áudio") || hints.includes("voz");
+  }
+
+  function classifyInputKind(input) {
+    const tokens = getAcceptTokens(input);
+    if (tokens.length === 0) return "generic";
+
+    const hasStickerOnly = tokens.every((token) => token === "image/webp" || token === ".webp");
+    if (hasStickerOnly) return "sticker";
+
+    const audio = hasAudioAccept(tokens);
+    const media = hasMediaAccept(tokens);
+    const document = hasDocumentAccept(tokens);
+
+    if (audio && !media && !document) return "audio";
+    if (media && !audio && !document) return "media";
+    if (document && !audio && !media) return "document";
 
     return "generic";
   }
@@ -443,30 +474,37 @@
     if (!input || !input.isConnected || input.disabled) return -1000;
 
     const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
+    const tokens = getAcceptTokens(input);
     const kind = classifyInputKind(input);
     if (kind === "sticker") return -1000;
+
+    const audioAccept = hasAudioAccept(tokens);
+    const mediaAccept = hasMediaAccept(tokens);
+    const documentAccept = hasDocumentAccept(tokens);
 
     let score = 0;
     if (!baselineInputs.has(input)) score += 45;
     if (input.closest("#main")) score += 12;
     if (preferredRoot && preferredRoot.contains?.(input)) score += 30;
 
-    if (kind === targetKind) score += 130;
-    if (kind === "generic") score += 22;
+    if (kind === targetKind) score += 140;
+    if (kind === "generic") score += 20;
 
     if (targetKind === "audio") {
-      if (accept.includes("audio") || accept.includes("opus") || accept.includes(".ogg") || accept.includes(".mp3")) score += 60;
-      if (accept.includes("image") || accept.includes("video") || accept.includes("application/")) score -= 120;
+      if (audioAccept) score += 170;
+      if (!audioAccept && (documentAccept || mediaAccept || accept.includes("application/"))) score -= 220;
+      if (isStrictAudioInput(input)) score += 40;
     }
 
     if (targetKind === "media") {
-      if (accept.includes("image") || accept.includes("video")) score += 60;
-      if (accept.includes("audio") || accept.includes("application/")) score -= 90;
+      if (mediaAccept) score += 90;
+      if (documentAccept && !mediaAccept) score -= 120;
+      if (audioAccept && !mediaAccept) score -= 100;
     }
 
     if (targetKind === "document") {
-      if (accept.includes("application/") || accept.includes("text/") || accept.includes("*/*") || accept.includes(".pdf")) score += 60;
-      if (accept.includes("image") || accept.includes("video")) score -= 90;
+      if (documentAccept) score += 90;
+      if ((mediaAccept || audioAccept) && !documentAccept) score -= 120;
     }
 
     return score;
@@ -488,6 +526,17 @@
         }
       }
 
+      if (targetKind === "audio") {
+        const strictAudio = inputs
+          .filter((input) => isStrictAudioInput(input) && classifyInputKind(input) !== "sticker")
+          .sort((a, b) =>
+            scoreInputForKind(b, targetKind, baselineSet, preferredRoot) -
+            scoreInputForKind(a, targetKind, baselineSet, preferredRoot)
+          )[0];
+
+        if (strictAudio) return strictAudio;
+      }
+
       if (bestInput && (bestScore >= 70 || (attempt > 10 && bestScore >= 35))) {
         return bestInput;
       }
@@ -496,6 +545,12 @@
     }
 
     const allInputs = [...document.querySelectorAll("input[type='file']")].filter((input) => classifyInputKind(input) !== "sticker");
+
+    if (targetKind === "audio") {
+      const strict = allInputs.find((input) => isStrictAudioInput(input));
+      return strict || null;
+    }
+
     const preferredInput = allInputs.find((input) => preferredRoot?.contains?.(input));
     return preferredInput || allInputs[0] || null;
   }
@@ -569,18 +624,18 @@
         return false;
       }
 
-      const selectedKind = classifyInputKind(fileInput);
-      const selectedAccept = (fileInput.getAttribute("accept") || "").toLowerCase();
+      let selectedKind = classifyInputKind(fileInput);
 
-      if (
-        targetKind === "audio" &&
-        selectedAccept &&
-        !selectedAccept.includes("audio") &&
-        (selectedAccept.includes("application/") || selectedAccept.includes("image") || selectedAccept.includes("video"))
-      ) {
-        const retryAudioInput = await findFileInputForKind("audio", [], optionResult.element);
-        if (retryAudioInput) {
+      if (targetKind === "audio" && !isStrictAudioInput(fileInput)) {
+        await openAttachmentMenu();
+        const retryAudioOption = await clickAttachmentOption("audio");
+        const retryAudioInput = retryAudioOption.input || await findFileInputForKind("audio", [], retryAudioOption.element);
+        if (retryAudioInput && isStrictAudioInput(retryAudioInput)) {
           fileInput = retryAudioInput;
+          selectedKind = classifyInputKind(fileInput);
+        } else {
+          showToast("Não consegui selecionar o input de áudio do WhatsApp", true);
+          return false;
         }
       }
 
