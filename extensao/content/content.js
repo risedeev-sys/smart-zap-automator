@@ -7,6 +7,7 @@
 
   let token = null;
   let assets = { messages: [], audios: [], medias: [], documents: [], funnels: [] };
+  let activeFunnelRunId = null;
 
   // ─── Auth ──────────────────────────────────────────────
 
@@ -341,6 +342,25 @@
     return true;
   }
 
+  function findFileInputNearElement(node) {
+    if (!node) return null;
+
+    const scopes = [
+      node,
+      node.closest("label"),
+      node.closest("li, div, button, span"),
+      node.parentElement,
+      node.parentElement?.parentElement,
+    ].filter(Boolean);
+
+    for (const scope of scopes) {
+      const found = scope.querySelector?.("input[type='file']");
+      if (found) return found;
+    }
+
+    return null;
+  }
+
   async function clickAttachmentOption(targetKind) {
     const labelPatterns = {
       media: ["fotos e videos", "fotos e vídeos", "photos & videos", "photos and videos", "photo"],
@@ -351,7 +371,7 @@
     const patterns = labelPatterns[targetKind] || labelPatterns.document;
 
     const candidates = document.querySelectorAll(
-      "#main li, #main button, #main [role='button'], " +
+      "#main li, #main button, #main label, #main [role='button'], " +
       "[data-animate-dropdown-item='true'], " +
       "li[tabindex], li[role='menuitem'], " +
       "div[role='button'], span[role='button']"
@@ -363,17 +383,25 @@
       const combined = `${text} ${ariaLabel}`;
 
       for (const pattern of patterns) {
-        if (combined.includes(normalizeLabel(pattern))) {
-          console.log(`[RiseZap] Clicking menu option: "${el.textContent?.trim()}" for targetKind=${targetKind}`);
-          el.click();
-          await sleep(500);
-          return true;
+        if (!combined.includes(normalizeLabel(pattern))) continue;
+
+        const directInput = findFileInputNearElement(el);
+        if (directInput) {
+          console.log(`[RiseZap] Found direct input for targetKind=${targetKind}`);
+          return { matched: true, element: el, input: directInput };
         }
+
+        console.log(`[RiseZap] Clicking menu option: "${el.textContent?.trim()}" for targetKind=${targetKind}`);
+        el.click();
+        await sleep(450);
+
+        const inputAfterClick = findFileInputNearElement(el);
+        return { matched: true, element: el, input: inputAfterClick || null };
       }
     }
 
     console.warn(`[RiseZap] Menu option not found for targetKind=${targetKind}`);
-    return false;
+    return { matched: false, element: null, input: null };
   }
 
   function classifyInputKind(input) {
@@ -411,7 +439,7 @@
     return "generic";
   }
 
-  function scoreInputForKind(input, targetKind, baselineInputs) {
+  function scoreInputForKind(input, targetKind, baselineInputs, preferredRoot = null) {
     if (!input || !input.isConnected || input.disabled) return -1000;
 
     const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
@@ -419,54 +447,57 @@
     if (kind === "sticker") return -1000;
 
     let score = 0;
-    if (!baselineInputs.has(input)) score += 35;
-    if (input.closest("#main")) score += 8;
+    if (!baselineInputs.has(input)) score += 45;
+    if (input.closest("#main")) score += 12;
+    if (preferredRoot && preferredRoot.contains?.(input)) score += 30;
 
-    if (kind === targetKind) score += 120;
-    if (targetKind === "document" && (kind === "generic" || accept.includes("*/*"))) score += 70;
+    if (kind === targetKind) score += 130;
+    if (kind === "generic") score += 22;
 
     if (targetKind === "audio") {
-      if (accept.includes("audio") || accept.includes("opus") || accept.includes(".ogg")) score += 45;
-      if (accept.includes("image") || accept.includes("video")) score -= 80;
+      if (accept.includes("audio") || accept.includes("opus") || accept.includes(".ogg") || accept.includes(".mp3")) score += 60;
+      if (accept.includes("image") || accept.includes("video") || accept.includes("application/")) score -= 120;
     }
 
     if (targetKind === "media") {
-      if (accept.includes("image") || accept.includes("video")) score += 45;
-      if (accept.includes("audio") || accept.includes("application/")) score -= 70;
+      if (accept.includes("image") || accept.includes("video")) score += 60;
+      if (accept.includes("audio") || accept.includes("application/")) score -= 90;
     }
 
     if (targetKind === "document") {
-      if (accept.includes("application/") || accept.includes("text/") || accept.includes("*/*") || accept.includes(".pdf")) score += 45;
-      if (accept.includes("image") || accept.includes("video") || accept.includes("audio")) score -= 40;
+      if (accept.includes("application/") || accept.includes("text/") || accept.includes("*/*") || accept.includes(".pdf")) score += 60;
+      if (accept.includes("image") || accept.includes("video")) score -= 90;
     }
 
     return score;
   }
 
-  async function findFileInputForKind(targetKind, baselineInputs = []) {
+  async function findFileInputForKind(targetKind, baselineInputs = [], preferredRoot = null) {
     const baselineSet = new Set(baselineInputs);
 
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < 35; attempt++) {
       const inputs = [...document.querySelectorAll("input[type='file']")];
       let bestInput = null;
       let bestScore = -1000;
 
       for (const input of inputs) {
-        const score = scoreInputForKind(input, targetKind, baselineSet);
+        const score = scoreInputForKind(input, targetKind, baselineSet, preferredRoot);
         if (score > bestScore) {
           bestScore = score;
           bestInput = input;
         }
       }
 
-      if (bestInput && bestScore >= 60) {
+      if (bestInput && (bestScore >= 70 || (attempt > 10 && bestScore >= 35))) {
         return bestInput;
       }
 
       await sleep(140);
     }
 
-    return null;
+    const allInputs = [...document.querySelectorAll("input[type='file']")].filter((input) => classifyInputKind(input) !== "sticker");
+    const preferredInput = allInputs.find((input) => preferredRoot?.contains?.(input));
+    return preferredInput || allInputs[0] || null;
   }
 
   // ─── Send File via DOM ────────────────────────────────
@@ -475,14 +506,18 @@
     try {
       const normalized = await normalizeUploadAsset(blob, fileName, mimeType);
       const uploadBlob = normalized.blob;
-      const resolvedMime = normalized.mime;
       const sourceFileName = normalized.fileName;
-      const inferredAudio = resolvedMime.startsWith("audio/");
-      const inferredMedia = /^(image|video)\//.test(resolvedMime);
+      const normalizedMime = normalized.mime;
+      const inferredAudio = normalizedMime.startsWith("audio/");
+      const inferredMedia = /^(image|video)\//.test(normalizedMime);
       const targetKind = forcedKind || (inferredAudio ? "audio" : inferredMedia ? "media" : "document");
+      const effectiveMime = targetKind === "audio"
+        ? (normalizedMime.startsWith("audio/") ? normalizedMime : "audio/ogg")
+        : normalizedMime;
 
       const extensionMap = {
         "audio/ogg": "ogg",
+        "audio/opus": "ogg",
         "audio/mpeg": "mp3",
         "audio/mp4": "m4a",
         "audio/wav": "wav",
@@ -493,42 +528,40 @@
       };
 
       const hasExtension = /\.[a-z0-9]{2,8}$/i.test(sourceFileName || "");
-      const fallbackExt = extensionMap[resolvedMime] || "bin";
+      const fallbackExt = extensionMap[effectiveMime] || (targetKind === "audio" ? "ogg" : "bin");
       const safeFileName = hasExtension ? sourceFileName : `${sourceFileName || "arquivo"}.${fallbackExt}`;
 
-      console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, uploadBlob.size, "bytes", "kind:", targetKind);
+      console.log("[RiseZap] sendFileViaDom:", safeFileName, effectiveMime, uploadBlob.size, "bytes", "kind:", targetKind);
 
-      // STEP 1: Capture current inputs before opening the menu
       const baselineInputs = [...document.querySelectorAll("input[type='file']")];
 
-      // STEP 2: Open attachment menu
       const menuOpened = await openAttachmentMenu();
       if (!menuOpened) {
         showToast("Não encontrei o botão de anexar", true);
         return false;
       }
 
-      // STEP 3: Click the correct menu option (Fotos e vídeos / Áudio / Documento)
-      const optionClicked = await clickAttachmentOption(targetKind);
-      if (!optionClicked) {
+      const optionResult = await clickAttachmentOption(targetKind);
+      if (!optionResult.matched) {
         console.warn(`[RiseZap] Não localizei opção de menu para ${targetKind}, tentando input existente`);
       }
 
-      const file = new File([uploadBlob], safeFileName, { type: resolvedMime });
+      const file = new File([uploadBlob], safeFileName, { type: effectiveMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
-      await sleep(260);
+      await sleep(240);
 
-      // STEP 4: Find the correct input for target kind
-      let fileInput = await findFileInputForKind(targetKind, baselineInputs);
+      let fileInput = optionResult.input;
+      if (!fileInput || !fileInput.isConnected || fileInput.disabled || classifyInputKind(fileInput) === "sticker") {
+        fileInput = await findFileInputForKind(targetKind, baselineInputs, optionResult.element);
+      }
 
-      // Second pass (re-open menu) if input was not found
       if (!fileInput) {
         await openAttachmentMenu();
-        await clickAttachmentOption(targetKind);
+        const retryOption = await clickAttachmentOption(targetKind);
         await sleep(220);
-        fileInput = await findFileInputForKind(targetKind, []);
+        fileInput = retryOption.input || await findFileInputForKind(targetKind, [], retryOption.element);
       }
 
       if (!fileInput) {
@@ -537,6 +570,20 @@
       }
 
       const selectedKind = classifyInputKind(fileInput);
+      const selectedAccept = (fileInput.getAttribute("accept") || "").toLowerCase();
+
+      if (
+        targetKind === "audio" &&
+        selectedAccept &&
+        !selectedAccept.includes("audio") &&
+        (selectedAccept.includes("application/") || selectedAccept.includes("image") || selectedAccept.includes("video"))
+      ) {
+        const retryAudioInput = await findFileInputForKind("audio", [], optionResult.element);
+        if (retryAudioInput) {
+          fileInput = retryAudioInput;
+        }
+      }
+
       console.log("[RiseZap] Found file input:", {
         accept: fileInput.getAttribute("accept") || "(none)",
         id: fileInput.id || "(none)",
@@ -544,7 +591,6 @@
         targetKind,
       });
 
-      // STEP 4: Inject file into the input (WITHOUT calling input.click())
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
       if (setter) setter.call(fileInput, dt.files);
       else fileInput.files = dt.files;
@@ -552,7 +598,6 @@
       fileInput.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       fileInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
 
-      // STEP 5: Wait for WhatsApp to process and show send button
       const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
 
       const findSendButton = () => {
@@ -587,36 +632,6 @@
         await sleep(200);
       }
 
-      // Fallback: try drop if input injection didn't work
-      if (!sendBtn) {
-        console.log("[RiseZap] Input injection didn't trigger send UI, trying drop fallback");
-        const dropTargets = [
-          document.querySelector("#main [role='application']"),
-          document.querySelector("#main"),
-          document.querySelector("#main footer"),
-        ].filter(Boolean);
-
-        for (const target of dropTargets) {
-          try {
-            const dropTransfer = new DataTransfer();
-            dropTransfer.items.add(file);
-            target.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
-            target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
-            target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dropTransfer }));
-
-            const dropStart = Date.now();
-            while (Date.now() - dropStart < 5000) {
-              sendBtn = findSendButton();
-              if (sendBtn) break;
-              await sleep(200);
-            }
-            if (sendBtn) break;
-          } catch (e) {
-            console.warn("[RiseZap] Drop fallback failed", e);
-          }
-        }
-      }
-
       if (!sendBtn) {
         showToast("Não consegui preparar o arquivo para envio", true);
         return false;
@@ -634,71 +649,102 @@
   // ─── Send Funnel via DOM (sequential) ──────────────────
 
   async function sendFunnelViaDom(funnelId, funnelName) {
-    await loadAssets();
-
-    const items = await loadFunnelItems(funnelId);
-    if (!items || items.length === 0) {
-      showToast(`Funil "${funnelName}" está vazio`, true);
+    if (activeFunnelRunId) {
+      showToast("Já existe um funil em execução. Aguarde terminar.", true);
       return false;
     }
 
-    showToast(`Enviando funil "${funnelName}" (${items.length} itens)...`);
+    const runId = `${funnelId}:${Date.now()}`;
+    activeFunnelRunId = runId;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    try {
+      await loadAssets();
 
-      // Apply item delay
-      const delayMs = ((item.delay_min || 0) * 60 + (item.delay_sec || 0)) * 1000;
-      if (delayMs > 0 && i > 0) {
-        console.log(`[RiseZap] Funnel delay: ${delayMs / 1000}s before item ${i + 1}`);
-        await sleep(delayMs);
+      const rawItems = await loadFunnelItems(funnelId);
+      if (!rawItems || rawItems.length === 0) {
+        showToast(`Funil "${funnelName}" está vazio`, true);
+        return false;
       }
 
-      const asset = await resolveAsset(item.type, item.asset_id);
-      if (!asset) {
-        console.warn(`[RiseZap] Could not resolve asset: type=${item.type}, id=${item.asset_id}`);
-        showToast(`Item ${i + 1} não encontrado, pulando...`, true);
-        continue;
-      }
+      const seenItems = new Set();
+      const items = rawItems
+        .slice()
+        .sort((a, b) => (a.position || 0) - (b.position || 0))
+        .filter((item) => {
+          const signature = item.id || `${item.position}|${item.type}|${item.asset_id}`;
+          if (seenItems.has(signature)) return false;
+          seenItems.add(signature);
+          return true;
+        });
 
-      let ok = false;
+      showToast(`Enviando funil "${funnelName}" (${items.length} itens)...`);
 
-      if (asset.resolvedType === "message") {
-        ok = await sendTextViaDom(asset.content || asset.name);
-      } else {
-        // Audio, media, document — need to download and send
-        if (!asset.storage_path) {
-          showToast(`Item ${i + 1} sem arquivo, pulando...`, true);
-          continue;
+      for (let i = 0; i < items.length; i++) {
+        if (activeFunnelRunId !== runId) {
+          console.warn("[RiseZap] Funnel run interrupted by a newer execution");
+          return false;
         }
 
-        const signedUrl = await getSignedUrl(asset.storage_path);
-        if (!signedUrl) {
-          showToast(`Erro ao gerar URL do item ${i + 1}`, true);
-          continue;
+        const item = items[i];
+
+        const delayMs = ((item.delay_min || 0) * 60 + (item.delay_sec || 0)) * 1000;
+        if (delayMs > 0 && i > 0) {
+          console.log(`[RiseZap] Funnel delay: ${delayMs / 1000}s before item ${i + 1}`);
+          await sleep(delayMs);
         }
 
-        const blob = await downloadAsBlob(signedUrl);
-        const defaultMime = asset.resolvedType === "audio" ? "audio/ogg"
-          : asset.resolvedType === "document" ? "application/pdf"
-          : "image/jpeg";
-        ok = await sendFileViaDom(blob, asset.name, asset.mime || defaultMime, asset.resolvedType);
-      }
+        const asset = await resolveAsset(item.type, item.asset_id);
+        if (!asset) {
+          console.warn(`[RiseZap] Could not resolve asset: type=${item.type}, id=${item.asset_id}`);
+          showToast(`Item ${i + 1} não encontrado, abortando funil.`, true);
+          return false;
+        }
 
-      if (ok) {
+        let ok = false;
+
+        if (asset.resolvedType === "message") {
+          ok = await sendTextViaDom(asset.content || asset.name);
+        } else {
+          if (!asset.storage_path) {
+            showToast(`Item ${i + 1} sem arquivo, abortando funil.`, true);
+            return false;
+          }
+
+          const signedUrl = await getSignedUrl(asset.storage_path);
+          if (!signedUrl) {
+            showToast(`Erro ao gerar URL do item ${i + 1}`, true);
+            return false;
+          }
+
+          const blob = await downloadAsBlob(signedUrl);
+          const defaultMime = asset.resolvedType === "audio"
+            ? "audio/ogg"
+            : asset.resolvedType === "document"
+              ? "application/pdf"
+              : "image/jpeg";
+          ok = await sendFileViaDom(blob, asset.name, asset.mime || defaultMime, asset.resolvedType);
+        }
+
+        if (!ok) {
+          console.error(`[RiseZap] Funnel item ${i + 1}/${items.length} FAILED: ${asset.resolvedType}`);
+          showToast(`Falha no item ${i + 1}. Funil interrompido.`, true);
+          return false;
+        }
+
         console.log(`[RiseZap] Funnel item ${i + 1}/${items.length} sent: ${asset.resolvedType}`);
-      } else {
-        console.error(`[RiseZap] Funnel item ${i + 1}/${items.length} FAILED: ${asset.resolvedType}`);
+
+        if (i < items.length - 1) {
+          await sleep(1500);
+        }
       }
 
-      // Small gap between items to let WhatsApp process
-      if (i < items.length - 1) {
-        await sleep(1500);
+      showToast(`Funil "${funnelName}" concluído! ✓`);
+      return true;
+    } finally {
+      if (activeFunnelRunId === runId) {
+        activeFunnelRunId = null;
       }
     }
-
-    showToast(`Funil "${funnelName}" concluído! ✓`);
-    return true;
   }
 
   // ─── Toast ─────────────────────────────────────────────
@@ -759,12 +805,17 @@
     `;
     const overlay = openModal(title, html);
     overlay.querySelector(".rz-btn-cancel").addEventListener("click", closeModal);
+    let sending = false;
     overlay.querySelector(".rz-btn-send").addEventListener("click", async () => {
+      if (sending) return;
+      sending = true;
+
       const btn = overlay.querySelector(".rz-btn-send");
       btn.textContent = "Enviando...";
       btn.disabled = true;
       closeModal();
       await sleep(300);
+
       try {
         const ok = await onSend();
         if (ok) {
@@ -775,6 +826,8 @@
       } catch (err) {
         console.error("[RiseZap] Erro no envio:", err);
         showToast("Erro: " + (err.message || "falha desconhecida"), true);
+      } finally {
+        sending = false;
       }
     });
   }
