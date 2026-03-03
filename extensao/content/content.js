@@ -168,14 +168,18 @@
 
   async function sendFileViaDom(blob, fileName, mimeType) {
     try {
-      console.log("[RiseZap] sendFileViaDom:", fileName, mimeType, blob.size, "bytes");
-      const isMedia = /^(image|video)\//.test(mimeType);
-      const isAudio = /^audio\//.test(mimeType);
+      const resolvedMime = (mimeType || blob.type || "application/octet-stream").toLowerCase();
+      const isMedia = /^(image|video)\//.test(resolvedMime);
+      const targetKind = isMedia ? "media" : "document"; // áudio também vai como documento
+
+      console.log("[RiseZap] sendFileViaDom:", fileName, resolvedMime, blob.size, "bytes", "kind:", targetKind);
 
       const attachBtn =
         document.querySelector('#main span[data-icon="plus"]') ||
         document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
         document.querySelector('#main span[data-icon="clip"]') ||
+        document.querySelector('button[aria-label*="Anexar"]') ||
+        document.querySelector('button[title*="Anexar"]') ||
         document.querySelector('span[data-icon="plus"]') ||
         document.querySelector('span[data-icon="attach-menu-plus"]');
 
@@ -186,84 +190,101 @@
 
       const attachBtnEl = attachBtn.closest("button") || attachBtn;
       attachBtnEl.click();
-      await sleep(700);
+      await sleep(350);
 
-      if (!isMedia && !isAudio) {
-        const docOption =
-          document.querySelector('span[data-icon="attach-document"]') ||
-          document.querySelector('li[data-animate-dropdown-item="3"] button') ||
-          document.querySelector('[aria-label*="Documento"]') ||
-          document.querySelector('[aria-label*="Document"]');
+      const isDocumentAccept = (accept) =>
+        !accept ||
+        accept === "*" ||
+        accept === "*/*" ||
+        accept.includes("application") ||
+        accept.includes("text") ||
+        accept.includes("document") ||
+        accept.includes(".pdf") ||
+        accept.includes(".doc") ||
+        accept.includes(".xls") ||
+        accept.includes(".ppt") ||
+        accept.includes("audio");
 
-        if (docOption) {
-          const docBtn = docOption.closest("button") || docOption;
-          docBtn.click();
+      const scoreInput = (input) => {
+        const accept = (input.getAttribute("accept") || "").toLowerCase();
+        const isMediaAccept = accept.includes("image") || accept.includes("video");
+        const isDocAccept = isDocumentAccept(accept);
+
+        if (targetKind === "media") {
+          if (isMediaAccept) return 3;
+          if (isDocAccept) return 1;
+          return 2;
         }
-      } else {
-        const mediaOption =
-          document.querySelector('span[data-icon="attach-image"]') ||
-          document.querySelector('li[data-animate-dropdown-item="1"] button') ||
-          document.querySelector('[aria-label*="Fotos"]') ||
-          document.querySelector('[aria-label*="Photos"]');
 
-        if (mediaOption) {
-          const mediaBtn = mediaOption.closest("button") || mediaOption;
-          mediaBtn.click();
-        }
+        if (isDocAccept) return 3;
+        if (isMediaAccept) return 1;
+        return 2;
+      };
+
+      const getCandidateInputs = () => {
+        const allInputs = Array.from(document.querySelectorAll('input[type="file"]'))
+          .filter((input) => !input.disabled)
+          .map((input) => ({ input, score: scoreInput(input) }))
+          .sort((a, b) => b.score - a.score)
+          .map((item) => item.input);
+
+        return allInputs.reverse(); // prioriza inputs inseridos mais recentemente
+      };
+
+      let candidates = [];
+      for (let i = 0; i < 16; i++) {
+        candidates = getCandidateInputs();
+        if (candidates.length) break;
+        await sleep(200);
       }
 
-      await sleep(500);
-
-      const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-      if (!allInputs.length) {
+      if (!candidates.length) {
         showToast("Input de arquivo não encontrado", true);
         return false;
       }
 
-      const getAccept = (input) => (input.getAttribute("accept") || "").toLowerCase();
-      const typeMatched = allInputs.filter((input) => {
-        const accept = getAccept(input);
-        if (!accept || accept === "*" || accept === "*/*") return true;
-        if (isMedia) return accept.includes("image") || accept.includes("video");
-        if (isAudio) return accept.includes("audio");
-        return (
-          accept.includes("application") ||
-          accept.includes("document") ||
-          accept.includes(".pdf") ||
-          accept.includes(".doc")
-        );
-      });
-
-      const candidates = (typeMatched.length ? typeMatched : allInputs).reverse();
-
-      const file = new File([blob], fileName, {
-        type: mimeType || blob.type || "application/octet-stream",
-      });
+      const file = new File([blob], fileName, { type: resolvedMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
-      const findModalSendButton = () => {
-        const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
-        if (!modal) return null;
+      const setFilesOnInput = (input) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
+        if (setter) setter.call(input, dt.files);
+        else input.files = dt.files;
 
-        return (
-          modal.querySelector('button[aria-label*="Enviar"]') ||
-          modal.querySelector('button[aria-label*="Send"]') ||
-          modal.querySelector('div[role="button"][aria-label*="Enviar"]') ||
-          modal.querySelector('div[role="button"][aria-label*="Send"]') ||
-          modal.querySelector('span[data-icon="send"]')
-        );
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
       };
 
-      let previewOpened = false;
+      const findSendButton = () => {
+        const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
+        const modalBtn = modal
+          ? modal.querySelector(
+              'button[aria-label*="Enviar"], button[aria-label*="Send"], div[role="button"][aria-label*="Enviar"], div[role="button"][aria-label*="Send"], span[data-icon="send"]'
+            )
+          : null;
+
+        if (modalBtn) return modalBtn.closest("button, [role='button']") || modalBtn;
+
+        const chatSend =
+          document.querySelector('#main footer button span[data-icon="send"]') ||
+          document.querySelector('#main footer span[data-icon="send"]') ||
+          document.querySelector('footer button span[data-icon="send"]') ||
+          document.querySelector('footer span[data-icon="send"]') ||
+          document.querySelector('#main footer button[aria-label="Send"]') ||
+          document.querySelector('#main footer button[aria-label="Enviar"]');
+
+        return chatSend ? chatSend.closest("button, [role='button']") || chatSend : null;
+      };
+
+      let prepared = false;
       for (const input of candidates) {
         try {
-          input.files = dt.files;
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          await sleep(600);
-          if (findModalSendButton()) {
-            previewOpened = true;
+          setFilesOnInput(input);
+          await sleep(450);
+
+          if (findSendButton()) {
+            prepared = true;
             break;
           }
         } catch (e) {
@@ -271,25 +292,24 @@
         }
       }
 
-      if (!previewOpened) {
-        showToast("Não consegui abrir preview do arquivo", true);
+      if (!prepared) {
+        showToast("Não consegui preparar o arquivo para envio", true);
         return false;
       }
 
-      let modalSendBtn = null;
-      for (let i = 0; i < 15; i++) {
-        modalSendBtn = findModalSendButton();
-        if (modalSendBtn) break;
-        await sleep(300);
+      let sendBtn = null;
+      for (let i = 0; i < 16; i++) {
+        sendBtn = findSendButton();
+        if (sendBtn) break;
+        await sleep(250);
       }
 
-      if (!modalSendBtn) {
-        showToast("Botão de enviar do preview não encontrado", true);
+      if (!sendBtn) {
+        showToast("Botão de enviar do anexo não encontrado", true);
         return false;
       }
 
-      const sendEl = modalSendBtn.closest("button, [role='button']") || modalSendBtn;
-      sendEl.click();
+      sendBtn.click();
       return true;
     } catch (err) {
       console.error("[RiseZap] sendFileViaDom error:", err);
@@ -364,8 +384,11 @@
       await sleep(300);
       try {
         const ok = await onSend();
-        if (ok) showToast("Mensagem enviada! ✓");
-        else showToast("Falha ao enviar", true);
+        if (ok) {
+          showToast("Mensagem enviada! ✓");
+        } else if (!document.getElementById("risezap-toast")) {
+          showToast("Falha ao enviar", true);
+        }
       } catch (err) {
         console.error("[RiseZap] Erro no envio:", err);
         showToast("Erro: " + (err.message || "falha desconhecida"), true);
