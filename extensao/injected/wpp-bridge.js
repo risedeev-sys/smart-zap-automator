@@ -52,7 +52,7 @@
 
   window.addEventListener("risezap:send", async function (evt) {
     const detail = evt.detail || {};
-    const { requestId, type, url, isPtt, caption, fileName, asViewOnce, mime } = detail;
+    const { requestId, type, url, fallbackUrl, blobUrl, isPtt, caption, fileName, asViewOnce, mime } = detail;
 
     if (!requestId) return;
 
@@ -86,26 +86,40 @@
       return;
     }
 
-    // ─── Fetch file from signed URL ───────────────────
+    // ─── Fetch file (resilient strategy) ───────────────
 
     let content;
-    try {
-      if (url) {
-        const res = await fetch(url);
-        if (!res.ok) {
-          respond(false, "Failed to fetch file: HTTP " + res.status);
-          return;
-        }
+    const fetchErrors = [];
 
-        // IMPORTANT: keep as Blob for large files (videos), avoiding base64 inflation.
-        // wa-js supports Blob/File directly in sendFileMessage.
+    const candidates = [
+      { value: blobUrl, label: "blobUrl" },
+      { value: url, label: "url" },
+      { value: fallbackUrl, label: "fallbackUrl" },
+    ].filter((candidate, index, arr) => {
+      if (!candidate.value) return false;
+      return arr.findIndex((x) => x.value === candidate.value) === index;
+    });
+
+    if (!candidates.length) {
+      respond(false, "No URL provided for file send.");
+      return;
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const res = await fetch(candidate.value, { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
         content = await res.blob();
-      } else {
-        respond(false, "No URL provided for file send.");
-        return;
+        break;
+      } catch (err) {
+        fetchErrors.push(`${candidate.label}: ${err.message || err}`);
       }
-    } catch (err) {
-      respond(false, "Failed to fetch file: " + (err.message || err));
+    }
+
+    if (!content) {
+      respond(false, "Failed to fetch file: " + fetchErrors.join(" | "));
       return;
     }
 
