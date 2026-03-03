@@ -50,24 +50,79 @@
     );
   }
 
+  function normalizeAssetType(rawType) {
+    const key = normalizeLabel(rawType).replace(/\s+/g, "");
+    if (["mensagem", "message", "texto", "text"].includes(key)) return "message";
+    if (["audio", "áudio", "voz", "voice", "ptt"].includes(key)) return "audio";
+    if (["midia", "mídia", "media", "imagem", "image", "video", "vídeo"].includes(key)) return "media";
+    if (["documento", "document", "doc", "arquivo", "file"].includes(key)) return "document";
+    return null;
+  }
+
+  function getTableByAssetType(normalizedType) {
+    if (normalizedType === "message") return "messages";
+    if (normalizedType === "audio") return "audios";
+    if (normalizedType === "media") return "medias";
+    if (normalizedType === "document") return "documents";
+    return null;
+  }
+
+  function getAssetTypeByTable(table) {
+    if (table === "messages") return "message";
+    if (table === "audios") return "audio";
+    if (table === "medias") return "media";
+    if (table === "documents") return "document";
+    return null;
+  }
+
+  function getCachedAsset(type, assetId) {
+    const lookups = type
+      ? [{ type, rows: type === "message" ? assets.messages : type === "audio" ? assets.audios : type === "media" ? assets.medias : assets.documents }]
+      : [
+          { type: "message", rows: assets.messages },
+          { type: "audio", rows: assets.audios },
+          { type: "media", rows: assets.medias },
+          { type: "document", rows: assets.documents },
+        ];
+
+    for (const lookup of lookups) {
+      const found = (lookup.rows || []).find((row) => row.id === assetId);
+      if (found) {
+        return {
+          ...found,
+          resolvedType: lookup.type,
+          table: getTableByAssetType(lookup.type),
+        };
+      }
+    }
+
+    return null;
+  }
+
   async function resolveAsset(type, assetId) {
-    const normalizedType = type === "mensagem" ? "message"
-      : type === "midia" ? "media"
-      : type === "documento" ? "document"
-      : type;
+    const normalizedType = normalizeAssetType(type);
+    const primaryTable = getTableByAssetType(normalizedType);
 
-    const table = normalizedType === "message" ? "messages"
-      : normalizedType === "audio" ? "audios"
-      : normalizedType === "media" ? "medias"
-      : normalizedType === "document" ? "documents"
-      : null;
+    const cached = getCachedAsset(normalizedType, assetId);
+    if (cached) return cached;
 
-    if (!table) return null;
+    const tablePlan = primaryTable
+      ? [primaryTable, "messages", "audios", "medias", "documents"].filter((table, idx, arr) => table && arr.indexOf(table) === idx)
+      : ["messages", "audios", "medias", "documents"];
 
-    const rows = await supaFetch(table, "id,name,content,storage_path,mime", `&id=eq.${assetId}`);
-    if (!rows.length) return null;
+    for (const table of tablePlan) {
+      const rows = await supaFetch(table, "id,name,content,storage_path,mime", `&id=eq.${assetId}`);
+      if (!rows.length) continue;
 
-    return { ...rows[0], resolvedType: normalizedType, table };
+      const resolvedType = getAssetTypeByTable(table);
+      return {
+        ...rows[0],
+        resolvedType,
+        table,
+      };
+    }
+
+    return null;
   }
 
   // ─── Signed URL ───────────────────────────────────────
@@ -250,9 +305,6 @@
   }
 
   // ─── Attachment Menu Navigation ────────────────────────
-  // This is the KEY fix: we must click the correct menu option
-  // (Fotos e vídeos, Áudio, Documento) BEFORE looking for file inputs.
-  // Without this, WhatsApp never renders the correct input[type=file].
 
   function getAttachmentToggle() {
     const selectors = [
@@ -290,7 +342,6 @@
   }
 
   async function clickAttachmentOption(targetKind) {
-    // Map targetKind to the menu label patterns
     const labelPatterns = {
       media: ["fotos e videos", "fotos e vídeos", "photos & videos", "photos and videos", "photo"],
       audio: ["audio", "áudio"],
@@ -299,7 +350,6 @@
 
     const patterns = labelPatterns[targetKind] || labelPatterns.document;
 
-    // Look for clickable menu items with matching text
     const candidates = document.querySelectorAll(
       "#main li, #main button, #main [role='button'], " +
       "[data-animate-dropdown-item='true'], " +
@@ -326,17 +376,110 @@
     return false;
   }
 
+  function classifyInputKind(input) {
+    const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
+    if (!accept) return "generic";
+
+    const tokens = accept.split(",").map((token) => token.trim()).filter(Boolean);
+    const hasStickerOnly = tokens.length > 0 && tokens.every((token) => token === "image/webp" || token === ".webp");
+    if (hasStickerOnly) return "sticker";
+
+    const hasAudio = tokens.some((token) =>
+      token.startsWith("audio/") ||
+      token.includes("opus") ||
+      [".ogg", ".mp3", ".m4a", ".wav", ".aac"].includes(token)
+    );
+
+    const hasMedia = tokens.some((token) =>
+      token.startsWith("image/") ||
+      token.startsWith("video/") ||
+      [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".webm", ".3gp"].includes(token)
+    );
+
+    const hasDocument = tokens.some((token) =>
+      token === "*/*" ||
+      token.startsWith("application/") ||
+      token.startsWith("text/") ||
+      [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".csv", ".txt"].includes(token)
+    );
+
+    if (hasAudio && !hasMedia && !hasDocument) return "audio";
+    if (hasMedia && !hasAudio) return "media";
+    if (hasDocument && !hasMedia && !hasAudio) return "document";
+    if (hasDocument && !hasMedia) return "document";
+
+    return "generic";
+  }
+
+  function scoreInputForKind(input, targetKind, baselineInputs) {
+    if (!input || !input.isConnected || input.disabled) return -1000;
+
+    const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
+    const kind = classifyInputKind(input);
+    if (kind === "sticker") return -1000;
+
+    let score = 0;
+    if (!baselineInputs.has(input)) score += 35;
+    if (input.closest("#main")) score += 8;
+
+    if (kind === targetKind) score += 120;
+    if (targetKind === "document" && (kind === "generic" || accept.includes("*/*"))) score += 70;
+
+    if (targetKind === "audio") {
+      if (accept.includes("audio") || accept.includes("opus") || accept.includes(".ogg")) score += 45;
+      if (accept.includes("image") || accept.includes("video")) score -= 80;
+    }
+
+    if (targetKind === "media") {
+      if (accept.includes("image") || accept.includes("video")) score += 45;
+      if (accept.includes("audio") || accept.includes("application/")) score -= 70;
+    }
+
+    if (targetKind === "document") {
+      if (accept.includes("application/") || accept.includes("text/") || accept.includes("*/*") || accept.includes(".pdf")) score += 45;
+      if (accept.includes("image") || accept.includes("video") || accept.includes("audio")) score -= 40;
+    }
+
+    return score;
+  }
+
+  async function findFileInputForKind(targetKind, baselineInputs = []) {
+    const baselineSet = new Set(baselineInputs);
+
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const inputs = [...document.querySelectorAll("input[type='file']")];
+      let bestInput = null;
+      let bestScore = -1000;
+
+      for (const input of inputs) {
+        const score = scoreInputForKind(input, targetKind, baselineSet);
+        if (score > bestScore) {
+          bestScore = score;
+          bestInput = input;
+        }
+      }
+
+      if (bestInput && bestScore >= 60) {
+        return bestInput;
+      }
+
+      await sleep(140);
+    }
+
+    return null;
+  }
+
   // ─── Send File via DOM ────────────────────────────────
 
-  async function sendFileViaDom(blob, fileName, mimeType) {
+  async function sendFileViaDom(blob, fileName, mimeType, forcedKind = null) {
     try {
       const normalized = await normalizeUploadAsset(blob, fileName, mimeType);
       const uploadBlob = normalized.blob;
       const resolvedMime = normalized.mime;
       const sourceFileName = normalized.fileName;
-      const isAudioMime = resolvedMime.startsWith("audio/");
-      const isMedia = /^(image|video)\//.test(resolvedMime);
-      const targetKind = isAudioMime ? "audio" : isMedia ? "media" : "document";
+      const inferredAudio = resolvedMime.startsWith("audio/");
+      const inferredMedia = /^(image|video)\//.test(resolvedMime);
+      const targetKind = forcedKind || (inferredAudio ? "audio" : inferredMedia ? "media" : "document");
 
       const extensionMap = {
         "audio/ogg": "ogg",
@@ -355,56 +498,50 @@
 
       console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, uploadBlob.size, "bytes", "kind:", targetKind);
 
-      // STEP 1: Open attachment menu
+      // STEP 1: Capture current inputs before opening the menu
+      const baselineInputs = [...document.querySelectorAll("input[type='file']")];
+
+      // STEP 2: Open attachment menu
       const menuOpened = await openAttachmentMenu();
       if (!menuOpened) {
         showToast("Não encontrei o botão de anexar", true);
         return false;
       }
 
-      // STEP 2: Click the correct menu option (Fotos e vídeos / Áudio / Documento)
+      // STEP 3: Click the correct menu option (Fotos e vídeos / Áudio / Documento)
       const optionClicked = await clickAttachmentOption(targetKind);
       if (!optionClicked) {
-        console.warn("[RiseZap] Could not click menu option, trying direct input injection");
+        console.warn(`[RiseZap] Não localizei opção de menu para ${targetKind}, tentando input existente`);
       }
 
-      // STEP 3: Wait for file input to appear
       const file = new File([uploadBlob], safeFileName, { type: resolvedMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
-      await sleep(300);
+      await sleep(260);
 
-      // Find the file input that WhatsApp just rendered
-      let fileInput = null;
-      for (let attempt = 0; attempt < 25; attempt++) {
-        const inputs = [...document.querySelectorAll("input[type='file']")];
-        // Get the most recently added input (usually last in DOM)
-        // Filter out sticker inputs
-        const valid = inputs.filter((inp) => {
-          const accept = (inp.getAttribute("accept") || "").toLowerCase();
-          // Skip sticker-only inputs
-          if (accept === "image/webp" || accept === ".webp") return false;
-          if (!inp.isConnected || inp.disabled) return false;
-          return true;
-        });
+      // STEP 4: Find the correct input for target kind
+      let fileInput = await findFileInputForKind(targetKind, baselineInputs);
 
-        if (valid.length > 0) {
-          // Prefer the last one (most recently added by WhatsApp after menu click)
-          fileInput = valid[valid.length - 1];
-          break;
-        }
-        await sleep(150);
+      // Second pass (re-open menu) if input was not found
+      if (!fileInput) {
+        await openAttachmentMenu();
+        await clickAttachmentOption(targetKind);
+        await sleep(220);
+        fileInput = await findFileInputForKind(targetKind, []);
       }
 
       if (!fileInput) {
-        showToast("Input de arquivo não encontrado", true);
+        showToast(`Input de ${targetKind} não encontrado`, true);
         return false;
       }
 
+      const selectedKind = classifyInputKind(fileInput);
       console.log("[RiseZap] Found file input:", {
         accept: fileInput.getAttribute("accept") || "(none)",
         id: fileInput.id || "(none)",
+        selectedKind,
+        targetKind,
       });
 
       // STEP 4: Inject file into the input (WITHOUT calling input.click())
@@ -497,6 +634,8 @@
   // ─── Send Funnel via DOM (sequential) ──────────────────
 
   async function sendFunnelViaDom(funnelId, funnelName) {
+    await loadAssets();
+
     const items = await loadFunnelItems(funnelId);
     if (!items || items.length === 0) {
       showToast(`Funil "${funnelName}" está vazio`, true);
@@ -543,7 +682,7 @@
         const defaultMime = asset.resolvedType === "audio" ? "audio/ogg"
           : asset.resolvedType === "document" ? "application/pdf"
           : "image/jpeg";
-        ok = await sendFileViaDom(blob, asset.name, asset.mime || defaultMime);
+        ok = await sendFileViaDom(blob, asset.name, asset.mime || defaultMime, asset.resolvedType);
       }
 
       if (ok) {
@@ -697,7 +836,7 @@
         if (!url) return showToast("Erro ao gerar URL do áudio", true);
         showPreview("Enviar Áudio", `🎙 ${a.name}`, async () => {
           const blob = await downloadAsBlob(url);
-          return sendFileViaDom(blob, a.name, a.mime || "audio/ogg");
+          return sendFileViaDom(blob, a.name, a.mime || "audio/ogg", "audio");
         });
       });
       bar.appendChild(btn);
@@ -713,7 +852,7 @@
         const isVideo = (m.mime || "").startsWith("video");
         showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, async () => {
           const blob = await downloadAsBlob(url);
-          return sendFileViaDom(blob, m.name, m.mime || "image/jpeg");
+          return sendFileViaDom(blob, m.name, m.mime || "image/jpeg", "media");
         });
       });
       bar.appendChild(btn);
@@ -728,7 +867,7 @@
         if (!url) return showToast("Erro ao gerar URL do documento", true);
         showPreview("Enviar Documento", `📄 ${d.name}`, async () => {
           const blob = await downloadAsBlob(url);
-          return sendFileViaDom(blob, d.name, d.mime || "application/pdf");
+          return sendFileViaDom(blob, d.name, d.mime || "application/pdf", "document");
         });
       });
       bar.appendChild(btn);
