@@ -459,15 +459,41 @@
 
   async function clickAttachmentOption(targetKind) {
     const labelPatterns = {
-      media: ["fotos e videos", "fotos e vídeos", "photos & videos", "photos and videos", "photo"],
-      audio: ["audio", "áudio"],
-      document: ["documento", "document"],
+      media: ["fotos e videos", "fotos e vídeos", "photos & videos", "photos and videos", "photo", "foto", "vídeo", "video"],
+      audio: ["audio", "áudio", "música", "music", "voice"],
+      document: ["documento", "document", "arquivo", "file"],
     };
+
+    const testIdMap = {
+      media: ["attach-image", "attach-media", "attach-photo-video"],
+      audio: ["attach-audio"],
+      document: ["attach-document"],
+    };
+
+    const testIds = testIdMap[targetKind] || [];
+    for (const tid of testIds) {
+      const byTestId = document.querySelector(`#main [data-testid='${tid}'], [data-testid='${tid}']`);
+      if (!byTestId) continue;
+
+      const clickable = isActionEnabled(byTestId);
+      if (!clickable) continue;
+
+      const directInput = findFileInputNearElement(clickable);
+      if (directInput) {
+        console.log(`[RiseZap] Found direct input by data-testid=${tid}`);
+        return { matched: true, element: clickable, input: directInput };
+      }
+
+      clickable.click();
+      await sleep(450);
+      return { matched: true, element: clickable, input: findFileInputNearElement(clickable) || null };
+    }
 
     const patterns = labelPatterns[targetKind] || labelPatterns.document;
 
     const candidates = document.querySelectorAll(
       "#main li, #main button, #main label, #main [role='button'], " +
+      "#main [data-testid^='attach-'], " +
       "[data-animate-dropdown-item='true'], " +
       "li[tabindex], li[role='menuitem'], " +
       "div[role='button'], span[role='button']"
@@ -476,23 +502,28 @@
     for (const el of candidates) {
       const text = normalizeLabel(el.textContent || "");
       const ariaLabel = normalizeLabel(el.getAttribute("aria-label") || "");
-      const combined = `${text} ${ariaLabel}`;
+      const testId = normalizeLabel(el.getAttribute("data-testid") || "");
+      const title = normalizeLabel(el.getAttribute("title") || "");
+      const combined = `${text} ${ariaLabel} ${testId} ${title}`;
 
       for (const pattern of patterns) {
         if (!combined.includes(normalizeLabel(pattern))) continue;
 
-        const directInput = findFileInputNearElement(el);
+        const actionable = isActionEnabled(el);
+        if (!actionable) continue;
+
+        const directInput = findFileInputNearElement(actionable);
         if (directInput) {
           console.log(`[RiseZap] Found direct input for targetKind=${targetKind}`);
-          return { matched: true, element: el, input: directInput };
+          return { matched: true, element: actionable, input: directInput };
         }
 
         console.log(`[RiseZap] Clicking menu option: "${el.textContent?.trim()}" for targetKind=${targetKind}`);
-        el.click();
+        actionable.click();
         await sleep(450);
 
-        const inputAfterClick = findFileInputNearElement(el);
-        return { matched: true, element: el, input: inputAfterClick || null };
+        const inputAfterClick = findFileInputNearElement(actionable);
+        return { matched: true, element: actionable, input: inputAfterClick || null };
       }
     }
 
@@ -533,6 +564,26 @@
     );
   }
 
+  function isLikelyStickerInput(input) {
+    const tokens = getAcceptTokens(input);
+    const hints = [
+      input.getAttribute("id") || "",
+      input.getAttribute("name") || "",
+      input.getAttribute("class") || "",
+      input.getAttribute("aria-label") || "",
+      input.closest("label,li,button,div")?.textContent || "",
+    ].join(" ").toLowerCase();
+
+    const hasStickerHint = hints.includes("sticker") || hints.includes("figurinha") || hints.includes("emoji");
+    const hasWebp = tokens.some((token) => token.includes("webp"));
+    const onlyWebp = tokens.length > 0 && tokens.every((token) => token === "image/webp" || token === ".webp");
+
+    if (onlyWebp) return true;
+    if (hasStickerHint && (hasWebp || tokens.length === 0)) return true;
+
+    return false;
+  }
+
   function isStrictAudioInput(input) {
     const tokens = getAcceptTokens(input);
     if (tokens.length > 0 && hasAudioAccept(tokens) && !hasDocumentAccept(tokens)) return true;
@@ -550,10 +601,8 @@
 
   function classifyInputKind(input) {
     const tokens = getAcceptTokens(input);
+    if (isLikelyStickerInput(input)) return "sticker";
     if (tokens.length === 0) return "generic";
-
-    const hasStickerOnly = tokens.every((token) => token === "image/webp" || token === ".webp");
-    if (hasStickerOnly) return "sticker";
 
     const audio = hasAudioAccept(tokens);
     const media = hasMediaAccept(tokens);
@@ -572,7 +621,7 @@
     const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
     const tokens = getAcceptTokens(input);
     const kind = classifyInputKind(input);
-    if (kind === "sticker") return -1000;
+    if (kind === "sticker" || isLikelyStickerInput(input)) return -1000;
 
     const audioAccept = hasAudioAccept(tokens);
     const mediaAccept = hasMediaAccept(tokens);
@@ -593,9 +642,10 @@
     }
 
     if (targetKind === "media") {
-      if (mediaAccept) score += 90;
-      if (documentAccept && !mediaAccept) score -= 120;
-      if (audioAccept && !mediaAccept) score -= 100;
+      if (mediaAccept) score += 120;
+      if (!mediaAccept && kind === "generic") score -= 40;
+      if (documentAccept && !mediaAccept) score -= 140;
+      if (audioAccept && !mediaAccept) score -= 120;
     }
 
     if (targetKind === "document") {
@@ -610,7 +660,7 @@
     const baselineSet = new Set(baselineInputs);
 
     for (let attempt = 0; attempt < 35; attempt++) {
-      const inputs = [...document.querySelectorAll("input[type='file']")];
+      const inputs = [...document.querySelectorAll("input[type='file']")].filter((input) => !isLikelyStickerInput(input));
       let bestInput = null;
       let bestScore = -1000;
 
@@ -633,6 +683,20 @@
         if (strictAudio) return strictAudio;
       }
 
+      if (targetKind === "media") {
+        const strictMedia = inputs
+          .filter((input) => {
+            const tokens = getAcceptTokens(input);
+            return hasMediaAccept(tokens) && !isLikelyStickerInput(input);
+          })
+          .sort((a, b) =>
+            scoreInputForKind(b, targetKind, baselineSet, preferredRoot) -
+            scoreInputForKind(a, targetKind, baselineSet, preferredRoot)
+          )[0];
+
+        if (strictMedia) return strictMedia;
+      }
+
       if (bestInput && (bestScore >= 70 || (attempt > 10 && bestScore >= 35))) {
         return bestInput;
       }
@@ -640,11 +704,18 @@
       await sleep(140);
     }
 
-    const allInputs = [...document.querySelectorAll("input[type='file']")].filter((input) => classifyInputKind(input) !== "sticker");
+    const allInputs = [...document.querySelectorAll("input[type='file']")].filter(
+      (input) => classifyInputKind(input) !== "sticker" && !isLikelyStickerInput(input)
+    );
 
     if (targetKind === "audio") {
       const strict = allInputs.find((input) => isStrictAudioInput(input));
       return strict || null;
+    }
+
+    if (targetKind === "media") {
+      const strict = allInputs.find((input) => hasMediaAccept(getAcceptTokens(input)) && !isLikelyStickerInput(input));
+      if (strict) return strict;
     }
 
     const preferredInput = allInputs.find((input) => preferredRoot?.contains?.(input));
@@ -669,7 +740,42 @@
     return clickable;
   }
 
+  function getPttSendButtonCandidate() {
+    const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
+    const main = document.querySelector("#main");
+    const roots = [modal, main, document].filter(Boolean);
+
+    const selectors = [
+      "button[data-testid='ptt-send']",
+      "span[data-testid='ptt-send']",
+      "span[data-icon='ptt-send']",
+      "[data-icon='ptt-send']",
+    ];
+
+    for (const root of roots) {
+      for (const selector of selectors) {
+        const foundNodes = root.querySelectorAll?.(selector) || [];
+
+        for (const found of foundNodes) {
+          const actionable = isActionEnabled(found);
+          if (!actionable) continue;
+
+          if (main && actionable instanceof Element && root === document && !actionable.closest("#main") && !actionable.closest("[aria-modal='true']")) {
+            continue;
+          }
+
+          return actionable;
+        }
+      }
+    }
+
+    return null;
+  }
+
   function getSendButtonCandidate() {
+    const ptt = getPttSendButtonCandidate();
+    if (ptt) return ptt;
+
     const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
     const main = document.querySelector("#main");
     const roots = [modal, main, document].filter(Boolean);
@@ -713,6 +819,18 @@
     return null;
   }
 
+  async function waitForPttSendButton(timeoutMs) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const sendBtn = getPttSendButtonCandidate();
+      if (sendBtn) return sendBtn;
+      await sleep(160);
+    }
+
+    return null;
+  }
+
   async function waitForSendButton(timeoutMs) {
     const startedAt = Date.now();
 
@@ -742,11 +860,24 @@
   }
 
   function dispatchDragEvent(target, type, dataTransfer) {
-    const event = new DragEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer,
-    });
+    let event = null;
+
+    try {
+      event = new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      });
+    } catch {
+      event = new Event(type, { bubbles: true, cancelable: true });
+    }
+
+    if (event && !event.dataTransfer) {
+      try {
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      } catch {}
+    }
+
     target.dispatchEvent(event);
   }
 
@@ -766,16 +897,59 @@
       dispatchDragEvent(dropTarget, "dragover", dt);
       dispatchDragEvent(dropTarget, "drop", dt);
 
-      await sleep(420);
+      await sleep(520);
 
-      const prepareTimeout = Math.min(60000, Math.max(12000, Math.floor(bytes / 90)));
-      const sendBtn = await waitForSendButton(prepareTimeout);
-      if (!sendBtn) return false;
+      const prepareTimeout = Math.min(70000, Math.max(14000, Math.floor(bytes / 80)));
+      const pttSendBtn = await waitForPttSendButton(prepareTimeout);
+      if (!pttSendBtn) return false;
 
-      sendBtn.click();
+      pttSendBtn.click();
       return true;
     } catch (err) {
       console.warn("[RiseZap] Audio drop path failed, using attachment fallback", err);
+      return false;
+    }
+  }
+
+  async function trySendAudioViaAttachmentAsPtt(file, bytes) {
+    try {
+      const baselineInputs = [...document.querySelectorAll("input[type='file']")];
+
+      const menuOpened = await openAttachmentMenu();
+      if (!menuOpened) return false;
+
+      const optionResult = await clickAttachmentOption("audio");
+      if (!optionResult.matched) return false;
+
+      await sleep(260);
+
+      let audioInput = optionResult.input;
+      if (!audioInput || !audioInput.isConnected || audioInput.disabled || isLikelyStickerInput(audioInput) || !isStrictAudioInput(audioInput)) {
+        audioInput = await findFileInputForKind("audio", baselineInputs, optionResult.element);
+      }
+
+      if (!audioInput || !isStrictAudioInput(audioInput) || isLikelyStickerInput(audioInput)) {
+        return false;
+      }
+
+      const dt = new DataTransfer();
+      dt.items.add(file);
+
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
+      if (setter) setter.call(audioInput, dt.files);
+      else audioInput.files = dt.files;
+
+      audioInput.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      audioInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+
+      const prepareTimeout = Math.min(70000, Math.max(14000, Math.floor(bytes / 80)));
+      const pttSendBtn = await waitForPttSendButton(prepareTimeout);
+      if (!pttSendBtn) return false;
+
+      pttSendBtn.click();
+      return true;
+    } catch (err) {
+      console.warn("[RiseZap] Audio attachment PTT path failed", err);
       return false;
     }
   }
@@ -833,7 +1007,10 @@
         const sentByDrop = await trySendAudioViaDrop(file, workingBlob.size);
         if (sentByDrop) return true;
 
-        await sleep(450);
+        const sentByAttachmentPtt = await trySendAudioViaAttachmentAsPtt(file, workingBlob.size);
+        if (sentByAttachmentPtt) return true;
+
+        await sleep(420);
 
         const sentByDropRetry = await trySendAudioViaDrop(file, workingBlob.size);
         if (sentByDropRetry) return true;
@@ -861,7 +1038,7 @@
       await sleep(240);
 
       let fileInput = optionResult.input;
-      if (!fileInput || !fileInput.isConnected || fileInput.disabled || classifyInputKind(fileInput) === "sticker") {
+      if (!fileInput || !fileInput.isConnected || fileInput.disabled || classifyInputKind(fileInput) === "sticker" || isLikelyStickerInput(fileInput)) {
         fileInput = await findFileInputForKind(targetKind, baselineInputs, optionResult.element);
       }
 
@@ -875,6 +1052,19 @@
       if (!fileInput) {
         showToast(`Input de ${targetKind} não encontrado`, true);
         return false;
+      }
+
+      if (targetKind === "media") {
+        const mediaTokens = getAcceptTokens(fileInput);
+        const mediaIsValidInput = hasMediaAccept(mediaTokens) && !isLikelyStickerInput(fileInput);
+        if (!mediaIsValidInput) {
+          await openAttachmentMenu();
+          const retryMediaOption = await clickAttachmentOption("media");
+          const retryMediaInput = retryMediaOption.input || await findFileInputForKind("media", [], retryMediaOption.element);
+          if (retryMediaInput && hasMediaAccept(getAcceptTokens(retryMediaInput)) && !isLikelyStickerInput(retryMediaInput)) {
+            fileInput = retryMediaInput;
+          }
+        }
       }
 
       const selectedKind = classifyInputKind(fileInput);
