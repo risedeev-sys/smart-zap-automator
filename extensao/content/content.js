@@ -9,6 +9,8 @@
   let token = null;
   let assets = { messages: [], audios: [], medias: [], documents: [], funnels: [] };
   let activeFunnelRunId = null;
+  let cachedInstance = null;
+  let globalSending = false;
 
   // ─── Auth ──────────────────────────────────────────────
 
@@ -290,13 +292,20 @@
 
   // ─── Load User's Connected WhatsApp Instance ──────────
 
-  async function loadConnectedInstance() {
+  async function loadConnectedInstance(forceRefresh = false) {
+    if (cachedInstance && !forceRefresh) return cachedInstance;
     const rows = await supaFetch(
       "whatsapp_instances",
       "id,instance_name,status",
       "&status=eq.open&limit=1"
     );
-    return rows?.[0] || null;
+    cachedInstance = rows?.[0] || null;
+    return cachedInstance;
+  }
+
+  // Pre-warm instance cache on init
+  async function preWarmCache() {
+    await loadConnectedInstance();
   }
 
   // ─── Send via Backend (Edge Function + Evolution API) ──
@@ -431,10 +440,25 @@
       return false;
     }
 
-    const signedUrl = await getSignedUrl(asset.storage_path);
+    // Parallel: signed URL + instance + phone detection
+    const [signedUrl, instance] = await Promise.all([
+      getSignedUrl(asset.storage_path),
+      loadConnectedInstance(),
+    ]);
+
     if (!signedUrl) {
       showToast("Erro ao gerar URL do arquivo", true);
       return false;
+    }
+    if (!instance) {
+      showToast("Nenhuma instância WhatsApp conectada.", true);
+      return false;
+    }
+
+    let phone = getCurrentChatPhone();
+    if (!phone) {
+      phone = await askPhoneManually();
+      if (!phone) return false;
     }
 
     const mediaTypeMap = {
@@ -442,7 +466,6 @@
       media: (asset.mime || "").startsWith("video") ? "video" : "image",
       document: "document",
     };
-
     const mediaType = mediaTypeMap[asset.resolvedType] || "document";
 
     const opts = {
@@ -450,18 +473,36 @@
       media_type: mediaType,
       mime: asset.mime || undefined,
     };
-
-    // For documents, send the file name
     if (asset.resolvedType === "document" && asset.name) {
       opts.file_name = asset.name;
     }
-
-    // For media with singleView metadata
     if (asset.metadata?.singleView || asset.metadata?.single_view) {
       opts.view_once = "true";
     }
 
-    return sendViaBackend(opts);
+    // Direct call — instance and phone already resolved
+    const body = { instance_id: instance.id, phone, ...opts };
+
+    console.log("[RiseZap] sendAssetViaBackend:", {
+      instance: instance.instance_name, phone,
+      media_type: mediaType, has_url: !!signedUrl,
+    });
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `Erro HTTP ${res.status}`);
+    }
+    return true;
   }
 
   // ─── Send Funnel (sequential) ─────────────────────────
@@ -537,7 +578,7 @@
         console.log(`[RiseZap] Funnel item ${i + 1}/${items.length} sent: ${asset.resolvedType}`);
 
         if (i < items.length - 1) {
-          await sleep(1500);
+          await sleep(800);
         }
       }
 
@@ -608,16 +649,13 @@
     `;
     const overlay = openModal(title, html);
     overlay.querySelector(".rz-btn-cancel").addEventListener("click", closeModal);
-    let sending = false;
     overlay.querySelector(".rz-btn-send").addEventListener("click", async () => {
-      if (sending) return;
-      sending = true;
+      if (globalSending) return;
+      globalSending = true;
 
-      const btn = overlay.querySelector(".rz-btn-send");
-      btn.textContent = "Enviando...";
-      btn.disabled = true;
+      // Instant feedback: close modal + show toast immediately
       closeModal();
-      await sleep(300);
+      showToast("⏳ Enviando...");
 
       try {
         const ok = await onSend();
@@ -630,7 +668,7 @@
         console.error("[RiseZap] Erro no envio:", err);
         showToast("Erro: " + (err.message || "falha desconhecida"), true);
       } finally {
-        sending = false;
+        globalSending = false;
       }
     });
   }
@@ -743,7 +781,10 @@
 
   async function init() {
     await loadAuth();
-    if (token) await loadAssets();
+    if (token) {
+      await loadAssets();
+      preWarmCache(); // fire-and-forget: cache instance early
+    }
     createBar();
 
     chrome.storage.onChanged.addListener(async (changes) => {
