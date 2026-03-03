@@ -769,8 +769,28 @@
 
     document.body.appendChild(bar);
 
+    // Position bar only over the chat panel (right side of the divider)
+    function positionBar() {
+      // WhatsApp's side panel (conversation list)
+      const sidePanel = document.getElementById("side") ||
+        document.querySelector("[data-side]") ||
+        document.querySelector("._pane-list") ||
+        document.querySelector('[data-testid="chat-list"]');
+      
+      if (sidePanel) {
+        const sidePanelRight = sidePanel.getBoundingClientRect().right;
+        bar.style.left = sidePanelRight + "px";
+      } else {
+        // Fallback: start roughly at 30% from left (typical WhatsApp sidebar width)
+        bar.style.left = "30%";
+      }
+    }
+
+    positionBar();
+    // Re-position on resize
+    window.addEventListener("resize", positionBar);
+
     // Push WhatsApp UI up so bar doesn't cover the chat input
-    // Target the main app element and reduce its height
     const barH = bar.offsetHeight || 32;
     const appEl = document.getElementById("app");
     if (appEl) {
