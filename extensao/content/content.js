@@ -425,7 +425,7 @@
           return true;
         });
 
-      showToast(`Enviando funil "${funnelName}" (${items.length} itens)...`);
+      showToast(`⏳ Enviando funil "${funnelName}" (${items.length} itens)...`, false, true);
 
       for (let i = 0; i < items.length; i++) {
         if (activeFunnelRunId !== runId) {
@@ -482,7 +482,7 @@
 
   // ─── Toast ─────────────────────────────────────────────
 
-  function showToast(msg, isError = false) {
+  function showToast(msg, isError = false, persistent = false) {
     const old = document.getElementById("risezap-toast");
     if (old) old.remove();
     const t = document.createElement("div");
@@ -497,7 +497,14 @@
       boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
     });
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 4000);
+    if (!persistent) {
+      setTimeout(() => t.remove(), 4000);
+    }
+  }
+
+  function dismissToast() {
+    const t = document.getElementById("risezap-toast");
+    if (t) t.remove();
   }
 
   // ─── Modal ─────────────────────────────────────────────
@@ -544,7 +551,7 @@
 
       // Instant feedback: close modal + show toast immediately
       closeModal();
-      showToast("⏳ Enviando...");
+      showToast("⏳ Enviando...", false, true);
 
       try {
         const ok = await onSend();
