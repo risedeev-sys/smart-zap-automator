@@ -769,18 +769,14 @@
 
     document.body.appendChild(bar);
 
-    // Push WhatsApp content up so bar doesn't overlap chat input
-    const appEl = document.getElementById("app") || document.querySelector("[data-app]") || document.querySelector("#main");
+    // Push WhatsApp UI up so bar doesn't cover the chat input
+    // Target the main app element and reduce its height
+    const barH = bar.offsetHeight || 32;
+    const appEl = document.getElementById("app");
     if (appEl) {
-      appEl.style.paddingBottom = "36px";
+      appEl.style.height = `calc(100vh - ${barH}px)`;
+      appEl.style.overflow = "hidden";
     }
-    // Also adjust the main app wrapper
-    const appWrap = document.querySelector("._app, .app-wrapper-web, [id='app']");
-    if (appWrap && appWrap !== appEl) {
-      appWrap.style.paddingBottom = "36px";
-    }
-    // Fallback: push body itself
-    document.body.style.paddingBottom = "36px";
   }
 
   function makeBtn(icon, label, cls) {
