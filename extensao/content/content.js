@@ -264,7 +264,49 @@
 
       const attachBtnEl = attachBtn.closest("button") || attachBtn;
       attachBtnEl.click();
-      await sleep(350);
+      await sleep(250);
+
+      const normalizeLabel = (value) =>
+        (value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim();
+
+      const optionLabelsByKind = {
+        media: ["fotos e videos", "photos and videos", "photos & videos"],
+        audio: ["audio"],
+        document: ["documento", "document"],
+      };
+
+      const clickAttachmentOption = async () => {
+        const labels = optionLabelsByKind[targetKind] || optionLabelsByKind.document;
+
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const candidates = [
+            ...document.querySelectorAll('#main button, #main [role="button"], #main li, #main div[tabindex="0"]'),
+          ].filter((el) => el instanceof HTMLElement && el.isConnected);
+
+          const option = candidates.find((el) => {
+            const text = normalizeLabel(el.textContent || "");
+            if (!text) return false;
+            return labels.some((label) => text.includes(label));
+          });
+
+          if (option) {
+            option.click();
+            await sleep(220);
+            return true;
+          }
+
+          await sleep(120);
+        }
+
+        return false;
+      };
+
+      const optionClicked = await clickAttachmentOption();
+      console.log(`[RiseZap] attach option for ${targetKind}: ${optionClicked ? "selected" : "fallback by accept"}`);
 
       const isDocumentAccept = (accept) =>
         !accept ||
@@ -276,8 +318,7 @@
         accept.includes(".pdf") ||
         accept.includes(".doc") ||
         accept.includes(".xls") ||
-        accept.includes(".ppt") ||
-        accept.includes("audio");
+        accept.includes(".ppt");
 
       const scoreInput = (input) => {
         const accept = (input.getAttribute("accept") || "").toLowerCase();
@@ -290,19 +331,19 @@
         let score = 0;
 
         if (targetKind === "media") {
-          if (isMediaAccept) score += 8;
-          if (isDocAccept) score += 2;
+          if (isMediaAccept) score += 12;
+          if (isDocAccept) score += 1;
         } else if (targetKind === "audio") {
-          if (isAudioAccept) score += 12;
-          if (isDocAccept) score += 6;
+          if (isAudioAccept) score += 14;
+          if (isDocAccept) score += 2;
           if (isMediaAccept) score += 1;
         } else {
-          if (isDocAccept) score += 8;
+          if (isDocAccept) score += 12;
           if (isMediaAccept) score += 1;
-          if (isAudioAccept) score += 2;
+          if (isAudioAccept) score += 1;
         }
 
-        if (isFamilyMatch) score += 2;
+        if (isFamilyMatch) score += 3;
         if (input.closest("#main")) score += 1;
 
         return score;
@@ -323,10 +364,20 @@
           unique.push(input);
         }
 
-        return unique
+        const ranked = unique
           .map((input, index) => ({ input, score: scoreInput(input), index }))
-          .sort((a, b) => (b.score - a.score) || (b.index - a.index))
-          .map((item) => item.input);
+          .sort((a, b) => (b.score - a.score) || (b.index - a.index));
+
+        if (targetKind === "audio") {
+          const audioRanked = ranked.filter(({ input }) =>
+            ((input.getAttribute("accept") || "").toLowerCase().includes("audio"))
+          );
+          if (audioRanked.length > 0) {
+            return audioRanked.map((item) => item.input);
+          }
+        }
+
+        return ranked.map((item) => item.input);
       };
 
       let candidates = [];
@@ -352,9 +403,6 @@
 
       const setFilesOnInput = (input) => {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files")?.set;
-        try {
-          input.click();
-        } catch {}
         if (setter) setter.call(input, dt.files);
         else input.files = dt.files;
 
@@ -434,23 +482,21 @@
       };
 
       let sendBtn = null;
-      if (targetKind === "audio") {
-        sendBtn = await simulateDropUpload();
-      }
-
-      if (!sendBtn) {
-        for (const input of candidates) {
-          try {
-            setFilesOnInput(input);
-            sendBtn = await waitForPreparedState(prepareTimeout);
-            if (sendBtn) break;
-          } catch (e) {
-            console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
-          }
+      for (const input of candidates) {
+        try {
+          console.log("[RiseZap] Trying input", {
+            targetKind,
+            accept: input.getAttribute("accept") || "(sem accept)",
+          });
+          setFilesOnInput(input);
+          sendBtn = await waitForPreparedState(prepareTimeout);
+          if (sendBtn) break;
+        } catch (e) {
+          console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
         }
       }
 
-      if (!sendBtn && targetKind !== "audio") {
+      if (!sendBtn) {
         sendBtn = await simulateDropUpload();
       }
 
