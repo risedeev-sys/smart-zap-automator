@@ -52,7 +52,7 @@
 
   window.addEventListener("risezap:send", async function (evt) {
     const detail = evt.detail || {};
-    const { requestId, type, url, isPtt, caption, fileName, asViewOnce } = detail;
+    const { requestId, type, url, isPtt, caption, fileName, asViewOnce, mime } = detail;
 
     if (!requestId) return;
 
@@ -126,6 +126,7 @@
         options = {
           type: "image",
           caption: caption || undefined,
+          mimetype: mime || "image/jpeg",
         };
         if (asViewOnce) options.isViewOnce = true;
         break;
@@ -134,6 +135,7 @@
         options = {
           type: "video",
           caption: caption || undefined,
+          mimetype: mime || "video/mp4",
         };
         if (asViewOnce) options.isViewOnce = true;
         break;
