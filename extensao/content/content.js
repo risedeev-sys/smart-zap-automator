@@ -668,8 +668,23 @@
       appEl.style.overflow = "hidden";
     }
 
-    // Position bar across full width
-    bar.style.left = "0";
+    // Position bar starting from the chat panel divider (right of conversation list)
+    function positionBar() {
+      const sidePanel = document.getElementById("side") ||
+        document.querySelector("[data-side]") ||
+        document.querySelector("._pane-list") ||
+        document.querySelector('[data-testid="chat-list"]');
+      
+      if (sidePanel) {
+        const sidePanelRight = sidePanel.getBoundingClientRect().right;
+        bar.style.left = sidePanelRight + "px";
+      } else {
+        bar.style.left = "30%";
+      }
+    }
+
+    positionBar();
+    window.addEventListener("resize", positionBar);
   }
 
   function makeBtn(icon, label, cls) {
