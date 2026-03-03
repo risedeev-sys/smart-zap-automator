@@ -164,13 +164,71 @@
     return blob;
   }
 
+  // ─── Upload Normalization ──────────────────────────────
+
+  async function convertWebpToJpeg(blob) {
+    return await new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            URL.revokeObjectURL(url);
+            return resolve(blob);
+          }
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob((jpgBlob) => {
+            URL.revokeObjectURL(url);
+            resolve(jpgBlob || blob);
+          }, "image/jpeg", 0.92);
+        } catch {
+          URL.revokeObjectURL(url);
+          resolve(blob);
+        }
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(blob);
+      };
+
+      img.src = url;
+    });
+  }
+
+  async function normalizeUploadAsset(blob, fileName, mimeType) {
+    let normalizedBlob = blob;
+    let normalizedMime = (blob.type || mimeType || "application/octet-stream").toLowerCase();
+    let normalizedFileName = fileName || "arquivo";
+
+    const isWebp = normalizedMime.includes("image/webp") || /\.webp$/i.test(normalizedFileName);
+
+    if (isWebp) {
+      normalizedBlob = await convertWebpToJpeg(blob);
+      normalizedMime = "image/jpeg";
+      normalizedFileName = normalizedFileName.replace(/\.[a-z0-9]{2,8}$/i, "") + ".jpg";
+      console.log("[RiseZap] WEBP convertido para JPEG para evitar envio como sticker");
+    }
+
+    return { blob: normalizedBlob, mime: normalizedMime, fileName: normalizedFileName };
+  }
+
   // ─── Send File via DOM ────────────────────────────────
 
   async function sendFileViaDom(blob, fileName, mimeType) {
     try {
-      const resolvedMime = (blob.type || mimeType || "application/octet-stream").toLowerCase();
+      const normalized = await normalizeUploadAsset(blob, fileName, mimeType);
+      const uploadBlob = normalized.blob;
+      const resolvedMime = normalized.mime;
+      const sourceFileName = normalized.fileName;
+      const isAudioMime = resolvedMime.startsWith("audio/");
       const isMedia = /^(image|video)\//.test(resolvedMime);
-      const targetKind = isMedia ? "media" : "document";
+      const targetKind = isAudioMime ? "audio" : isMedia ? "media" : "document";
 
       const extensionMap = {
         "audio/ogg": "ogg",
@@ -184,11 +242,11 @@
         "application/pdf": "pdf",
       };
 
-      const hasExtension = /\.[a-z0-9]{2,8}$/i.test(fileName || "");
+      const hasExtension = /\.[a-z0-9]{2,8}$/i.test(sourceFileName || "");
       const fallbackExt = extensionMap[resolvedMime] || "bin";
-      const safeFileName = hasExtension ? fileName : `${fileName || "arquivo"}.${fallbackExt}`;
+      const safeFileName = hasExtension ? sourceFileName : `${sourceFileName || "arquivo"}.${fallbackExt}`;
 
-      console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, blob.size, "bytes", "kind:", targetKind);
+      console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, uploadBlob.size, "bytes", "kind:", targetKind);
 
       const attachBtn =
         document.querySelector('#main span[data-icon="plus"]') ||
@@ -225,7 +283,7 @@
         const accept = (input.getAttribute("accept") || "").toLowerCase();
         const isMediaAccept = accept.includes("image") || accept.includes("video");
         const isDocAccept = isDocumentAccept(accept);
-        const isAudio = resolvedMime.startsWith("audio/");
+        const isAudioAccept = accept.includes("audio");
         const mimeFamily = resolvedMime.split("/")[0];
         const isFamilyMatch = accept.includes(mimeFamily);
 
@@ -234,10 +292,14 @@
         if (targetKind === "media") {
           if (isMediaAccept) score += 8;
           if (isDocAccept) score += 2;
+        } else if (targetKind === "audio") {
+          if (isAudioAccept) score += 12;
+          if (isDocAccept) score += 6;
+          if (isMediaAccept) score += 1;
         } else {
           if (isDocAccept) score += 8;
           if (isMediaAccept) score += 1;
-          if (isAudio && accept.includes("audio")) score += 4;
+          if (isAudioAccept) score += 2;
         }
 
         if (isFamilyMatch) score += 2;
@@ -284,7 +346,7 @@
         candidates.map((input) => ({ accept: input.getAttribute("accept") || "(sem accept)", score: scoreInput(input) }))
       );
 
-      const file = new File([blob], safeFileName, { type: resolvedMime });
+      const file = new File([uploadBlob], safeFileName, { type: resolvedMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
@@ -343,7 +405,7 @@
         return null;
       };
 
-      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(blob.size / 250)));
+      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 250)));
 
       const simulateDropUpload = async () => {
         const dropTargets = [
@@ -372,17 +434,23 @@
       };
 
       let sendBtn = null;
-      for (const input of candidates) {
-        try {
-          setFilesOnInput(input);
-          sendBtn = await waitForPreparedState(prepareTimeout);
-          if (sendBtn) break;
-        } catch (e) {
-          console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
-        }
+      if (targetKind === "audio") {
+        sendBtn = await simulateDropUpload();
       }
 
       if (!sendBtn) {
+        for (const input of candidates) {
+          try {
+            setFilesOnInput(input);
+            sendBtn = await waitForPreparedState(prepareTimeout);
+            if (sendBtn) break;
+          } catch (e) {
+            console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
+          }
+        }
+      }
+
+      if (!sendBtn && targetKind !== "audio") {
         sendBtn = await simulateDropUpload();
       }
 
