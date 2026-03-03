@@ -75,6 +75,14 @@
 
 #risezap-bar .rz-btn .rz-icon { font-size: 14px; }
 
+#risezap-bar .rz-btn .rz-emblem {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 /* Cores por tipo — semi-transparente estilo ZapVoice */
 #risezap-bar .rz-btn.rz-funnel   { background: rgba(124, 58, 237, 0.55); color: #e0ff00; border-color: rgba(124, 58, 237, 0.4); }
 #risezap-bar .rz-btn.rz-message  { background: rgba(0, 168, 132, 0.5); color: #fff; border-color: rgba(0, 168, 132, 0.35); }

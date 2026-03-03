@@ -24,7 +24,12 @@
       "resources": [
         "injected/loader.js",
         "injected/wpp-bridge.js",
-        "lib/wppconnect-wa.js"
+        "lib/wppconnect-wa.js",
+        "icons/emblem-audio.png",
+        "icons/emblem-media.png",
+        "icons/emblem-funnel.png",
+        "icons/emblem-message.png",
+        "icons/emblem-document.png"
       ],
       "matches": ["https://web.whatsapp.com/*"]
     }
