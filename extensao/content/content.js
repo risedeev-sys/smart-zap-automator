@@ -600,7 +600,7 @@
     t.id = "risezap-toast";
     t.textContent = msg;
     Object.assign(t.style, {
-      position: "fixed", bottom: "52px", left: "50%",
+      position: "fixed", top: "20px", left: "50%",
       transform: "translateX(-50%)", padding: "8px 20px",
       borderRadius: "8px", fontSize: "13px", fontWeight: "600",
       zIndex: "100001", color: "white", fontFamily: "'Segoe UI', sans-serif",
