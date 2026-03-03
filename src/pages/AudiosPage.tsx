@@ -18,6 +18,7 @@ import { Trash2, Copy, Pencil, Heart, Mic, Download, Info, Users } from "lucide-
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAssetFile } from "@/utils/uploadAssetFile";
+import { convertAudioToOgg } from "@/utils/convertAudioToOgg";
 
 export default function AudiosPage() {
   const { audios, setAudios } = useAssets();
@@ -57,6 +58,14 @@ export default function AudiosPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    // 0. Convert audio to OGG/Opus for faster WhatsApp delivery
+    let fileToUpload: File;
+    try {
+      fileToUpload = await convertAudioToOgg(uploadFile);
+    } catch {
+      fileToUpload = uploadFile;
+    }
+
     // 1. Insert record in Supabase
     const { data: record, error } = await supabase
       .from("audios")
@@ -68,9 +77,9 @@ export default function AudiosPage() {
       return;
     }
 
-    // 2. Upload file to bucket & update storage_path
+    // 2. Upload converted file to bucket & update storage_path
     try {
-      await uploadAssetFile("audios", record.id, uploadFile, user.id);
+      await uploadAssetFile("audios", record.id, fileToUpload, user.id);
     } catch (e: any) {
       toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
     }
