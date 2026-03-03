@@ -18,7 +18,7 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
   console.log(`[evoFetch] ${options.method || "GET"} ${url}`);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(url, {
       ...options,
@@ -163,39 +163,44 @@ Deno.serve(async (req) => {
         : {};
 
       if (mediatype === "audio") {
+        // Disable encoding for OGG (already correct format) to prevent
+        // the Evolution API from re-encoding and sending as document
+        const isOgg = (clientMime || "").toLowerCase().includes("ogg");
+        const shouldEncode = !isOgg;
+
         const audioBody: Record<string, unknown> = {
           number: phone,
           audio: media_url,
-          audioMessage: {
-            audio: media_url,
-            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
-          },
           options: {
-            encoding: true,
+            encoding: shouldEncode,
             ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
           },
           ...viewOnceCompat,
         };
 
-        console.log(`[whatsapp-send] media_type=${mediatype} view_once=${isViewOnce}`);
+        console.log(`[whatsapp-send] media_type=${mediatype} mime=${clientMime} encoding=${shouldEncode} view_once=${isViewOnce}`);
 
         result = await evoFetch(`/message/sendWhatsAppAudio/${inst.instance_name}`, {
           method: "POST",
           body: JSON.stringify(audioBody),
         });
       } else {
+        // Omit caption entirely when empty to prevent Evolution API
+        // from interpreting images as stickers
+        const captionFields = caption ? { caption } : {};
+
         const sendBody: Record<string, unknown> = {
           number: phone,
           mediatype,
           media: media_url,
           mimetype,
-          caption: caption || "",
+          ...captionFields,
           ...(file_name ? { fileName: file_name } : {}),
           mediaMessage: {
             mediaType: mediatype,
             mimetype,
-            caption: caption || "",
             media: media_url,
+            ...captionFields,
             ...(file_name ? { fileName: file_name } : {}),
             ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
           },
@@ -205,7 +210,7 @@ Deno.serve(async (req) => {
           ...viewOnceCompat,
         };
 
-        console.log(`[whatsapp-send] media_type=${mediatype} mime=${mimetype} fileName=${file_name || "(auto)"} view_once=${isViewOnce}`);
+        console.log(`[whatsapp-send] media_type=${mediatype} mime=${mimetype} fileName=${file_name || "(auto)"} caption=${caption ? "yes" : "omitted"} view_once=${isViewOnce}`);
 
         result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
           method: "POST",
