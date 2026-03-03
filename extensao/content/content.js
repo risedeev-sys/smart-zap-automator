@@ -1,5 +1,5 @@
 // Rise Zap — Content Script (barra no WhatsApp Web)
-// Texto: envio via DOM | Áudio/Mídia/Documento: envio via Backend (Edge Function + Evolution API)
+// Texto: envio via DOM (paste) | Arquivos: envio nativo via wa-js bridge
 (function () {
   "use strict";
 
@@ -9,8 +9,8 @@
   let token = null;
   let assets = { messages: [], audios: [], medias: [], documents: [], funnels: [] };
   let activeFunnelRunId = null;
-  let cachedInstance = null;
   let globalSending = false;
+  let bridgeReady = false;
 
   // ─── Auth ──────────────────────────────────────────────
 
@@ -160,198 +160,160 @@
       .toLowerCase()
       .trim();
 
-  // ─── Extract Current Chat Phone from WhatsApp Web DOM ──
+  // ─── WPP Bridge Injection ─────────────────────────────
+  // Injects wa-js library + bridge into the page context
 
-  let lastDetectedPhone = null;
-
-  function extractPhoneFromText(text) {
-    if (!text) return null;
-    // Remove common formatting: +, spaces, dashes, parens
-    const digits = text.replace(/[\s\-\(\)\+]/g, '');
-    // Valid phone: 10-15 digits, optionally starting with country code
-    if (/^\d{10,15}$/.test(digits)) return digits;
-    return null;
-  }
-
-  function getCurrentChatPhone() {
-    // Strategy 1: data-id on message rows (most reliable)
-    const msgRows = document.querySelectorAll('#main div[data-id]');
-    for (const row of msgRows) {
-      const dataId = row.getAttribute('data-id') || '';
-      const match = dataId.match(/(\d{10,15})@s\.whatsapp\.net/);
-      if (match) {
-        lastDetectedPhone = match[1];
-        return match[1];
-      }
+  function injectBridge() {
+    if (document.getElementById("RZBridgeReady")) {
+      bridgeReady = true;
+      return;
     }
 
-    // Strategy 2: data-id on any element inside #main (broader search)
-    const allDataIds = document.querySelectorAll('#main [data-id]');
-    for (const el of allDataIds) {
-      const dataId = el.getAttribute('data-id') || '';
-      const match = dataId.match(/(\d{10,15})@s\.whatsapp\.net/);
-      if (match) {
-        lastDetectedPhone = match[1];
-        return match[1];
-      }
-    }
+    // 1. Inject wa-js library as a classic script (sets window.WPP)
+    const waJsUrl = chrome.runtime.getURL("lib/wppconnect-wa.js");
+    const waJsScript = document.createElement("script");
+    waJsScript.src = waJsUrl;
+    waJsScript.id = "rz-wajs-script";
+    waJsScript.onload = function () {
+      console.log("[RiseZap] wa-js library loaded");
 
-    // Strategy 3: Header span with title attribute
-    const headerSpans = document.querySelectorAll('#main header span[title]');
-    for (const span of headerSpans) {
-      const phone = extractPhoneFromText(span.getAttribute('title'));
-      if (phone) {
-        lastDetectedPhone = phone;
-        return phone;
-      }
-    }
+      // 2. After wa-js is loaded, inject the bridge
+      const bridgeUrl = chrome.runtime.getURL("injected/wpp-bridge.js");
+      const loaderUrl = chrome.runtime.getURL("injected/loader.js");
+      const loaderScript = document.createElement("script");
+      loaderScript.src = loaderUrl;
+      loaderScript.setAttribute("data-bridge-url", bridgeUrl);
+      loaderScript.id = "rz-loader-script";
+      document.head.appendChild(loaderScript);
+    };
+    document.head.appendChild(waJsScript);
 
-    // Strategy 4: Header with dir="auto" or role elements
-    const headerTexts = document.querySelectorAll('#main header [dir="auto"], #main header [role="button"]');
-    for (const el of headerTexts) {
-      const phone = extractPhoneFromText(el.textContent);
-      if (phone) {
-        lastDetectedPhone = phone;
-        return phone;
-      }
-    }
-
-    // Strategy 5: Look for phone in any aria-label in header
-    const ariaEls = document.querySelectorAll('#main header [aria-label]');
-    for (const el of ariaEls) {
-      const label = el.getAttribute('aria-label') || '';
-      const match = label.match(/(\+?\d[\d\s\-]{8,16}\d)/);
-      if (match) {
-        const phone = extractPhoneFromText(match[1]);
-        if (phone) {
-          lastDetectedPhone = phone;
-          return phone;
-        }
-      }
-    }
-
-    // Strategy 6: Contact info panel (right side panel when open)
-    const contactInfoSpans = document.querySelectorAll('[data-testid="contact-info-subtitle"] span');
-    for (const span of contactInfoSpans) {
-      const phone = extractPhoneFromText(span.textContent);
-      if (phone) {
-        lastDetectedPhone = phone;
-        return phone;
-      }
-    }
-
-    // Strategy 7: Use last detected phone for this session
-    if (lastDetectedPhone) return lastDetectedPhone;
-
-    return null;
-  }
-
-  // ─── Manual Phone Input Fallback ─────────────────────
-
-  function askPhoneManually() {
-    return new Promise((resolve) => {
-      const html = `
-        <div class="rz-preview">
-          <p style="margin-bottom:12px;color:#aaa;font-size:13px;">
-            Não foi possível detectar o número automaticamente.<br>
-            Digite o número do destinatário (com DDD e código do país):
-          </p>
-          <input type="text" id="rz-manual-phone" placeholder="5511999999999"
-            style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid #444;
-            background:#2a2a2a;color:white;font-size:15px;outline:none;margin-bottom:12px;" />
-          <div class="rz-actions">
-            <button class="rz-btn-cancel">Cancelar</button>
-            <button class="rz-btn-send">Confirmar</button>
-          </div>
-        </div>
-      `;
-      const overlay = openModal("Número do Destinatário", html);
-      const input = overlay.querySelector('#rz-manual-phone');
-      input.focus();
-
-      overlay.querySelector('.rz-btn-cancel').addEventListener('click', () => {
-        closeModal();
-        resolve(null);
-      });
-      overlay.querySelector('.rz-btn-send').addEventListener('click', () => {
-        const raw = (input.value || '').replace(/[\s\-\(\)\+]/g, '');
-        closeModal();
-        if (/^\d{10,15}$/.test(raw)) {
-          lastDetectedPhone = raw;
-          resolve(raw);
-        } else {
-          showToast("Número inválido. Use formato: 5511999999999", true);
-          resolve(null);
-        }
-      });
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') overlay.querySelector('.rz-btn-send').click();
-      });
+    // Listen for bridge readiness
+    window.addEventListener("risezap:bridge-ready", function () {
+      bridgeReady = true;
+      console.log("[RiseZap] Bridge is ready — native sending enabled");
     });
   }
 
-  // ─── Load User's Connected WhatsApp Instance ──────────
+  // ─── Storage Bridge (chrome.storage proxy for page context) ──
 
-  async function loadConnectedInstance(forceRefresh = false) {
-    if (cachedInstance && !forceRefresh) return cachedInstance;
-    const rows = await supaFetch(
-      "whatsapp_instances",
-      "id,instance_name,status",
-      "&status=eq.open&limit=1"
-    );
-    cachedInstance = rows?.[0] || null;
-    return cachedInstance;
+  function setupStorageBridge() {
+    // GET request from injected script
+    window.addEventListener("REQ_RISEZAP_STORE_GET", async function (evt) {
+      const { requestCode, key } = evt.detail || {};
+      if (!requestCode || !key) return;
+
+      try {
+        const result = await chrome.storage.local.get([key]);
+        window.dispatchEvent(
+          new CustomEvent("RES_RISEZAP_STORE_GET_" + requestCode, {
+            detail: { value: result[key] ?? null },
+          })
+        );
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent("RES_RISEZAP_STORE_GET_" + requestCode, {
+            detail: { value: null },
+          })
+        );
+      }
+    });
+
+    // SET request from injected script
+    window.addEventListener("REQ_RISEZAP_STORE_SET", async function (evt) {
+      const { key, value } = evt.detail || {};
+      if (!key) return;
+      try {
+        await chrome.storage.local.set({ [key]: value });
+      } catch (err) {
+        console.warn("[RiseZap] Storage bridge SET error:", err);
+      }
+    });
   }
 
-  // Pre-warm instance cache on init
-  async function preWarmCache() {
-    await loadConnectedInstance();
+  // ─── Send File via WPP Bridge ─────────────────────────
+
+  function isBridgeReady() {
+    return bridgeReady || !!document.getElementById("RZBridgeReady");
   }
 
-  // ─── Send via Backend (Edge Function + Evolution API) ──
-
-  async function sendViaBackend(opts) {
-    const instance = await loadConnectedInstance();
-    if (!instance) {
-      showToast("Nenhuma instância WhatsApp conectada. Conecte no painel Rise Zap.", true);
+  async function sendFileViaBridge(asset) {
+    if (!asset.storage_path) {
+      showToast("Ativo sem arquivo associado", true);
       return false;
     }
 
-    let phone = getCurrentChatPhone();
-    if (!phone) {
-      phone = await askPhoneManually();
-      if (!phone) return false;
+    if (!isBridgeReady()) {
+      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
+      return false;
     }
 
-    const body = {
-      instance_id: instance.id,
-      phone,
-      ...opts,
+    // Get signed URL for the file
+    const signedUrl = await getSignedUrl(asset.storage_path);
+    if (!signedUrl) {
+      showToast("Erro ao gerar URL do arquivo", true);
+      return false;
+    }
+
+    // Determine send type
+    let sendType;
+    const resolvedType = asset.resolvedType;
+    if (resolvedType === "audio") {
+      sendType = "audio";
+    } else if (resolvedType === "media") {
+      sendType = (asset.mime || "").startsWith("video") ? "video" : "image";
+    } else if (resolvedType === "document") {
+      sendType = "document";
+    } else {
+      sendType = "auto-detect";
+    }
+
+    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    // Build payload
+    const payload = {
+      requestId,
+      type: sendType,
+      url: signedUrl,
+      isPtt: resolvedType === "audio", // audio always as PTT
+      caption: undefined,
+      fileName: asset.name || undefined,
+      asViewOnce: !!(asset.metadata?.singleView || asset.metadata?.single_view),
     };
 
-    console.log("[RiseZap] sendViaBackend:", {
-      instance: instance.instance_name,
-      phone,
-      media_type: opts.media_type || "(text)",
-      has_media_url: !!opts.media_url,
+    console.log("[RiseZap] sendFileViaBridge:", {
+      type: sendType,
+      isPtt: payload.isPtt,
+      name: asset.name,
     });
 
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
+    // Send event and wait for response
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener("risezap:result", handler);
+        showToast("Timeout: bridge não respondeu em 30s", true);
+        resolve(false);
+      }, 30000);
+
+      function handler(evt) {
+        const detail = evt.detail || {};
+        if (detail.requestId !== requestId) return;
+
+        window.removeEventListener("risezap:result", handler);
+        clearTimeout(timeout);
+
+        if (detail.success) {
+          resolve(true);
+        } else {
+          console.error("[RiseZap] Bridge send failed:", detail.error);
+          showToast("Erro no envio: " + (detail.error || "falha desconhecida"), true);
+          resolve(false);
+        }
+      }
+
+      window.addEventListener("risezap:result", handler);
+      window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
     });
-
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      throw new Error(data.error || `Erro HTTP ${res.status}`);
-    }
-
-    return true;
   }
 
   // ─── Send Text via DOM (only text stays DOM-based) ────
@@ -432,79 +394,6 @@
     });
   }
 
-  // ─── Send Asset via Backend ───────────────────────────
-
-  async function sendAssetViaBackend(asset) {
-    if (!asset.storage_path) {
-      showToast("Ativo sem arquivo associado", true);
-      return false;
-    }
-
-    // Parallel: signed URL + instance + phone detection
-    const [signedUrl, instance] = await Promise.all([
-      getSignedUrl(asset.storage_path),
-      loadConnectedInstance(),
-    ]);
-
-    if (!signedUrl) {
-      showToast("Erro ao gerar URL do arquivo", true);
-      return false;
-    }
-    if (!instance) {
-      showToast("Nenhuma instância WhatsApp conectada.", true);
-      return false;
-    }
-
-    let phone = getCurrentChatPhone();
-    if (!phone) {
-      phone = await askPhoneManually();
-      if (!phone) return false;
-    }
-
-    const mediaTypeMap = {
-      audio: "audio",
-      media: (asset.mime || "").startsWith("video") ? "video" : "image",
-      document: "document",
-    };
-    const mediaType = mediaTypeMap[asset.resolvedType] || "document";
-
-    const opts = {
-      media_url: signedUrl,
-      media_type: mediaType,
-      mime: asset.mime || undefined,
-    };
-    if (asset.resolvedType === "document" && asset.name) {
-      opts.file_name = asset.name;
-    }
-    if (asset.metadata?.singleView || asset.metadata?.single_view) {
-      opts.view_once = "true";
-    }
-
-    // Direct call — instance and phone already resolved
-    const body = { instance_id: instance.id, phone, ...opts };
-
-    console.log("[RiseZap] sendAssetViaBackend:", {
-      instance: instance.instance_name, phone,
-      media_type: mediaType, has_url: !!signedUrl,
-    });
-
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      throw new Error(data.error || `Erro HTTP ${res.status}`);
-    }
-    return true;
-  }
-
   // ─── Send Funnel (sequential) ─────────────────────────
 
   async function sendFunnelViaDom(funnelId, funnelName) {
@@ -565,8 +454,8 @@
           // Text stays DOM-based
           ok = await sendTextViaDom(asset.content || asset.name);
         } else {
-          // Audio, Media, Document → Backend
-          ok = await sendAssetViaBackend(asset);
+          // Audio, Media, Document → WPP Bridge (native)
+          ok = await sendFileViaBridge(asset);
         }
 
         if (!ok) {
@@ -697,7 +586,9 @@
       return;
     }
 
-    bar.innerHTML = `<span class="rz-logo">⚡</span>`;
+    // Bridge status indicator
+    const statusIcon = isBridgeReady() ? "🟢" : "🟡";
+    bar.innerHTML = `<span class="rz-logo">⚡</span><span class="rz-bridge-status" title="${isBridgeReady() ? 'Bridge ativo' : 'Aguardando bridge...'}">${statusIcon}</span>`;
 
     // Funis — roxo
     assets.funnels.forEach((f) => {
@@ -721,13 +612,13 @@
       bar.appendChild(btn);
     });
 
-    // Áudios — ciano (BACKEND)
+    // Áudios — ciano (WPP Bridge — PTT nativo)
     assets.audios.forEach((a) => {
       const btn = makeBtn("🎙", a.name, "rz-audio");
       btn.addEventListener("click", () => {
         if (!a.storage_path) return showToast("Áudio sem arquivo", true);
         showPreview("Enviar Áudio", `🎙 ${a.name}`, async () => {
-          return sendAssetViaBackend({
+          return sendFileViaBridge({
             ...a,
             resolvedType: "audio",
           });
@@ -736,14 +627,14 @@
       bar.appendChild(btn);
     });
 
-    // Mídias — amarelo (BACKEND)
+    // Mídias — amarelo (WPP Bridge — nativo)
     assets.medias.forEach((m) => {
       const btn = makeBtn("🖼", m.name, "rz-media");
       btn.addEventListener("click", () => {
         if (!m.storage_path) return showToast("Mídia sem arquivo", true);
         const isVideo = (m.mime || "").startsWith("video");
         showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, async () => {
-          return sendAssetViaBackend({
+          return sendFileViaBridge({
             ...m,
             resolvedType: "media",
           });
@@ -752,13 +643,13 @@
       bar.appendChild(btn);
     });
 
-    // Documentos — rosa/magenta (BACKEND)
+    // Documentos — rosa/magenta (WPP Bridge — nativo)
     assets.documents.forEach((d) => {
       const btn = makeBtn("📄", d.name, "rz-document");
       btn.addEventListener("click", () => {
         if (!d.storage_path) return showToast("Documento sem arquivo", true);
         showPreview("Enviar Documento", `📄 ${d.name}`, async () => {
-          return sendAssetViaBackend({
+          return sendFileViaBridge({
             ...d,
             resolvedType: "document",
           });
@@ -771,7 +662,6 @@
 
     // Position bar only over the chat panel (right side of the divider)
     function positionBar() {
-      // WhatsApp's side panel (conversation list)
       const sidePanel = document.getElementById("side") ||
         document.querySelector("[data-side]") ||
         document.querySelector("._pane-list") ||
@@ -781,13 +671,11 @@
         const sidePanelRight = sidePanel.getBoundingClientRect().right;
         bar.style.left = sidePanelRight + "px";
       } else {
-        // Fallback: start roughly at 30% from left (typical WhatsApp sidebar width)
         bar.style.left = "30%";
       }
     }
 
     positionBar();
-    // Re-position on resize
     window.addEventListener("resize", positionBar);
 
     // Push WhatsApp UI up so bar doesn't cover the chat input
@@ -810,11 +698,20 @@
 
   async function init() {
     await loadAuth();
+
+    // Inject wa-js bridge into page context
+    injectBridge();
+    setupStorageBridge();
+
     if (token) {
       await loadAssets();
-      preWarmCache(); // fire-and-forget: cache instance early
     }
     createBar();
+
+    // Update bridge status indicator when bridge becomes ready
+    window.addEventListener("risezap:bridge-ready", () => {
+      createBar(); // Rebuild bar to show green status
+    });
 
     chrome.storage.onChanged.addListener(async (changes) => {
       if (changes.risezap_access_token) {

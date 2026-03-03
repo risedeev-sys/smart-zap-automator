@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Rise Zap",
-  "version": "2.0.0",
-  "description": "Automação WhatsApp - Rise Zap",
+  "version": "3.0.0",
+  "description": "Automação WhatsApp - Rise Zap (wa-js native)",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "action": {
@@ -19,5 +19,15 @@
   "background": {
     "service_worker": "background/background.js"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected/loader.js",
+        "injected/wpp-bridge.js",
+        "lib/wppconnect-wa.js"
+      ],
+      "matches": ["https://web.whatsapp.com/*"]
+    }
+  ],
   "icons": {}
 }
