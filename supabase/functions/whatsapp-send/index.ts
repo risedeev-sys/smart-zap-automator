@@ -49,31 +49,58 @@ function extractAssetIdFromMediaUrl(mediaUrl: string): string | null {
   return match?.[0] ?? null;
 }
 
-async function inferViewOnceFromAssetMetadata(
+interface AssetDeliveryHints {
+  viewOnce: boolean;
+  mime: string | null;
+  bytes: number | null;
+}
+
+async function inferAssetDeliveryHints(
   supabase: ReturnType<typeof createClient>,
   mediaUrl?: string,
-): Promise<boolean> {
-  if (!mediaUrl) return false;
+): Promise<AssetDeliveryHints> {
+  const defaults: AssetDeliveryHints = { viewOnce: false, mime: null, bytes: null };
+  if (!mediaUrl) return defaults;
 
   const assetId = extractAssetIdFromMediaUrl(mediaUrl);
-  if (!assetId) return false;
+  if (!assetId) return defaults;
 
-  const tables: Array<"medias" | "audios"> = ["medias", "audios"];
+  const mediaTables: Array<"medias" | "audios"> = ["medias", "audios"];
 
-  for (const table of tables) {
+  for (const table of mediaTables) {
     const { data } = await supabase
       .from(table)
-      .select("metadata")
+      .select("metadata, mime, bytes")
       .eq("id", assetId)
       .maybeSingle();
 
-    const metadata = (data as any)?.metadata ?? {};
-    if (parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view)) {
-      return true;
+    if (data) {
+      const metadata = (data as any)?.metadata ?? {};
+      const rawBytes = (data as any)?.bytes;
+      return {
+        viewOnce: parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view),
+        mime: (data as any)?.mime ?? null,
+        bytes: typeof rawBytes === "number" ? rawBytes : null,
+      };
     }
   }
 
-  return false;
+  const { data: documentAsset } = await supabase
+    .from("documents")
+    .select("mime, bytes")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (documentAsset) {
+    const rawBytes = (documentAsset as any)?.bytes;
+    return {
+      ...defaults,
+      mime: (documentAsset as any)?.mime ?? null,
+      bytes: typeof rawBytes === "number" ? rawBytes : null,
+    };
+  }
+
+  return defaults;
 }
 
 Deno.serve(async (req) => {
@@ -146,27 +173,27 @@ Deno.serve(async (req) => {
         audio: "audio/mpeg",
         document: "application/pdf",
       };
-      // Use client-provided mime if available, otherwise fall back to map
-      const mimetype = clientMime || mimetypeMap[mediatype];
 
       let isViewOnce =
         parseBooleanFlag(view_once) ||
         parseBooleanFlag(viewOnce) ||
         parseBooleanFlag(viewonce);
 
+      const inferredHints = await inferAssetDeliveryHints(supabase, media_url);
       if (!isViewOnce) {
-        isViewOnce = await inferViewOnceFromAssetMetadata(supabase, media_url);
+        isViewOnce = inferredHints.viewOnce;
       }
 
+      const resolvedMime = clientMime || inferredHints.mime || mimetypeMap[mediatype];
       const viewOnceCompat = isViewOnce
         ? { viewOnce: true, viewonce: true, view_once: true }
         : {};
 
       if (mediatype === "audio") {
-        // Disable encoding for OGG (already correct format) to prevent
-        // the Evolution API from re-encoding and sending as document
-        const isOgg = (clientMime || "").toLowerCase().includes("ogg");
-        const shouldEncode = !isOgg;
+        const normalizedAudioMime = (resolvedMime || "").toLowerCase();
+        const isOggLike = normalizedAudioMime.includes("ogg") || normalizedAudioMime.includes("opus");
+        const isLargeAudio = typeof inferredHints.bytes === "number" && inferredHints.bytes > 2 * 1024 * 1024;
+        const shouldEncode = !(isOggLike || isLargeAudio);
 
         const audioBody: Record<string, unknown> = {
           number: phone,
@@ -178,39 +205,31 @@ Deno.serve(async (req) => {
           ...viewOnceCompat,
         };
 
-        console.log(`[whatsapp-send] media_type=${mediatype} mime=${clientMime} encoding=${shouldEncode} view_once=${isViewOnce}`);
+        console.log(`[whatsapp-send] media_type=${mediatype} mime=${resolvedMime} bytes=${inferredHints.bytes ?? "unknown"} encoding=${shouldEncode} view_once=${isViewOnce}`);
 
         result = await evoFetch(`/message/sendWhatsAppAudio/${inst.instance_name}`, {
           method: "POST",
           body: JSON.stringify(audioBody),
         });
       } else {
-        // Omit caption entirely when empty to prevent Evolution API
-        // from interpreting images as stickers
-        const captionFields = caption ? { caption } : {};
+        const hasCaption = typeof caption === "string" && caption.trim().length > 0;
+        const captionFields = hasCaption ? { caption: caption.trim() } : {};
+        const fileNameFields = mediatype === "document" && file_name ? { fileName: file_name } : {};
 
         const sendBody: Record<string, unknown> = {
           number: phone,
           mediatype,
           media: media_url,
-          mimetype,
+          mimetype: resolvedMime,
           ...captionFields,
-          ...(file_name ? { fileName: file_name } : {}),
-          mediaMessage: {
-            mediaType: mediatype,
-            mimetype,
-            media: media_url,
-            ...captionFields,
-            ...(file_name ? { fileName: file_name } : {}),
-            ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
-          },
+          ...fileNameFields,
           options: {
             ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
           },
           ...viewOnceCompat,
         };
 
-        console.log(`[whatsapp-send] media_type=${mediatype} mime=${mimetype} fileName=${file_name || "(auto)"} caption=${caption ? "yes" : "omitted"} view_once=${isViewOnce}`);
+        console.log(`[whatsapp-send] media_type=${mediatype} mime=${resolvedMime} fileName=${fileNameFields.fileName || "(omitted)"} caption=${hasCaption ? "yes" : "omitted"} view_once=${isViewOnce}`);
 
         result = await evoFetch(`/message/sendMedia/${inst.instance_name}`, {
           method: "POST",

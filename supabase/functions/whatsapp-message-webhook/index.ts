@@ -113,7 +113,7 @@ async function evoFetch(path: string, options: RequestInit = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
   console.log(`[evoFetch] ${options.method || "GET"} ${url}`);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(url, {
       ...options,
@@ -186,7 +186,7 @@ async function sendFunnelItem(
     // Audio, media, document — need signed URL
     const { data: asset } = await supabase
       .from(table)
-      .select("storage_path, mime, name, metadata")
+      .select("storage_path, mime, name, metadata, bytes")
       .eq("id", item.asset_id)
       .single();
 
@@ -216,19 +216,23 @@ async function sendFunnelItem(
       : {};
 
     if (mediaType === "audio") {
+      const normalizedAudioMime = (asset.mime || mimetypeMap.audio || "").toLowerCase();
+      const isOggLike = normalizedAudioMime.includes("ogg") || normalizedAudioMime.includes("opus");
+      const isLargeAudio = typeof (asset as any).bytes === "number" && (asset as any).bytes > 2 * 1024 * 1024;
+      const shouldEncode = !(isOggLike || isLargeAudio);
+
       const audioBody: Record<string, unknown> = {
         number: phone,
         audio: signedData.signedUrl,
-        audioMessage: {
-          audio: signedData.signedUrl,
-          ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
-        },
         options: {
-          encoding: true,
+          encoding: shouldEncode,
           ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
         },
         ...viewOnceCompat,
       };
+
+      console.log(`[sendFunnelItem] media_type=audio mime=${asset.mime || "(auto)"} bytes=${(asset as any).bytes ?? "unknown"} encoding=${shouldEncode}`);
+
       await evoFetch(`/message/sendWhatsAppAudio/${instanceName}`, {
         method: "POST",
         body: JSON.stringify(audioBody),
@@ -237,26 +241,24 @@ async function sendFunnelItem(
     }
 
     const mimetype = asset.mime || mimetypeMap[mediaType];
+    const hasCaption = typeof metadata.caption === "string" && metadata.caption.trim().length > 0;
+    const captionFields = hasCaption ? { caption: metadata.caption.trim() } : {};
+    const fileNameFields = mediaType === "document" && asset.name ? { fileName: asset.name } : {};
+
     const sendBody: Record<string, unknown> = {
       number: phone,
       mediatype: mediaType,
       media: signedData.signedUrl,
       mimetype,
-      caption: metadata.caption || "",
-      fileName: asset.name || undefined,
-      mediaMessage: {
-        mediaType,
-        mimetype,
-        caption: metadata.caption || "",
-        media: signedData.signedUrl,
-        fileName: asset.name || undefined,
-        ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
-      },
+      ...captionFields,
+      ...fileNameFields,
       options: {
         ...(isViewOnce ? { viewOnce: true, view_once: true } : {}),
       },
       ...viewOnceCompat,
     };
+
+    console.log(`[sendFunnelItem] media_type=${mediaType} mime=${mimetype} fileName=${fileNameFields.fileName || "(omitted)"} caption=${hasCaption ? "yes" : "omitted"} view_once=${isViewOnce}`);
 
     await evoFetch(`/message/sendMedia/${instanceName}`, {
       method: "POST",
