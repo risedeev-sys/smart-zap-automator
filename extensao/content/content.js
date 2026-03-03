@@ -248,24 +248,6 @@
 
       console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, uploadBlob.size, "bytes", "kind:", targetKind);
 
-      const attachBtn =
-        document.querySelector('#main span[data-icon="plus"]') ||
-        document.querySelector('#main span[data-icon="attach-menu-plus"]') ||
-        document.querySelector('#main span[data-icon="clip"]') ||
-        document.querySelector('button[aria-label*="Anexar"]') ||
-        document.querySelector('button[title*="Anexar"]') ||
-        document.querySelector('span[data-icon="plus"]') ||
-        document.querySelector('span[data-icon="attach-menu-plus"]');
-
-      if (!attachBtn) {
-        showToast("Botão de anexo não encontrado", true);
-        return false;
-      }
-
-      const attachBtnEl = attachBtn.closest("button") || attachBtn;
-      attachBtnEl.click();
-      await sleep(250);
-
       const normalizeLabel = (value) =>
         (value || "")
           .normalize("NFD")
@@ -273,40 +255,45 @@
           .toLowerCase()
           .trim();
 
-      const optionLabelsByKind = {
-        media: ["fotos e videos", "photos and videos", "photos & videos"],
-        audio: ["audio"],
-        document: ["documento", "document"],
-      };
+      const menuSignals = ["documento", "fotos e videos", "audio", "nova figurinha", "document", "photos", "sticker"];
 
-      const clickAttachmentOption = async () => {
-        const labels = optionLabelsByKind[targetKind] || optionLabelsByKind.document;
-
-        for (let attempt = 0; attempt < 12; attempt++) {
-          const candidates = [
-            ...document.querySelectorAll('#main button, #main [role="button"], #main li, #main div[tabindex="0"]'),
-          ].filter((el) => el instanceof HTMLElement && el.isConnected);
-
-          const option = candidates.find((el) => {
-            const text = normalizeLabel(el.textContent || "");
-            if (!text) return false;
-            return labels.some((label) => text.includes(label));
-          });
-
-          if (option) {
-            option.click();
-            await sleep(220);
-            return true;
-          }
-
-          await sleep(120);
+      const isAttachmentMenuOpen = () => {
+        const controls = document.querySelectorAll("#main button, #main [role='button'], #main li");
+        for (const el of controls) {
+          const text = normalizeLabel(el.textContent || "");
+          if (!text) continue;
+          if (menuSignals.some((signal) => text.includes(signal))) return true;
         }
-
         return false;
       };
 
-      const optionClicked = await clickAttachmentOption();
-      console.log(`[RiseZap] attach option for ${targetKind}: ${optionClicked ? "selected" : "fallback by accept"}`);
+      const getAttachmentToggle = () => {
+        const selectors = [
+          "#main button span[data-icon='plus']",
+          "#main button span[data-icon='attach-menu-plus']",
+          "#main button span[data-icon='clip']",
+          "#main span[data-icon='plus']",
+          "#main span[data-icon='attach-menu-plus']",
+          "#main span[data-icon='clip']",
+          "button[aria-label*='Anexar']",
+          "button[title*='Anexar']",
+          "button[aria-label*='Attach']",
+          "button[title*='Attach']",
+        ];
+
+        for (const selector of selectors) {
+          const found = document.querySelector(selector);
+          if (!found) continue;
+          const clickable = found.closest("button, [role='button']") || found;
+          const text = normalizeLabel(clickable.textContent || "");
+          const label = normalizeLabel(clickable.getAttribute("aria-label") || clickable.getAttribute("title") || "");
+          const composite = `${text} ${label}`;
+          if (/document|fotos|videos|audio|figurinha|sticker/.test(composite)) continue;
+          return clickable;
+        }
+
+        return null;
+      };
 
       const isDocumentAccept = (accept) =>
         !accept ||
@@ -320,82 +307,98 @@
         accept.includes(".xls") ||
         accept.includes(".ppt");
 
+      const getInputContext = (input) => {
+        const owner =
+          input.closest("[role='button']") ||
+          input.closest("button") ||
+          input.closest("li") ||
+          input.closest("label") ||
+          input.parentElement;
+
+        const parts = [
+          owner?.textContent,
+          owner?.getAttribute?.("aria-label"),
+          owner?.getAttribute?.("title"),
+          owner?.getAttribute?.("data-testid"),
+          owner?.className,
+          input.getAttribute("data-testid"),
+          input.className,
+        ];
+
+        return normalizeLabel(parts.filter(Boolean).join(" "));
+      };
+
+      const classifyInput = (input) => {
+        const accept = (input.getAttribute("accept") || "").toLowerCase();
+        const context = getInputContext(input);
+
+        const looksLikeSticker =
+          /figurinha|sticker|new sticker/.test(context) ||
+          (accept.includes("image/webp") && !accept.includes("image/jpeg") && !accept.includes("image/png"));
+
+        if (looksLikeSticker) return "sticker";
+        if (accept.includes("audio")) return "audio";
+        if (accept.includes("image") || accept.includes("video")) return "media";
+        if (isDocumentAccept(accept)) return "document";
+        return "unknown";
+      };
+
       const scoreInput = (input) => {
         const accept = (input.getAttribute("accept") || "").toLowerCase();
-        const isMediaAccept = accept.includes("image") || accept.includes("video");
-        const isDocAccept = isDocumentAccept(accept);
-        const isAudioAccept = accept.includes("audio");
-        const mimeFamily = resolvedMime.split("/")[0];
-        const isFamilyMatch = accept.includes(mimeFamily);
+        const kind = classifyInput(input);
+
+        if (kind === "sticker") return -999;
 
         let score = 0;
 
         if (targetKind === "media") {
-          if (isMediaAccept) score += 12;
-          if (isDocAccept) score += 1;
+          if (kind === "media") score += 40;
+          if (accept.includes("image") || accept.includes("video")) score += 10;
+          if (accept.includes("webp") && !accept.includes("jpeg") && !accept.includes("png")) score -= 50;
         } else if (targetKind === "audio") {
-          if (isAudioAccept) score += 14;
-          if (isDocAccept) score += 2;
-          if (isMediaAccept) score += 1;
+          if (kind === "audio") score += 45;
+          if (accept.includes("audio")) score += 10;
         } else {
-          if (isDocAccept) score += 12;
-          if (isMediaAccept) score += 1;
-          if (isAudioAccept) score += 1;
+          if (kind === "document") score += 40;
         }
 
-        if (isFamilyMatch) score += 3;
-        if (input.closest("#main")) score += 1;
+        if (accept.includes(resolvedMime.split("/")[0])) score += 6;
+        if (input.closest("#main")) score += 6;
 
         return score;
       };
 
       const getCandidateInputs = () => {
-        const candidatesRaw = [
-          ...document.querySelectorAll('#main input[type="file"]'),
-          ...document.querySelectorAll('input[type="file"]'),
+        const raw = [
+          ...document.querySelectorAll("#main input[type='file']"),
+          ...document.querySelectorAll("input[type='file']"),
         ];
 
         const unique = [];
         const seen = new Set();
 
-        for (const input of candidatesRaw) {
+        for (const input of raw) {
           if (!input || seen.has(input) || input.disabled || !input.isConnected) continue;
           seen.add(input);
           unique.push(input);
         }
 
-        const ranked = unique
+        const strict = unique.filter((input) => {
+          const kind = classifyInput(input);
+          if (kind === "sticker") return false;
+          if (targetKind === "media") return kind === "media";
+          if (targetKind === "audio") return kind === "audio";
+          return kind === "document";
+        });
+
+        const pool = strict.length ? strict : unique.filter((input) => classifyInput(input) !== "sticker");
+
+        return pool
           .map((input, index) => ({ input, score: scoreInput(input), index }))
-          .sort((a, b) => (b.score - a.score) || (b.index - a.index));
-
-        if (targetKind === "audio") {
-          const audioRanked = ranked.filter(({ input }) =>
-            ((input.getAttribute("accept") || "").toLowerCase().includes("audio"))
-          );
-          if (audioRanked.length > 0) {
-            return audioRanked.map((item) => item.input);
-          }
-        }
-
-        return ranked.map((item) => item.input);
+          .filter((row) => row.score > -100)
+          .sort((a, b) => (b.score - a.score) || (b.index - a.index))
+          .map((row) => row.input);
       };
-
-      let candidates = [];
-      for (let i = 0; i < 24; i++) {
-        candidates = getCandidateInputs();
-        if (candidates.length) break;
-        await sleep(150);
-      }
-
-      if (!candidates.length) {
-        showToast("Input de arquivo não encontrado", true);
-        return false;
-      }
-
-      console.log(
-        "[RiseZap] Candidate inputs:",
-        candidates.map((input) => ({ accept: input.getAttribute("accept") || "(sem accept)", score: scoreInput(input) }))
-      );
 
       const file = new File([uploadBlob], safeFileName, { type: resolvedMime });
       const dt = new DataTransfer();
@@ -411,36 +414,27 @@
       };
 
       const findSendButton = () => {
-        const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
+        const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
         const lookupRoot = modal || document;
 
         const directButton =
-          lookupRoot.querySelector('button[data-testid="compose-btn-send"]') ||
-          lookupRoot.querySelector('button[aria-label*="Enviar"]') ||
-          lookupRoot.querySelector('button[aria-label*="Send"]') ||
-          lookupRoot.querySelector('[role="button"][aria-label*="Enviar"]') ||
-          lookupRoot.querySelector('[role="button"][aria-label*="Send"]');
+          lookupRoot.querySelector("button[data-testid='compose-btn-send']") ||
+          lookupRoot.querySelector("button[aria-label*='Enviar']") ||
+          lookupRoot.querySelector("button[aria-label*='Send']") ||
+          lookupRoot.querySelector("[role='button'][aria-label*='Enviar']") ||
+          lookupRoot.querySelector("[role='button'][aria-label*='Send']");
 
         if (directButton) return directButton;
 
         const iconBtn =
-          lookupRoot.querySelector('span[data-icon="send"]') ||
-          lookupRoot.querySelector('span[data-icon="send-filled"]') ||
-          lookupRoot.querySelector('span[data-icon="wds-ic-send-filled"]') ||
-          lookupRoot.querySelector('[data-icon*="send"]');
+          lookupRoot.querySelector("span[data-icon='send']") ||
+          lookupRoot.querySelector("span[data-icon='send-filled']") ||
+          lookupRoot.querySelector("span[data-icon='wds-ic-send-filled']") ||
+          lookupRoot.querySelector("[data-icon*='send']");
 
         if (iconBtn) return iconBtn.closest("button, [role='button']") || iconBtn;
 
-        const chatSend =
-          document.querySelector('#main footer button span[data-icon="send"]') ||
-          document.querySelector('#main footer span[data-icon="send"]') ||
-          document.querySelector('footer button span[data-icon="send"]') ||
-          document.querySelector('footer span[data-icon="send"]') ||
-          document.querySelector('#main footer button[aria-label="Send"]') ||
-          document.querySelector('#main footer button[aria-label="Enviar"]') ||
-          document.querySelector('#main footer button[data-testid="compose-btn-send"]');
-
-        return chatSend ? chatSend.closest("button, [role='button']") || chatSend : null;
+        return null;
       };
 
       const waitForPreparedState = async (timeoutMs) => {
@@ -448,19 +442,19 @@
         while (Date.now() - startedAt < timeoutMs) {
           const sendBtn = findSendButton();
           if (sendBtn) return sendBtn;
-          await sleep(200);
+          await sleep(180);
         }
         return null;
       };
 
-      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 250)));
+      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
 
       const simulateDropUpload = async () => {
         const dropTargets = [
-          document.querySelector('#main'),
-          document.querySelector('#main [role="application"]'),
-          document.querySelector('#main footer'),
-          document.querySelector('#main div[contenteditable="true"]'),
+          document.querySelector("#main [role='application']"),
+          document.querySelector("#main"),
+          document.querySelector("#main footer"),
+          document.querySelector("#main div[contenteditable='true']"),
         ].filter(Boolean);
 
         for (const target of dropTargets) {
@@ -481,19 +475,74 @@
         return null;
       };
 
+      const simulatePasteImageUpload = async () => {
+        if (!resolvedMime.startsWith("image/")) return null;
+        const input =
+          document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
+          document.querySelector('#main footer div[contenteditable="true"]') ||
+          document.querySelector('footer div[contenteditable="true"]');
+
+        if (!input) return null;
+
+        input.focus();
+        await sleep(80);
+
+        const clipboard = new DataTransfer();
+        clipboard.items.add(file);
+        const pasteEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: clipboard,
+        });
+
+        input.dispatchEvent(pasteEvent);
+        return await waitForPreparedState(prepareTimeout);
+      };
+
+      let candidates = getCandidateInputs();
+
+      if (!candidates.length) {
+        const toggle = getAttachmentToggle();
+        if (toggle && !isAttachmentMenuOpen()) {
+          toggle.click();
+          await sleep(220);
+        }
+
+        for (let i = 0; i < 20; i++) {
+          candidates = getCandidateInputs();
+          if (candidates.length) break;
+          await sleep(120);
+        }
+      }
+
+      console.log(
+        "[RiseZap] Candidate inputs:",
+        candidates.map((input) => ({
+          accept: input.getAttribute("accept") || "(sem accept)",
+          kind: classifyInput(input),
+          score: scoreInput(input),
+        }))
+      );
+
       let sendBtn = null;
       for (const input of candidates) {
         try {
           console.log("[RiseZap] Trying input", {
             targetKind,
             accept: input.getAttribute("accept") || "(sem accept)",
+            kind: classifyInput(input),
           });
+
           setFilesOnInput(input);
           sendBtn = await waitForPreparedState(prepareTimeout);
           if (sendBtn) break;
         } catch (e) {
           console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
         }
+      }
+
+      if (!sendBtn && targetKind === "media") {
+        sendBtn = await simulatePasteImageUpload();
       }
 
       if (!sendBtn) {
