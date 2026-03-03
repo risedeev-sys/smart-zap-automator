@@ -168,11 +168,27 @@
 
   async function sendFileViaDom(blob, fileName, mimeType) {
     try {
-      const resolvedMime = (mimeType || blob.type || "application/octet-stream").toLowerCase();
+      const resolvedMime = (blob.type || mimeType || "application/octet-stream").toLowerCase();
       const isMedia = /^(image|video)\//.test(resolvedMime);
-      const targetKind = isMedia ? "media" : "document"; // áudio também vai como documento
+      const targetKind = isMedia ? "media" : "document";
 
-      console.log("[RiseZap] sendFileViaDom:", fileName, resolvedMime, blob.size, "bytes", "kind:", targetKind);
+      const extensionMap = {
+        "audio/ogg": "ogg",
+        "audio/mpeg": "mp3",
+        "audio/mp4": "m4a",
+        "audio/wav": "wav",
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "video/mp4": "mp4",
+        "application/pdf": "pdf",
+      };
+
+      const hasExtension = /\.[a-z0-9]{2,8}$/i.test(fileName || "");
+      const fallbackExt = extensionMap[resolvedMime] || "bin";
+      const safeFileName = hasExtension ? fileName : `${fileName || "arquivo"}.${fallbackExt}`;
+
+      console.log("[RiseZap] sendFileViaDom:", safeFileName, resolvedMime, blob.size, "bytes", "kind:", targetKind);
 
       const attachBtn =
         document.querySelector('#main span[data-icon="plus"]') ||
@@ -209,33 +225,53 @@
         const accept = (input.getAttribute("accept") || "").toLowerCase();
         const isMediaAccept = accept.includes("image") || accept.includes("video");
         const isDocAccept = isDocumentAccept(accept);
+        const isAudio = resolvedMime.startsWith("audio/");
+        const mimeFamily = resolvedMime.split("/")[0];
+        const isFamilyMatch = accept.includes(mimeFamily);
+
+        let score = 0;
 
         if (targetKind === "media") {
-          if (isMediaAccept) return 3;
-          if (isDocAccept) return 1;
-          return 2;
+          if (isMediaAccept) score += 8;
+          if (isDocAccept) score += 2;
+        } else {
+          if (isDocAccept) score += 8;
+          if (isMediaAccept) score += 1;
+          if (isAudio && accept.includes("audio")) score += 4;
         }
 
-        if (isDocAccept) return 3;
-        if (isMediaAccept) return 1;
-        return 2;
+        if (isFamilyMatch) score += 2;
+        if (input.closest("#main")) score += 1;
+
+        return score;
       };
 
       const getCandidateInputs = () => {
-        const allInputs = Array.from(document.querySelectorAll('input[type="file"]'))
-          .filter((input) => !input.disabled)
-          .map((input) => ({ input, score: scoreInput(input) }))
-          .sort((a, b) => b.score - a.score)
-          .map((item) => item.input);
+        const candidatesRaw = [
+          ...document.querySelectorAll('#main input[type="file"]'),
+          ...document.querySelectorAll('input[type="file"]'),
+        ];
 
-        return allInputs.reverse(); // prioriza inputs inseridos mais recentemente
+        const unique = [];
+        const seen = new Set();
+
+        for (const input of candidatesRaw) {
+          if (!input || seen.has(input) || input.disabled || !input.isConnected) continue;
+          seen.add(input);
+          unique.push(input);
+        }
+
+        return unique
+          .map((input, index) => ({ input, score: scoreInput(input), index }))
+          .sort((a, b) => (b.score - a.score) || (b.index - a.index))
+          .map((item) => item.input);
       };
 
       let candidates = [];
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 24; i++) {
         candidates = getCandidateInputs();
         if (candidates.length) break;
-        await sleep(200);
+        await sleep(150);
       }
 
       if (!candidates.length) {
@@ -243,7 +279,12 @@
         return false;
       }
 
-      const file = new File([blob], fileName, { type: resolvedMime });
+      console.log(
+        "[RiseZap] Candidate inputs:",
+        candidates.map((input) => ({ accept: input.getAttribute("accept") || "(sem accept)", score: scoreInput(input) }))
+      );
+
+      const file = new File([blob], safeFileName, { type: resolvedMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
@@ -258,13 +299,22 @@
 
       const findSendButton = () => {
         const modal = document.querySelector('div[aria-modal="true"], [data-animate-modal-popup="true"]');
-        const modalBtn = modal
-          ? modal.querySelector(
-              'button[aria-label*="Enviar"], button[aria-label*="Send"], div[role="button"][aria-label*="Enviar"], div[role="button"][aria-label*="Send"], span[data-icon="send"]'
-            )
-          : null;
+        const lookupRoot = modal || document;
 
-        if (modalBtn) return modalBtn.closest("button, [role='button']") || modalBtn;
+        const iconBtn =
+          lookupRoot.querySelector('span[data-icon="send"]') ||
+          lookupRoot.querySelector('span[data-icon="send-filled"]') ||
+          lookupRoot.querySelector('span[data-icon="wds-ic-send-filled"]');
+
+        if (iconBtn) return iconBtn.closest("button, [role='button']") || iconBtn;
+
+        const labeledBtn =
+          lookupRoot.querySelector('button[aria-label*="Enviar"]') ||
+          lookupRoot.querySelector('button[aria-label*="Send"]') ||
+          lookupRoot.querySelector('[role="button"][aria-label*="Enviar"]') ||
+          lookupRoot.querySelector('[role="button"][aria-label*="Send"]');
+
+        if (labeledBtn) return labeledBtn;
 
         const chatSend =
           document.querySelector('#main footer button span[data-icon="send"]') ||
@@ -277,35 +327,31 @@
         return chatSend ? chatSend.closest("button, [role='button']") || chatSend : null;
       };
 
-      let prepared = false;
+      const waitForPreparedState = async (timeoutMs) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          const sendBtn = findSendButton();
+          if (sendBtn) return sendBtn;
+          await sleep(200);
+        }
+        return null;
+      };
+
+      const prepareTimeout = Math.min(12000, Math.max(3000, Math.floor(blob.size / 300000)));
+
+      let sendBtn = null;
       for (const input of candidates) {
         try {
           setFilesOnInput(input);
-          await sleep(450);
-
-          if (findSendButton()) {
-            prepared = true;
-            break;
-          }
+          sendBtn = await waitForPreparedState(prepareTimeout);
+          if (sendBtn) break;
         } catch (e) {
           console.warn("[RiseZap] Falha ao injetar arquivo no input", e);
         }
       }
 
-      if (!prepared) {
-        showToast("Não consegui preparar o arquivo para envio", true);
-        return false;
-      }
-
-      let sendBtn = null;
-      for (let i = 0; i < 16; i++) {
-        sendBtn = findSendButton();
-        if (sendBtn) break;
-        await sleep(250);
-      }
-
       if (!sendBtn) {
-        showToast("Botão de enviar do anexo não encontrado", true);
+        showToast("Não consegui preparar o arquivo para envio", true);
         return false;
       }
 
