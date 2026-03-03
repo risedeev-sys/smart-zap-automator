@@ -237,6 +237,65 @@
     return bridgeReady || !!document.getElementById("RZBridgeReady");
   }
 
+  async function createBridgeBlobUrl(fileUrl) {
+    if (!fileUrl) return null;
+
+    const fetchInContent = async () => {
+      const res = await fetch(fileUrl, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      return {
+        blobUrl: URL.createObjectURL(blob),
+        mime: blob.type || null,
+        bytes: typeof blob.size === "number" ? blob.size : null,
+        source: "content",
+      };
+    };
+
+    try {
+      return await fetchInContent();
+    } catch (contentErr) {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "RISEZAP_FETCH_FILE_BUFFER",
+          url: fileUrl,
+        });
+
+        if (!response?.ok || !response.buffer) {
+          throw new Error(response?.error || "background fetch failed");
+        }
+
+        let buffer = null;
+        if (response.buffer instanceof ArrayBuffer) {
+          buffer = response.buffer;
+        } else if (Array.isArray(response.buffer)) {
+          buffer = new Uint8Array(response.buffer).buffer;
+        }
+
+        if (!buffer) {
+          throw new Error("background payload missing ArrayBuffer");
+        }
+
+        const blob = new Blob([buffer], {
+          type: response.mime || "application/octet-stream",
+        });
+
+        return {
+          blobUrl: URL.createObjectURL(blob),
+          mime: blob.type || null,
+          bytes: typeof blob.size === "number" ? blob.size : null,
+          source: "background",
+        };
+      } catch (backgroundErr) {
+        console.warn("[RiseZap] createBridgeBlobUrl failed", {
+          contentError: contentErr?.message || String(contentErr),
+          backgroundError: backgroundErr?.message || String(backgroundErr),
+        });
+        return null;
+      }
+    }
+  }
+
   async function sendFileViaBridge(asset) {
     if (!asset.storage_path) {
       showToast("Ativo sem arquivo associado", true);
@@ -268,6 +327,10 @@
       sendType = "auto-detect";
     }
 
+    // For larger payloads (especially video), create a local blob URL first.
+    // This avoids cross-origin fetch instability inside page context.
+    const bridgeBlob = sendType === "video" ? await createBridgeBlobUrl(signedUrl) : null;
+
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
     // Build payload
@@ -275,25 +338,36 @@
       requestId,
       type: sendType,
       url: signedUrl,
+      fallbackUrl: signedUrl,
+      blobUrl: bridgeBlob?.blobUrl || undefined,
       isPtt: resolvedType === "audio", // audio always as PTT
       caption: undefined,
       fileName: asset.name || undefined,
       asViewOnce: !!(asset.metadata?.singleView || asset.metadata?.single_view),
-      mime: asset.mime || undefined,
+      mime: asset.mime || bridgeBlob?.mime || undefined,
     };
 
     console.log("[RiseZap] sendFileViaBridge:", {
       type: sendType,
       isPtt: payload.isPtt,
       name: asset.name,
+      usingBlobUrl: !!payload.blobUrl,
+      blobSource: bridgeBlob?.source || null,
     });
 
     // Send event and wait for response
-    const timeoutMs = (sendType === "video") ? 120000 : 60000;
+    const timeoutMs = sendType === "video" ? 180000 : 60000;
 
     return new Promise((resolve) => {
+      const releaseBlobUrl = () => {
+        if (bridgeBlob?.blobUrl) {
+          URL.revokeObjectURL(bridgeBlob.blobUrl);
+        }
+      };
+
       const timeout = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
+        releaseBlobUrl();
         showToast(`Timeout: bridge não respondeu em ${timeoutMs / 1000}s`, true);
         resolve(false);
       }, timeoutMs);
@@ -304,6 +378,7 @@
 
         window.removeEventListener("risezap:result", handler);
         clearTimeout(timeout);
+        releaseBlobUrl();
 
         if (detail.success) {
           resolve(true);

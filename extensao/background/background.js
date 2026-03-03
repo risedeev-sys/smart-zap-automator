@@ -35,3 +35,35 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[Rise Zap] Installed");
   refreshToken();
 });
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || message.type !== "RISEZAP_FETCH_FILE_BUFFER") return;
+
+  (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+
+    try {
+      const res = await fetch(message.url, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        sendResponse({ ok: false, error: `HTTP ${res.status}` });
+        return;
+      }
+
+      const buffer = await res.arrayBuffer();
+      const mime = res.headers.get("content-type") || null;
+      sendResponse({ ok: true, buffer, mime });
+    } catch (err) {
+      sendResponse({ ok: false, error: err?.message || String(err) });
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+
+  return true;
+});
