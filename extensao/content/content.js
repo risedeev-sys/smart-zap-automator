@@ -557,6 +557,92 @@
 
   // ─── Send File via DOM ────────────────────────────────
 
+  function getSendButtonCandidate() {
+    const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
+    const lookupRoot = modal || document;
+
+    const directButton =
+      lookupRoot.querySelector("button[data-testid='compose-btn-send']") ||
+      lookupRoot.querySelector("button[aria-label*='Enviar']") ||
+      lookupRoot.querySelector("button[aria-label*='Send']") ||
+      lookupRoot.querySelector("[role='button'][aria-label*='Enviar']") ||
+      lookupRoot.querySelector("[role='button'][aria-label*='Send']");
+
+    if (directButton) return directButton;
+
+    const iconBtn =
+      lookupRoot.querySelector("span[data-icon='send']") ||
+      lookupRoot.querySelector("span[data-icon='send-filled']") ||
+      lookupRoot.querySelector("span[data-icon='wds-ic-send-filled']") ||
+      lookupRoot.querySelector("[data-icon*='send']");
+
+    return iconBtn ? (iconBtn.closest("button, [role='button']") || iconBtn) : null;
+  }
+
+  async function waitForSendButton(timeoutMs) {
+    const startedAt = Date.now();
+    let sendBtn = null;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      sendBtn = getSendButtonCandidate();
+      if (sendBtn) return sendBtn;
+      await sleep(200);
+    }
+
+    return null;
+  }
+
+  function getChatDropTarget() {
+    const selectors = [
+      "#main [data-testid='conversation-panel-wrapper']",
+      "#main div[role='application']",
+      "#main [data-testid='conversation-compose-box-input']",
+      "#main",
+    ];
+
+    for (const selector of selectors) {
+      const node = document.querySelector(selector);
+      if (node) return node;
+    }
+
+    return null;
+  }
+
+  function dispatchDragEvent(target, type, dataTransfer) {
+    const event = new DragEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    target.dispatchEvent(event);
+  }
+
+  async function trySendAudioViaDrop(file, bytes) {
+    try {
+      const dropTarget = getChatDropTarget();
+      if (!dropTarget) return false;
+
+      const dt = new DataTransfer();
+      dt.items.add(file);
+
+      dispatchDragEvent(dropTarget, "dragenter", dt);
+      dispatchDragEvent(dropTarget, "dragover", dt);
+      dispatchDragEvent(dropTarget, "drop", dt);
+
+      await sleep(380);
+
+      const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(bytes / 220)));
+      const sendBtn = await waitForSendButton(prepareTimeout);
+      if (!sendBtn) return false;
+
+      sendBtn.click();
+      return true;
+    } catch (err) {
+      console.warn("[RiseZap] Audio drop path failed, using attachment fallback", err);
+      return false;
+    }
+  }
+
   async function sendFileViaDom(blob, fileName, mimeType, forcedKind = null) {
     try {
       const normalized = await normalizeUploadAsset(blob, fileName, mimeType);
@@ -585,8 +671,14 @@
       const hasExtension = /\.[a-z0-9]{2,8}$/i.test(sourceFileName || "");
       const fallbackExt = extensionMap[effectiveMime] || (targetKind === "audio" ? "ogg" : "bin");
       const safeFileName = hasExtension ? sourceFileName : `${sourceFileName || "arquivo"}.${fallbackExt}`;
+      const file = new File([uploadBlob], safeFileName, { type: effectiveMime });
 
       console.log("[RiseZap] sendFileViaDom:", safeFileName, effectiveMime, uploadBlob.size, "bytes", "kind:", targetKind);
+
+      if (targetKind === "audio") {
+        const sentByDrop = await trySendAudioViaDrop(file, uploadBlob.size);
+        if (sentByDrop) return true;
+      }
 
       const baselineInputs = [...document.querySelectorAll("input[type='file']")];
 
@@ -601,7 +693,6 @@
         console.warn(`[RiseZap] Não localizei opção de menu para ${targetKind}, tentando input existente`);
       }
 
-      const file = new File([uploadBlob], safeFileName, { type: effectiveMime });
       const dt = new DataTransfer();
       dt.items.add(file);
 
@@ -654,38 +745,7 @@
       fileInput.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
 
       const prepareTimeout = Math.min(20000, Math.max(5000, Math.floor(uploadBlob.size / 220)));
-
-      const findSendButton = () => {
-        const modal = document.querySelector("div[aria-modal='true'], [data-animate-modal-popup='true']");
-        const lookupRoot = modal || document;
-
-        const directButton =
-          lookupRoot.querySelector("button[data-testid='compose-btn-send']") ||
-          lookupRoot.querySelector("button[aria-label*='Enviar']") ||
-          lookupRoot.querySelector("button[aria-label*='Send']") ||
-          lookupRoot.querySelector("[role='button'][aria-label*='Enviar']") ||
-          lookupRoot.querySelector("[role='button'][aria-label*='Send']");
-
-        if (directButton) return directButton;
-
-        const iconBtn =
-          lookupRoot.querySelector("span[data-icon='send']") ||
-          lookupRoot.querySelector("span[data-icon='send-filled']") ||
-          lookupRoot.querySelector("span[data-icon='wds-ic-send-filled']") ||
-          lookupRoot.querySelector("[data-icon*='send']");
-
-        if (iconBtn) return iconBtn.closest("button, [role='button']") || iconBtn;
-
-        return null;
-      };
-
-      let sendBtn = null;
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < prepareTimeout) {
-        sendBtn = findSendButton();
-        if (sendBtn) break;
-        await sleep(200);
-      }
+      const sendBtn = await waitForSendButton(prepareTimeout);
 
       if (!sendBtn) {
         showToast("Não consegui preparar o arquivo para envio", true);
