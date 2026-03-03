@@ -660,23 +660,16 @@
 
     document.body.appendChild(bar);
 
-    // Position bar only over the chat panel (right side of the divider)
-    function positionBar() {
-      const sidePanel = document.getElementById("side") ||
-        document.querySelector("[data-side]") ||
-        document.querySelector("._pane-list") ||
-        document.querySelector('[data-testid="chat-list"]');
-      
-      if (sidePanel) {
-        const sidePanelRight = sidePanel.getBoundingClientRect().right;
-        bar.style.left = sidePanelRight + "px";
-      } else {
-        bar.style.left = "30%";
-      }
+    // Push WhatsApp UI up so bar doesn't cover the chat
+    const barH = bar.offsetHeight || 40;
+    const appEl = document.getElementById("app");
+    if (appEl) {
+      appEl.style.height = `calc(100vh - ${barH}px)`;
+      appEl.style.overflow = "hidden";
     }
 
-    positionBar();
-    window.addEventListener("resize", positionBar);
+    // Position bar across full width
+    bar.style.left = "0";
   }
 
   function makeBtn(icon, label, cls) {
