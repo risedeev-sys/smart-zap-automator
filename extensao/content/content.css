@@ -9,19 +9,18 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   background: #1a1a2e;
   border-top: 1px solid #2a3942;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: #2a3942 transparent;
   font-family: 'Segoe UI', sans-serif;
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
+  box-sizing: border-box;
 }
 
-#risezap-bar::-webkit-scrollbar { height: 4px; }
+#risezap-bar::-webkit-scrollbar { height: 3px; }
 #risezap-bar::-webkit-scrollbar-thumb { background: #2a3942; border-radius: 2px; }
 
 #risezap-bar .rz-logo {
@@ -47,10 +46,10 @@
 
 /* Botões */
 #risezap-bar .rz-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border: none;
   border-radius: 14px;
   font-size: 11px;
@@ -62,8 +61,6 @@
   transition: filter 0.15s, transform 0.1s;
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  height: 26px;
-  line-height: 26px;
 }
 
 #risezap-bar .rz-btn:hover {
