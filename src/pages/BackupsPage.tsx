@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { importBackupToSupabase } from "@/utils/importBackupToSupabase";
+import { exportFullBackup } from "@/utils/exportFullBackup";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,18 +18,17 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Upload, Download, AlertTriangle, FileJson, CheckCircle2 } from "lucide-react";
-import { useAssets, type AssetItem, type Funnel } from "@/contexts/AssetsContext";
 import { useToast } from "@/hooks/use-toast";
 import { detectAndConvertZapVoice } from "@/utils/zapVoiceConverter";
 
 export default function BackupsPage() {
-  const { mensagens, setMensagens, audios, setAudios, midias, setMidias, documentos, setDocumentos, funnels, setFunnels } = useAssets();
   const { toast } = useToast();
 
   // Export state
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportAll, setExportAll] = useState(true);
   const [exportName, setExportName] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [exportSections, setExportSections] = useState({
     mensagens: true,
     audios: true,
@@ -52,30 +52,32 @@ export default function BackupsPage() {
   };
 
   const handleExport = async () => {
-    const data: Record<string, unknown> = { version: 1, createdAt: new Date().toISOString() };
+    setExporting(true);
+    try {
+      const sections = exportAll
+        ? { mensagens: true, audios: true, midias: true, documentos: true, funis: true, gatilhos: true }
+        : exportSections;
 
-    if (exportAll || exportSections.mensagens) data.mensagens = mensagens;
-    if (exportAll || exportSections.audios) data.audios = audios;
-    if (exportAll || exportSections.midias) data.midias = midias;
-    if (exportAll || exportSections.documentos) data.documentos = documentos;
-    if (exportAll || exportSections.funis) data.funis = funnels;
-    if (exportAll || exportSections.gatilhos) {
-      const { data: triggersData } = await supabase.from("triggers").select("*");
-      data.gatilhos = triggersData ?? [];
+      const data = await exportFullBackup(sections);
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${exportName || "backup"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setExportModalOpen(false);
+      toast({ title: "Backup exportado com sucesso!" });
+    } catch (err: any) {
+      console.error("[BackupsPage] Erro na exportação:", err);
+      toast({ title: "Erro ao exportar", description: err.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
     }
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${exportName || "backup"}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    setExportModalOpen(false);
-    toast({ title: "Backup exportado com sucesso!" });
   };
 
   // --- Import ---
@@ -96,26 +98,17 @@ export default function BackupsPage() {
       const rawData = JSON.parse(text);
       const { converted: data, wasZapVoice } = detectAndConvertZapVoice(rawData);
 
-      // Persist to Supabase
       console.log("[BackupsPage] Chamando importBackupToSupabase...");
       const { counts } = await importBackupToSupabase(data);
       console.log("[BackupsPage] Persistência concluída:", counts);
 
-      // Update local state with imported data (always replace)
-      setMensagens(data.mensagens ?? []);
-      setAudios(data.audios ?? []);
-      setMidias(data.midias ?? []);
-      setDocumentos(data.documentos ?? []);
-      setFunnels(data.funis ?? []);
-      // triggers are now handled by importBackupToSupabase directly
-
-      // Summary toast
       const countStrs: string[] = [];
       if (counts.mensagens) countStrs.push(`${counts.mensagens} mensagens`);
       if (counts.audios) countStrs.push(`${counts.audios} áudios`);
       if (counts.midias) countStrs.push(`${counts.midias} mídias`);
       if (counts.documentos) countStrs.push(`${counts.documentos} documentos`);
       if (counts.funis) countStrs.push(`${counts.funis} funis`);
+      if (counts.gatilhos) countStrs.push(`${counts.gatilhos} gatilhos`);
 
       setImportSuccess(true);
       setImportFile(null);
@@ -190,7 +183,7 @@ export default function BackupsPage() {
               <div className="flex items-start gap-2 p-3 rounded-md bg-warning/10 text-sm">
                 <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
                 <p className="text-muted-foreground">
-                  Ao importar, todos os seus dados atuais (mensagens, áudios, mídias, documentos e funis) serão <strong>substituídos</strong> pelos dados do backup.
+                  Ao importar, todos os seus dados atuais (mensagens, áudios, mídias, documentos, funis e gatilhos) serão <strong>substituídos</strong> pelos dados do backup.
                 </p>
               </div>
 
@@ -262,8 +255,8 @@ export default function BackupsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportModalOpen(false)}>Cancelar</Button>
-            <Button onClick={handleExport}>
-              <Download className="h-4 w-4 mr-1" /> Exportar backup
+            <Button onClick={handleExport} disabled={exporting}>
+              <Download className="h-4 w-4 mr-1" /> {exporting ? "Exportando..." : "Exportar backup"}
             </Button>
           </DialogFooter>
         </DialogContent>
