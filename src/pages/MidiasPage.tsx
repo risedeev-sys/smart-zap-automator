@@ -19,6 +19,7 @@ import { Trash2, Copy, Pencil, Heart, Image } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAssetFile } from "@/utils/uploadAssetFile";
+import { deleteAssetEverywhere } from "@/utils/deleteAssetEverywhere";
 
 export default function MidiasPage() {
   const { midias, setMidias } = useAssets();
@@ -45,11 +46,20 @@ export default function MidiasPage() {
   };
   const selectedItem = midias.find((m) => m.id === selected);
 
-  const handleDelete = () => {
-    if (selected) {
+  const handleDelete = async () => {
+    if (!selected) return;
+
+    try {
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "midia", assetId: selected });
       setMidias((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
+      toast({
+        title: "Mídia excluída!",
+        description: storageWarning ? `Cadastro removido, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
+      });
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     }
   };
 

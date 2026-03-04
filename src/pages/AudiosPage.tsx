@@ -18,6 +18,7 @@ import { Trash2, Copy, Pencil, Heart, Mic, Download, Info, Users } from "lucide-
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAssetFile } from "@/utils/uploadAssetFile";
+import { deleteAssetEverywhere } from "@/utils/deleteAssetEverywhere";
 import { convertAudioToOgg } from "@/utils/convertAudioToOgg";
 
 export default function AudiosPage() {
@@ -45,11 +46,20 @@ export default function AudiosPage() {
   };
   const selectedItem = audios.find((m) => m.id === selected);
 
-  const handleDelete = () => {
-    if (selected) {
+  const handleDelete = async () => {
+    if (!selected) return;
+
+    try {
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "audio", assetId: selected });
       setAudios((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
+      toast({
+        title: "Áudio excluído!",
+        description: storageWarning ? `Arquivo removido do cadastro, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
+      });
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     }
   };
 

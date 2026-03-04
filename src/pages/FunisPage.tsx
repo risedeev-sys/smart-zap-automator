@@ -138,24 +138,63 @@ export default function FunisPage() {
       .select("id, funnel_id, type, asset_id, delay_min, delay_sec, position")
       .eq("funnel_id", funnelId)
       .order("position", { ascending: true });
+
     if (error) {
       toast({ title: "Erro ao carregar itens", description: error.message, variant: "destructive" });
-    } else {
-      setItems(data ?? []);
-      // Cache asset names
-      const newCache: Record<string, string> = {};
-      for (const item of data ?? []) {
-        const table = assetTables[item.type];
-        if (table && !assetNameCache[item.asset_id]) {
-          const { data: asset } = await supabase.from(table as any).select("name").eq("id", item.asset_id).single();
-          if (asset) newCache[item.asset_id] = (asset as any).name;
-        }
-      }
-      if (Object.keys(newCache).length > 0) {
-        setAssetNameCache(prev => ({ ...prev, ...newCache }));
-      }
+      return;
     }
-  }, [assetNameCache]);
+
+    const fetchedItems = data ?? [];
+    const assetIdsByType = fetchedItems.reduce<Record<string, string[]>>((acc, item) => {
+      if (!acc[item.type]) acc[item.type] = [];
+      if (!acc[item.type].includes(item.asset_id)) acc[item.type].push(item.asset_id);
+      return acc;
+    }, {});
+
+    const assetNamesByTypedId = new Map<string, string>();
+
+    await Promise.all(
+      Object.entries(assetIdsByType).map(async ([type, ids]) => {
+        const table = assetTables[type];
+        if (!table || ids.length === 0) return;
+
+        const { data: assets } = await supabase
+          .from(table as any)
+          .select("id, name")
+          .in("id", ids);
+
+        for (const row of ((assets ?? []) as unknown as Array<{ id: string; name: string }>)) {
+          assetNamesByTypedId.set(`${type}:${row.id}`, row.name);
+        }
+      }),
+    );
+
+    const orphanItemIds: string[] = [];
+    const validItems: FunnelItemRow[] = [];
+    const newCache: Record<string, string> = {};
+
+    for (const item of fetchedItems) {
+      const typedKey = `${item.type}:${item.asset_id}`;
+      const assetName = assetNamesByTypedId.get(typedKey);
+
+      if (!assetName) {
+        orphanItemIds.push(item.id);
+        continue;
+      }
+
+      validItems.push(item);
+      newCache[item.asset_id] = assetName;
+    }
+
+    if (orphanItemIds.length > 0) {
+      await supabase.from("funnel_items").delete().in("id", orphanItemIds);
+    }
+
+    setItems(validItems);
+    if (Object.keys(newCache).length > 0) {
+      setAssetNameCache((prev) => ({ ...prev, ...newCache }));
+    }
+  }, [toast]);
 
   const fetchAssetOptions = useCallback(async (type: string) => {
     const table = assetTables[type];
