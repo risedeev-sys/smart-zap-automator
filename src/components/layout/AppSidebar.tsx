@@ -35,7 +35,7 @@ const menuItems = [
   { title: "Gatilhos", url: "/gatilhos", icon: Zap, color: "text-amber-400" },
   { title: "Fluxos", url: "/fluxos", icon: Workflow, color: "text-blue-400", disabled: true },
   { title: "Backups", url: "/backups", icon: Archive, color: "text-slate-400" },
-  { title: "Espaço de Teste", url: "/teste", icon: FlaskConical, color: "text-lime-400" },
+  
   { title: "Instâncias", url: "/api-keys", icon: Smartphone, color: "text-orange-400" },
 ];
 
