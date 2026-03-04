@@ -79,6 +79,23 @@
     return null;
   }
 
+  function isVideoMediaAsset(asset) {
+    if (!asset || asset.resolvedType !== "media") return false;
+
+    const mime = String(asset.mime || "").toLowerCase();
+    const storagePath = String(asset.storage_path || "").toLowerCase();
+    const name = String(asset.name || "").toLowerCase();
+    const mediaType = String(asset.metadata?.mediaType || "").toLowerCase();
+    const videoExtPattern = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
+
+    return (
+      mime.startsWith("video/") ||
+      videoExtPattern.test(storagePath) ||
+      videoExtPattern.test(name) ||
+      mediaType === "video"
+    );
+  }
+
   function getCachedAsset(type, assetId) {
     const lookups = type
       ? [{ type, rows: type === "message" ? assets.messages : type === "audio" ? assets.audios : type === "media" ? assets.medias : assets.documents }]
@@ -315,31 +332,37 @@
     }
 
     // Determine send type
+    const forceVideoAsDocument = !!asset.__forceVideoAsDocument;
     let sendType;
     const resolvedType = asset.resolvedType;
+    const isVideoAsset = isVideoMediaAsset(asset);
+
     if (resolvedType === "audio") {
       sendType = "audio";
     } else if (resolvedType === "media") {
-      const mime = String(asset.mime || "").toLowerCase();
-      const storagePath = String(asset.storage_path || "").toLowerCase();
-      const name = String(asset.name || "").toLowerCase();
-      const videoExtPattern = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
-      const isVideo =
-        mime.startsWith("video/") ||
-        videoExtPattern.test(storagePath) ||
-        videoExtPattern.test(name) ||
-        asset.metadata?.mediaType === "video";
-
-      sendType = isVideo ? "video" : "image";
+      sendType = isVideoAsset
+        ? forceVideoAsDocument
+          ? "document"
+          : "video"
+        : "image";
     } else if (resolvedType === "document") {
       sendType = "document";
     } else {
       sendType = "auto-detect";
     }
 
+    const normalizedFileName = (() => {
+      const base = String(asset.name || "arquivo").trim() || "arquivo";
+      if (!isVideoAsset) return base;
+      if (/\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(base)) return base;
+      return `${base}.mp4`;
+    })();
+
     // For larger payloads (especially video), create a local blob URL first.
     // This avoids cross-origin fetch instability inside page context.
-    const bridgeBlob = sendType === "video" ? await createBridgeBlobUrl(signedUrl) : null;
+    const bridgeBlob = sendType === "video" || (sendType === "document" && isVideoAsset)
+      ? await createBridgeBlobUrl(signedUrl)
+      : null;
 
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -352,7 +375,7 @@
       blobUrl: bridgeBlob?.blobUrl || undefined,
       isPtt: resolvedType === "audio", // audio always as PTT
       caption: undefined,
-      fileName: asset.name || undefined,
+      fileName: normalizedFileName,
       asViewOnce: !!(asset.metadata?.singleView || asset.metadata?.single_view),
       mime: asset.mime || bridgeBlob?.mime || undefined,
     };
@@ -366,7 +389,7 @@
     });
 
     // Send event and wait for response
-    const timeoutMs = sendType === "video" ? 240000 : 60000;
+    const timeoutMs = sendType === "video" || (sendType === "document" && isVideoAsset) ? 150000 : 60000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {
@@ -537,6 +560,9 @@
         }
 
         let ok = false;
+        const isVideoStep = isVideoMediaAsset(asset);
+
+        showToast(`⏳ Funil "${funnelName}" — item ${i + 1}/${items.length}: ${asset.name || asset.resolvedType}`, false, true);
 
         if (asset.resolvedType === "message") {
           // Text stays DOM-based
@@ -544,6 +570,15 @@
         } else {
           // Audio, Media, Document → WPP Bridge (native)
           ok = await sendFileViaBridge(asset);
+
+          // Fallback definitivo para evitar travar funil em vídeos com bug de pipeline no WhatsApp Web.
+          if (!ok && isVideoStep) {
+            showToast("⚠️ Vídeo falhou como mídia. Tentando como documento MP4...", false, true);
+            ok = await sendFileViaBridge({
+              ...asset,
+              __forceVideoAsDocument: true,
+            });
+          }
         }
 
         if (!ok) {
