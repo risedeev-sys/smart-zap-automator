@@ -1067,10 +1067,12 @@
     console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", { name: asset.name, dataUrlLength: dataUrl.length, asViewOnce, isForwarded });
 
     return new Promise((resolve) => {
+      let retryAttempted = false;
+
       const timeoutId = setTimeout(async () => {
         window.removeEventListener("risezap:result", handler);
-        console.error("[RiseZap] Audio bridge timeout, falling back to attach menu");
-        showToast("Bridge falhou, tentando envio alternativo...", false, true);
+        console.error("[RiseZap] Audio bridge timeout after 90s");
+        showToast("Bridge falhou no timeout, tentando envio alternativo...", false, true);
         const ok = await sendFileViaAttachMenu(asset);
         resolve(ok);
       }, 90000);
@@ -1087,8 +1089,13 @@
           return;
         }
 
-        console.warn("[RiseZap] Audio bridge failed, trying attach-menu fallback:", detail.errorMessage);
-        showToast("Bridge falhou, tentando envio alternativo...", false, true);
+        console.warn("[RiseZap] Audio bridge failed:", detail.errorCode, detail.errorMessage, "strategy:", detail.strategy);
+
+        // If this was the first attempt, the bridge itself has a retry strategy (audio-ptt-minimal).
+        // The bridge handles retries internally now, so if we get here, both strategies failed.
+        // Log the failure clearly before falling back.
+        console.error("[RiseZap] All bridge strategies exhausted for audio. Falling back to attach-menu (will send as document).");
+        showToast("Bridge falhou, enviando como documento...", false, true);
         const ok = await sendFileViaAttachMenu(asset);
         resolve(ok);
       }

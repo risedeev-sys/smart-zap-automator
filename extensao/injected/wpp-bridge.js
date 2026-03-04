@@ -176,10 +176,11 @@
       case "audio":
         opts.type = "audio";
         opts.isPtt = isPtt !== false;
-        opts.mimetype = mime || "audio/ogg; codecs=opus";
-        // WhatsApp Web/wa-js has unstable behavior for audio+flags.
-        // We intentionally ignore view-once/forwarded flags for audio
-        // to prioritize deterministic delivery.
+        // CRITICAL: PTT MUST always use OGG/Opus mime regardless of actual file format.
+        // WhatsApp rejects PTT with audio/mpeg or other mimes.
+        opts.mimetype = "audio/ogg; codecs=opus";
+        // Do NOT pass filename for PTT — it can cause wa-js to treat it as document
+        // Do NOT pass viewOnce/forwarded — unstable for audio in wa-js
         break;
 
       case "image":
@@ -368,16 +369,31 @@
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
 
+    const isAudio = type === "audio";
     const strategies = isVideo
       ? ["video-native"]
-      : ["default"];
+      : isAudio
+        ? ["audio-ptt", "audio-ptt-minimal"]
+        : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
       const strategyOverride = undefined;
 
-      const options = buildSendOptions(type, detail, isVideo, strategyOverride);
+      let options = buildSendOptions(type, detail, isVideo, strategyOverride);
+
+      // For minimal audio retry, strip everything except core PTT fields
+      if (strategy === "audio-ptt-minimal") {
+        options = {
+          type: "audio",
+          isPtt: true,
+          mimetype: "audio/ogg; codecs=opus",
+          waitForAck: false,
+        };
+        log("Using minimal PTT options (retry)");
+      }
+
       const sendTimeoutMs = isVideo
         ? TIMEOUT.SEND_VIDEO
         : TIMEOUT.SEND_NORMAL;
