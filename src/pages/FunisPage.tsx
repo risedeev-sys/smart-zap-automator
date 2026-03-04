@@ -163,7 +163,7 @@ export default function FunisPage() {
           .select("id, name")
           .in("id", ids);
 
-        for (const row of (assets ?? []) as Array<{ id: string; name: string }>) {
+        for (const row of ((assets ?? []) as unknown as Array<{ id: string; name: string }>)) {
           assetNamesByTypedId.set(`${type}:${row.id}`, row.name);
         }
       }),
