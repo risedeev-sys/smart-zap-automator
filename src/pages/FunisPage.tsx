@@ -414,8 +414,8 @@ export default function FunisPage() {
               <button
                 key={f.id}
                 onClick={() => setSelected(f.id)}
-                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
-                  selected === f.id ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
+                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group border ${
+                  selected === f.id ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-muted text-foreground border-transparent"
                 }`}
               >
                 <div className="flex-1 min-w-0">
