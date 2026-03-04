@@ -292,9 +292,9 @@
     if (ext === "png") return "image/png";
     if (ext === "webp") return "image/webp";
     if (ext === "gif") return "image/gif";
-    if (ext === "mp4") return "video/mp4";
+    if (ext === "bmp") return "image/bmp";
+    if (["mp4", "m4v", "mov", "3gp", "mpeg", "mpg", "avi", "mkv"].includes(ext)) return "video/mp4";
     if (ext === "webm") return "video/webm";
-    if (ext === "mov") return "video/quicktime";
     if (ext === "pdf") return "application/pdf";
     return "";
   }
@@ -309,6 +309,33 @@
     const lowerMime = String(mime || "").toLowerCase();
     if (lowerMime.startsWith("image/")) return true;
     return IMAGE_EXTENSIONS.has(getFileExtension(fileName));
+  }
+
+  async function detectMimeFromBlobSignature(blob) {
+    try {
+      const head = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+      if (head.length >= 12) {
+        const boxType = String.fromCharCode(head[4], head[5], head[6], head[7]);
+        if (boxType === "ftyp") return "video/mp4";
+      }
+      if (head.length >= 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
+        return "video/webm";
+      }
+      if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+      if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image/png";
+      if (head.length >= 6) {
+        const sig = String.fromCharCode(...head.slice(0, 6));
+        if (sig === "GIF87a" || sig === "GIF89a") return "image/gif";
+      }
+      if (head.length >= 12) {
+        const riff = String.fromCharCode(head[0], head[1], head[2], head[3]);
+        const webp = String.fromCharCode(head[8], head[9], head[10], head[11]);
+        if (riff === "RIFF" && webp === "WEBP") return "image/webp";
+      }
+      return "";
+    } catch {
+      return "";
+    }
   }
 
   async function convertWebpBlobToJpeg(blob) {
@@ -337,10 +364,23 @@
 
   async function prepareAssetFileForWhatsapp(asset, blob) {
     let fileName = resolveFileName(asset, blob.type);
-    let fileMime = String(asset?.mime || blob.type || inferMimeFromFileName(fileName) || "application/octet-stream").toLowerCase();
 
-    const isVideo = asset?.resolvedType === "media" && isVideoFileLike(fileMime, fileName);
-    const isImage = asset?.resolvedType === "media" && isImageFileLike(fileMime, fileName);
+    const storagePathMime = inferMimeFromFileName(asset?.storage_path || "");
+    const fileNameMime = inferMimeFromFileName(fileName);
+    const headerMime = await detectMimeFromBlobSignature(blob);
+
+    let fileMime = String(
+      asset?.mime || blob.type || headerMime || storagePathMime || fileNameMime || "application/octet-stream"
+    ).toLowerCase();
+
+    const isVideo =
+      asset?.resolvedType === "media" &&
+      (isVideoFileLike(fileMime, fileName) || isVideoFileLike(storagePathMime, asset?.storage_path || ""));
+
+    const isImage =
+      asset?.resolvedType === "media" &&
+      !isVideo &&
+      (isImageFileLike(fileMime, fileName) || isImageFileLike(storagePathMime, asset?.storage_path || ""));
 
     let preparedBlob = blob;
     let normalizedWebp = false;
@@ -551,8 +591,6 @@
   }
 
   function pickAttachmentInput(inputs, assetType, mime = "", fileName = "") {
-    const prefersVideoDocInput = assetType === "media" && isVideoFileLike(mime, fileName);
-
     const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
     const docInput = inputs.find((input) => {
       const accept = String(input.accept || "").toLowerCase();
@@ -566,8 +604,8 @@
     });
 
     if (assetType === "media") {
-      // ALL media (images and videos) go through media input for native inline display
-      return mediaInput || docInput || inputs[0];
+      // Never downgrade media to document input, otherwise WA renders as file
+      return mediaInput || null;
     }
 
     if (assetType === "document") {
