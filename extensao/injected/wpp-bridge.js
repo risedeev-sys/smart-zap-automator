@@ -163,34 +163,32 @@
 
   // ─── Build WPP Options ───────────────────────────────
 
-  function buildSendOptions(type, detail, isVideo, strategyOverride) {
-    const { isPtt, caption, fileName, asViewOnce, isForwarded, mime } = detail;
+  function buildSendOptions(type, detail, isVideo, strategy) {
+    const { isPtt, caption, fileName, asViewOnce, mime } = detail;
     const opts = {};
 
-    // IMPORTANT:
-    // Use non-blocking send command and validate final delivery in sendMsgResult.
-    // waitForAck=true can cause sendFileMessage to hang indefinitely on current WA builds.
+    // waitForAck=true can cause sendFileMessage to hang on current WA builds.
     opts.waitForAck = false;
-
-    const strategy = String(strategyOverride || "");
 
     switch (type) {
       case "audio": {
         opts.type = "audio";
         opts.isPtt = isPtt !== false;
 
-        const normalizedAudioMime = String(mime || "").trim();
-        if (normalizedAudioMime) {
-          opts.mimetype = normalizedAudioMime;
-        }
-
-        // Try optional flags only on explicit strategy; fallback strategies strip them.
-        if (strategy === "audio-with-flags") {
+        // Strategy controls what extra options we pass.
+        // "audio-clean": bare minimum — most compatible
+        // "audio-with-mime": adds mimetype
+        // "audio-with-viewonce": adds isViewOnce flag
+        if (strategy === "audio-clean") {
+          // Nothing extra — let wa-js auto-detect from data URL
+        } else if (strategy === "audio-with-mime") {
+          const normalizedMime = String(mime || "").trim();
+          if (normalizedMime) opts.mimetype = normalizedMime;
+        } else if (strategy === "audio-with-viewonce") {
           if (asViewOnce) opts.isViewOnce = true;
-          if (isForwarded) opts.isForwarded = true;
         }
 
-        // Do NOT pass filename for PTT — it can cause wa-js to treat it as document.
+        // NEVER pass filename for PTT — causes wa-js to treat it as document
         break;
       }
 
@@ -381,39 +379,19 @@
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
 
     const isAudio = type === "audio";
+    // Audio strategies: start with cleanest (most compatible), add options progressively
+    // This ensures the first attempt has the highest chance of success.
     const strategies = isVideo
       ? ["video-native"]
       : isAudio
-        ? ["audio-with-flags", "audio-ptt", "audio-ptt-minimal", "audio-ptt-no-mime"]
+        ? ["audio-clean", "audio-with-mime", "audio-with-viewonce"]
         : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
-      const strategyOverride = strategy === "audio-with-flags" ? "audio-with-flags" : undefined;
 
-      let options = buildSendOptions(type, detail, isVideo, strategyOverride);
-
-      // Retry 1: strip to core PTT + optional mimetype
-      if (strategy === "audio-ptt-minimal") {
-        options = {
-          type: "audio",
-          isPtt: true,
-          waitForAck: false,
-        };
-        if (detail?.mime) options.mimetype = detail.mime;
-        log("Using minimal PTT options (retry)");
-      }
-
-      // Retry 2: strip mimetype too (WA build compatibility)
-      if (strategy === "audio-ptt-no-mime") {
-        options = {
-          type: "audio",
-          isPtt: true,
-          waitForAck: false,
-        };
-        log("Using PTT options without explicit mimetype (retry)");
-      }
+      const options = buildSendOptions(type, detail, isVideo, strategy);
 
       const sendTimeoutMs = isVideo
         ? TIMEOUT.SEND_VIDEO

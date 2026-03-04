@@ -1083,7 +1083,6 @@
 
     const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
     const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
-    const isForwarded = parseBooleanFlag(metadata?.forwarded);
 
     const payload = {
       requestId,
@@ -1091,18 +1090,14 @@
       dataUrl,
       isPtt: true,
       mime: audioPayload.mime,
-      fileName: audioPayload.fileName,
       asViewOnce,
-      isForwarded,
     };
 
     console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", {
       name: asset.name,
-      fileName: payload.fileName,
       mime: payload.mime,
       dataUrlLength: dataUrl.length,
       asViewOnce,
-      isForwarded,
     });
 
     return new Promise((resolve) => {
