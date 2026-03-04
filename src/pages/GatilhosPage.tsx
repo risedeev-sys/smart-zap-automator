@@ -417,8 +417,8 @@ export default function GatilhosPage() {
               <button
                 key={t.id}
                 onClick={() => setSelected(t.id)}
-                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group ${
-                  selected === t.id ? "bg-accent text-accent-foreground" : "hover:bg-muted text-foreground"
+                className={`w-full flex items-center gap-2 p-2.5 rounded-md text-left text-sm transition-colors group border ${
+                  selected === t.id ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-muted text-foreground border-transparent"
                 }`}
               >
                 <GripVertical className="h-3.5 w-3.5 text-muted-foreground opacity-50 group-hover:opacity-100 flex-shrink-0" />
