@@ -78,7 +78,7 @@ export default function Index() {
 
       {/* Info cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <Card className="border-primary/20 bg-accent/30">
+        <Card className="border-primary/50 bg-accent/30">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <BookOpen className="h-5 w-5 text-primary" />
@@ -93,7 +93,7 @@ export default function Index() {
         </Card>
 
         <Card
-          className="border-primary/20 bg-accent/30 cursor-pointer hover:bg-accent/50 transition-colors"
+          className="border-primary/50 bg-accent/30 cursor-pointer hover:bg-accent/50 transition-colors"
           onClick={() => navigate("/api-keys")}
         >
           <CardHeader className="pb-3">
