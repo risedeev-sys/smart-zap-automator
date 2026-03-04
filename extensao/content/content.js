@@ -356,8 +356,11 @@
       }
     }
 
-    if (isVideo && !["video/mp4", "video/webm"].includes(fileMime)) {
-      fileMime = "application/octet-stream";
+    if (isVideo) {
+      fileMime = "video/mp4";
+      if (!fileName.endsWith(".mp4")) {
+        fileName = fileName.replace(/\.[a-z0-9]{2,8}$/i, "") + ".mp4";
+      }
     }
 
     const file = new File([preparedBlob], fileName, { type: fileMime || "application/octet-stream" });
@@ -563,7 +566,7 @@
     });
 
     if (assetType === "media") {
-      if (prefersVideoDocInput) return docInput || mediaInput || inputs[0];
+      // ALL media (images and videos) go through media input for native inline display
       return mediaInput || docInput || inputs[0];
     }
 
