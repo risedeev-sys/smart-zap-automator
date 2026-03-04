@@ -278,6 +278,99 @@
     return `${base}.bin`;
   }
 
+  const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm", "m4v", "3gp", "mpeg", "mpg"]);
+  const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif"]);
+
+  function getFileExtension(fileName) {
+    const match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]{2,8})$/i);
+    return match?.[1] || "";
+  }
+
+  function inferMimeFromFileName(fileName) {
+    const ext = getFileExtension(fileName);
+    if (["jpg", "jpeg"].includes(ext)) return "image/jpeg";
+    if (ext === "png") return "image/png";
+    if (ext === "webp") return "image/webp";
+    if (ext === "gif") return "image/gif";
+    if (ext === "mp4") return "video/mp4";
+    if (ext === "webm") return "video/webm";
+    if (ext === "mov") return "video/quicktime";
+    if (ext === "pdf") return "application/pdf";
+    return "";
+  }
+
+  function isVideoFileLike(mime = "", fileName = "") {
+    const lowerMime = String(mime || "").toLowerCase();
+    if (lowerMime.startsWith("video/")) return true;
+    return VIDEO_EXTENSIONS.has(getFileExtension(fileName));
+  }
+
+  function isImageFileLike(mime = "", fileName = "") {
+    const lowerMime = String(mime || "").toLowerCase();
+    if (lowerMime.startsWith("image/")) return true;
+    return IMAGE_EXTENSIONS.has(getFileExtension(fileName));
+  }
+
+  async function convertWebpBlobToJpeg(blob) {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas 2D indisponível");
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bitmap, 0, 0);
+
+      return await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error("Falha ao converter WEBP para JPG"));
+        }, "image/jpeg", 0.95);
+      });
+    } finally {
+      if (typeof bitmap.close === "function") bitmap.close();
+    }
+  }
+
+  async function prepareAssetFileForWhatsapp(asset, blob) {
+    let fileName = resolveFileName(asset, blob.type);
+    let fileMime = String(asset?.mime || blob.type || inferMimeFromFileName(fileName) || "application/octet-stream").toLowerCase();
+
+    const isVideo = asset?.resolvedType === "media" && isVideoFileLike(fileMime, fileName);
+    const isImage = asset?.resolvedType === "media" && isImageFileLike(fileMime, fileName);
+
+    let preparedBlob = blob;
+    let normalizedWebp = false;
+
+    if (isImage && (fileMime.includes("image/webp") || getFileExtension(fileName) === "webp")) {
+      try {
+        preparedBlob = await convertWebpBlobToJpeg(blob);
+        fileMime = "image/jpeg";
+        fileName = fileName.replace(/\.[a-z0-9]{2,8}$/i, "") + ".jpg";
+        normalizedWebp = true;
+      } catch (err) {
+        console.warn("[RiseZap] WEBP normalization failed, keeping original file:", err?.message || err);
+      }
+    }
+
+    if (isVideo && !["video/mp4", "video/webm"].includes(fileMime)) {
+      fileMime = "application/octet-stream";
+    }
+
+    const file = new File([preparedBlob], fileName, { type: fileMime || "application/octet-stream" });
+
+    return {
+      file,
+      fileName,
+      fileMime: file.type || fileMime || "application/octet-stream",
+      isVideo,
+      normalizedWebp,
+    };
+  }
+
   // ─── Outgoing Message Detection ───────────────────────
 
   function listOutgoingMessageNodes() {
@@ -454,19 +547,23 @@
     return [];
   }
 
-  function pickAttachmentInput(inputs, assetType, mime = "") {
-    const lowerMime = String(mime || "").toLowerCase();
+  function pickAttachmentInput(inputs, assetType, mime = "", fileName = "") {
+    const prefersVideoDocInput = assetType === "media" && isVideoFileLike(mime, fileName);
 
     const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
     const docInput = inputs.find((input) => {
       const accept = String(input.accept || "").toLowerCase();
       if (!accept || accept === "*/*") return true;
-      return accept.includes("application") || accept.includes("audio") || accept.includes("text");
+      return (
+        accept.includes("application") ||
+        accept.includes("audio") ||
+        accept.includes("text") ||
+        accept.includes("document")
+      );
     });
 
     if (assetType === "media") {
-      // Videos MUST use document input to avoid WA's media compatibility rejection
-      if (lowerMime.startsWith("video/")) return docInput || mediaInput || inputs[0];
+      if (prefersVideoDocInput) return docInput || mediaInput || inputs[0];
       return mediaInput || docInput || inputs[0];
     }
 
@@ -475,7 +572,6 @@
     }
 
     if (assetType === "audio") {
-      // audio menu option can map to doc input on some WA builds
       return docInput || mediaInput || inputs[0];
     }
 
@@ -544,9 +640,15 @@
       return false;
     }
 
-    const fileName = resolveFileName(asset, blob.type);
-    const fileMime = asset.mime || blob.type || "application/octet-stream";
-    const file = new File([blob], fileName, { type: fileMime });
+    let prepared;
+    try {
+      prepared = await prepareAssetFileForWhatsapp(asset, blob);
+    } catch (err) {
+      showToast(`Erro ao preparar arquivo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    const { file, fileName, fileMime, isVideo, normalizedWebp } = prepared;
     const beforeSnapshot = snapshotOutgoingState();
 
     const attachOpened = await openAttachMenu();
@@ -561,7 +663,7 @@
       return false;
     }
 
-    const targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime);
+    const targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime, fileName);
     if (!targetInput) {
       showToast("Canal de upload não disponível no WhatsApp", true);
       return false;
@@ -581,6 +683,9 @@
         assetId: asset.id,
         assetName: asset.name,
         inputAccept: targetInput.accept,
+        fileName,
+        fileMime,
+        isVideo,
       });
       return false;
     }
@@ -588,8 +693,7 @@
     const sendBtnEl = sendBtn.closest("button") || sendBtn;
     sendBtnEl.click();
 
-    const isVideo = (fileMime || "").startsWith("video/");
-    const confirmTimeoutMs = isVideo ? 120000 : 45000;
+    const confirmTimeoutMs = isVideo ? 720000 : 45000;
     const confirmation = await waitForOutgoingCommit(beforeSnapshot, confirmTimeoutMs);
 
     if (!confirmation.ok) {
@@ -601,6 +705,10 @@
       assetId: asset.id,
       assetName: asset.name,
       statusIcon: confirmation.statusIcon,
+      inputAccept: targetInput.accept,
+      fileMime,
+      isVideo,
+      normalizedWebp,
     });
 
     return true;
