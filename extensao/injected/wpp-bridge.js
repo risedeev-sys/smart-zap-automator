@@ -320,7 +320,9 @@
         respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, "No active chat.");
         return;
       }
-      chatId = activeChat.id;
+      // activeChat.id is a Wid object — sendFileMessage needs a serialized string
+      chatId = activeChat.id._serialized || activeChat.id.toString() || String(activeChat.id);
+      log("Active chat resolved", { chatId });
     } catch (err) {
       respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, err.message || String(err));
       return;
