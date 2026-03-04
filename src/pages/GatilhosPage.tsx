@@ -56,7 +56,7 @@ export default function GatilhosPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [simulatorOpen, setSimulatorOpen] = useState(false);
+  
 
   // Add form
   const [addName, setAddName] = useState("");
@@ -407,9 +407,6 @@ export default function GatilhosPage() {
               <Button onClick={handleOpenAdd} className="flex-1 h-9 text-sm">
                 <Plus className="h-4 w-4 mr-1" /> Adicionar
               </Button>
-              <Button variant="outline" className="h-9 text-sm" onClick={() => setSimulatorOpen(true)}>
-                <FlaskConical className="h-4 w-4" />
-              </Button>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -596,9 +593,6 @@ export default function GatilhosPage() {
 
       {/* Delete */}
       <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} title="Excluir gatilho" itemName={selectedTrigger?.name} onConfirm={handleDelete} />
-
-      {/* Simulator */}
-      <TriggerSimulator open={simulatorOpen} onOpenChange={setSimulatorOpen} triggers={simulatorTriggers} />
     </MainLayout>
   );
 }
