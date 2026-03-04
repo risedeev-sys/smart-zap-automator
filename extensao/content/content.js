@@ -872,13 +872,18 @@
     const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
     const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
 
+    const bridgeVideoMime = isVideoFileLike(prepared.fileMime, prepared.fileName) ? prepared.fileMime : "video/mp4";
+    const bridgeVideoName = /\.mp4$/i.test(prepared.fileName || "")
+      ? prepared.fileName
+      : `${String(prepared.fileName || asset.name || "video").replace(/\.[a-z0-9]{2,8}$/i, "")}.mp4`;
+
     const payload = {
       requestId,
       type: "video",
       url: signedUrl,
       blobUrl,
-      mime: prepared.fileMime || "video/mp4",
-      fileName: prepared.fileName || "video.mp4",
+      mime: bridgeVideoMime,
+      fileName: bridgeVideoName,
       caption: typeof metadata?.caption === "string" ? metadata.caption : undefined,
       asViewOnce,
     };
