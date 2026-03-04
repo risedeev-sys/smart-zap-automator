@@ -254,12 +254,30 @@
     return bridgeReady || !!document.getElementById("RZBridgeReady");
   }
 
+  function base64ToBlob(base64Payload, mimeType) {
+    const cleanBase64 = String(base64Payload || "").replace(/^data:.*;base64,/, "");
+    const binary = atob(cleanBase64);
+    const chunkSize = 8192;
+    const chunks = [];
+
+    for (let i = 0; i < binary.length; i += chunkSize) {
+      const slice = binary.slice(i, i + chunkSize);
+      const bytes = new Uint8Array(slice.length);
+      for (let j = 0; j < slice.length; j++) {
+        bytes[j] = slice.charCodeAt(j);
+      }
+      chunks.push(bytes);
+    }
+
+    return new Blob(chunks, { type: mimeType || "application/octet-stream" });
+  }
+
   async function createBridgeBlobUrl(fileUrl) {
     if (!fileUrl) return null;
 
     const fetchInContent = async () => {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120000);
+      const timeout = setTimeout(() => controller.abort(), 300000);
       try {
         const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -284,30 +302,17 @@
           url: fileUrl,
         });
 
-        if (!response?.ok || !response.buffer) {
+        if (!response?.ok || !response.base64) {
           throw new Error(response?.error || "background fetch failed");
         }
 
-        let buffer = null;
-        if (response.buffer instanceof ArrayBuffer) {
-          buffer = response.buffer;
-        } else if (Array.isArray(response.buffer)) {
-          buffer = new Uint8Array(response.buffer).buffer;
-        }
-
-        if (!buffer) {
-          throw new Error("background payload missing ArrayBuffer");
-        }
-
-        const blob = new Blob([buffer], {
-          type: response.mime || "application/octet-stream",
-        });
+        const blob = base64ToBlob(response.base64, response.mime || "application/octet-stream");
 
         return {
           blobUrl: URL.createObjectURL(blob),
           mime: blob.type || null,
           bytes: typeof blob.size === "number" ? blob.size : null,
-          source: "background",
+          source: "background-base64",
         };
       } catch (backgroundErr) {
         console.warn("[RiseZap] createBridgeBlobUrl failed", {
@@ -364,11 +369,9 @@
       return `${base}.mp4`;
     })();
 
-    // For larger payloads (especially video), create a local blob URL first.
-    // This avoids cross-origin fetch instability inside page context.
-    const bridgeBlob = sendType === "video" || (sendType === "document" && isVideoAsset)
-      ? await createBridgeBlobUrl(signedUrl)
-      : null;
+    // Always prefetch file in extension context (content/background) to avoid
+    // direct cross-origin fetch in page context, which is the main source of FETCH_FAILED.
+    const bridgeBlob = await createBridgeBlobUrl(signedUrl);
 
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
