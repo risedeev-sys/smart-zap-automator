@@ -397,9 +397,8 @@
       blobSource: bridgeBlob?.source || null,
     });
 
-    // Send event and wait for structured response from bridge v2
-    // Timeout aligned with bridge video cascade + ack validation
-    const timeoutMs = isVideoAsset ? 720000 : 90000;
+    // Shorter timeout to avoid funnel lock; if bridge fails/hangs we fallback to DOM upload.
+    const timeoutMs = isVideoAsset ? 180000 : 60000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {
@@ -478,6 +477,164 @@
       window.addEventListener("risezap:result", handler);
       window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
     });
+  }
+
+  async function fetchAssetBlob(fileUrl, fallbackMime) {
+    const fetchInContent = async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 300000);
+      try {
+        const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.blob();
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    try {
+      return await fetchInContent();
+    } catch (contentErr) {
+      const response = await chrome.runtime.sendMessage({
+        type: "RISEZAP_FETCH_FILE_BUFFER",
+        url: fileUrl,
+      });
+
+      if (!response?.ok || !response.base64) {
+        throw new Error(response?.error || contentErr?.message || "asset fetch failed");
+      }
+
+      return base64ToBlob(response.base64, response.mime || fallbackMime || "application/octet-stream");
+    }
+  }
+
+  function resolveUploadFileName(asset, blobMime) {
+    const base = String(asset?.name || "arquivo").trim() || "arquivo";
+    if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
+
+    const mime = String(asset?.mime || blobMime || "").toLowerCase();
+    if (mime.includes("image/jpeg")) return `${base}.jpg`;
+    if (mime.includes("image/png")) return `${base}.png`;
+    if (mime.includes("image/webp")) return `${base}.webp`;
+    if (mime.includes("video/mp4")) return `${base}.mp4`;
+    if (mime.includes("video/webm")) return `${base}.webm`;
+    if (mime.includes("audio/ogg")) return `${base}.ogg`;
+    if (mime.includes("audio/mpeg")) return `${base}.mp3`;
+    if (mime.includes("application/pdf")) return `${base}.pdf`;
+
+    return `${base}.bin`;
+  }
+
+  function pickAttachmentInput(inputs, preferMediaInput) {
+    const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
+    const documentInput = inputs.find((input) => {
+      const accept = String(input.accept || "").toLowerCase();
+      if (!accept || accept === "*/*") return true;
+      return accept.includes("application") || accept.includes("audio") || accept.includes("text");
+    });
+
+    return preferMediaInput
+      ? mediaInput || documentInput || inputs[0]
+      : documentInput || mediaInput || inputs[0];
+  }
+
+  async function sendFileViaDomUpload(asset) {
+    if (!asset?.storage_path) return false;
+
+    try {
+      const signedUrl = await getSignedUrl(asset.storage_path);
+      if (!signedUrl) {
+        showToast("Erro ao gerar URL do arquivo", true);
+        return false;
+      }
+
+      const blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
+      const fileName = resolveUploadFileName(asset, blob.type);
+      const fileMime = asset.mime || blob.type || "application/octet-stream";
+      const file = new File([blob], fileName, { type: fileMime });
+
+      const attachAnchor =
+        document.querySelector('button[title="Attach"]') ||
+        document.querySelector('button[aria-label="Attach"]') ||
+        document.querySelector('button[aria-label="Anexar"]') ||
+        document.querySelector('span[data-icon="plus-rounded"]') ||
+        document.querySelector('span[data-icon="clip"]');
+
+      if (attachAnchor) {
+        const attachBtn = attachAnchor.closest("button") || attachAnchor;
+        attachBtn.click();
+        await sleep(180);
+      }
+
+      const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
+      if (!fileInputs.length) {
+        showToast("Entrada de upload não encontrada no WhatsApp", true);
+        return false;
+      }
+
+      const preferMediaInput = asset.resolvedType === "media";
+      const targetInput = pickAttachmentInput(fileInputs, preferMediaInput);
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+
+      try {
+        targetInput.files = dataTransfer.files;
+      } catch {
+        Object.defineProperty(targetInput, "files", {
+          value: dataTransfer.files,
+          configurable: true,
+        });
+      }
+
+      targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+      targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      let sendBtn =
+        document.querySelector('span[data-icon="send"]') ||
+        document.querySelector('button[aria-label="Send"]') ||
+        document.querySelector('button[aria-label="Enviar"]');
+
+      if (!sendBtn) {
+        try {
+          sendBtn = await waitForElement('span[data-icon="send"]', 10000);
+        } catch {}
+      }
+
+      if (!sendBtn) {
+        showToast("Prévia não abriu para envio", true);
+        return false;
+      }
+
+      const sendBtnEl = sendBtn.closest("button") || sendBtn;
+      sendBtnEl.click();
+      await sleep(600);
+
+      console.log("[RiseZap] DOM upload fallback sent", {
+        assetId: asset.id,
+        assetName: asset.name,
+        mime: fileMime,
+      });
+
+      return true;
+    } catch (err) {
+      console.error("[RiseZap] sendFileViaDomUpload error", err);
+      showToast(`Fallback DOM falhou: ${err?.message || "erro desconhecido"}`, true);
+      return false;
+    }
+  }
+
+  async function sendFileWithFallback(asset) {
+    const nativeOk = await sendFileViaBridge(asset);
+    if (nativeOk) return true;
+
+    console.warn("[RiseZap] Native bridge failed, trying DOM fallback", {
+      assetId: asset?.id,
+      assetName: asset?.name,
+      resolvedType: asset?.resolvedType,
+    });
+
+    showToast("Bridge falhou, tentando envio alternativo...", false, true);
+    return await sendFileViaDomUpload(asset);
   }
 
   // ─── Send Text via DOM (only text stays DOM-based) ────
@@ -620,8 +777,8 @@
           // Text stays DOM-based
           ok = await sendTextViaDom(asset.content || asset.name);
         } else {
-          // Audio, Media, Document → WPP Bridge (native)
-          ok = await sendFileViaBridge(asset);
+          // Audio, Media, Document → native bridge with DOM fallback
+          ok = await sendFileWithFallback(asset);
         }
 
         if (!ok) {
@@ -785,13 +942,13 @@
       bar.appendChild(btn);
     });
 
-    // Áudios — ciano (WPP Bridge — PTT nativo)
+    // Áudios — ciano (bridge + fallback DOM)
     assets.audios.forEach((a) => {
       const btn = makeBtn("🎙", a.name, "rz-audio");
       btn.addEventListener("click", () => {
         if (!a.storage_path) return showToast("Áudio sem arquivo", true);
         showPreview("Enviar Áudio", `🎙 ${a.name}`, async () => {
-          return sendFileViaBridge({
+          return sendFileWithFallback({
             ...a,
             resolvedType: "audio",
           });
@@ -800,14 +957,14 @@
       bar.appendChild(btn);
     });
 
-    // Mídias — amarelo (WPP Bridge — nativo)
+    // Mídias — amarelo (bridge + fallback DOM)
     assets.medias.forEach((m) => {
       const btn = makeBtn("🖼", m.name, "rz-media");
       btn.addEventListener("click", () => {
         if (!m.storage_path) return showToast("Mídia sem arquivo", true);
         const isVideo = (m.mime || "").startsWith("video");
         showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, async () => {
-          return sendFileViaBridge({
+          return sendFileWithFallback({
             ...m,
             resolvedType: "media",
           });
@@ -816,13 +973,13 @@
       bar.appendChild(btn);
     });
 
-    // Documentos — rosa/magenta (WPP Bridge — nativo)
+    // Documentos — rosa/magenta (bridge + fallback DOM)
     assets.documents.forEach((d) => {
       const btn = makeBtn("📄", d.name, "rz-document");
       btn.addEventListener("click", () => {
         if (!d.storage_path) return showToast("Documento sem arquivo", true);
         showPreview("Enviar Documento", `📄 ${d.name}`, async () => {
-          return sendFileViaBridge({
+          return sendFileWithFallback({
             ...d,
             resolvedType: "document",
           });

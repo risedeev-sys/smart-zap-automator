@@ -167,11 +167,16 @@
     const { isPtt, caption, fileName, asViewOnce, mime } = detail;
     const opts = {};
 
+    // IMPORTANT:
+    // Use non-blocking send command and validate final delivery in sendMsgResult.
+    // waitForAck=true can cause sendFileMessage to hang indefinitely on current WA builds.
+    opts.waitForAck = false;
+
     switch (type) {
       case "audio":
         opts.type = "audio";
         opts.isPtt = isPtt !== false;
-        opts.mimetype = "audio/ogg; codecs=opus";
+        opts.mimetype = mime || "audio/ogg; codecs=opus";
         if (asViewOnce) opts.isViewOnce = true;
         break;
 
@@ -195,8 +200,6 @@
           opts.mimetype = mime || (isVideo ? "video/mp4" : undefined);
         }
 
-        // Deterministic contract: always wait for ACK to avoid false success
-        opts.waitForAck = true;
         if (isVideo && asViewOnce) opts.isViewOnce = true;
         break;
 
@@ -219,7 +222,18 @@
     // Extract message ID if available
     const messageId = sendReturn?.id?._serialized || sendReturn?.id || null;
 
+    // Some wa-js builds may not expose sendMsgResult in certain paths.
+    // If we at least have a message id, treat as accepted by client and continue.
     if (!sendReturn || !sendReturn.sendMsgResult) {
+      if (messageId) {
+        return {
+          success: true,
+          messageId,
+          sendMsgResult: null,
+          acceptedWithoutAck: true,
+        };
+      }
+
       return {
         success: false,
         errorCode: ERROR_CODE.SEND_RESULT_ERROR,
