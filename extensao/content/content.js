@@ -1631,8 +1631,8 @@
       if (!document.getElementById("risezap-bar")) createBar();
     }, 3000);
 
-    // Periodic asset refresh every 30s — deleted items vanish automatically
-    setInterval(refreshAssetsAndBar, 30000);
+    // Periodic asset refresh every 10s — deleted items vanish quickly
+    setInterval(refreshAssetsAndBar, 10000);
 
     // Immediate refresh when user returns to the tab
     document.addEventListener("visibilitychange", () => {
