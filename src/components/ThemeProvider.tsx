@@ -13,19 +13,15 @@ const ThemeContext = createContext<ThemeContextType>({
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem("risezap-theme");
-    return (stored === "dark" ? "dark" : "light") as Theme;
-  });
+  const [theme] = useState<Theme>("dark");
 
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove("light", "dark");
-    root.classList.add(theme);
-    localStorage.setItem("risezap-theme", theme);
-  }, [theme]);
+    root.classList.add("dark");
+  }, []);
 
-  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+  const toggleTheme = () => {};
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
