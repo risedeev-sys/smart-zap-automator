@@ -332,7 +332,11 @@
     }
 
     // Determine send type
-    const forceVideoAsDocument = !!asset.__forceVideoAsDocument;
+    // CRITICAL: Videos MUST be sent as "document" (not "video").
+    // wa-js type:"video" tries to generate thumbnail via <video> element,
+    // which browsers throttle/block, causing sends to hang indefinitely.
+    // Sending as document with video mimetype still plays inline in WhatsApp.
+    // See: https://github.com/wppconnect-team/wa-js/issues/2681
     let sendType;
     const resolvedType = asset.resolvedType;
     const isVideoAsset = isVideoMediaAsset(asset);
@@ -340,11 +344,7 @@
     if (resolvedType === "audio") {
       sendType = "audio";
     } else if (resolvedType === "media") {
-      sendType = isVideoAsset
-        ? forceVideoAsDocument
-          ? "document"
-          : "video"
-        : "image";
+      sendType = isVideoAsset ? "document" : "image";
     } else if (resolvedType === "document") {
       sendType = "document";
     } else {
@@ -570,15 +570,6 @@
         } else {
           // Audio, Media, Document → WPP Bridge (native)
           ok = await sendFileViaBridge(asset);
-
-          // Fallback definitivo para evitar travar funil em vídeos com bug de pipeline no WhatsApp Web.
-          if (!ok && isVideoStep) {
-            showToast("⚠️ Vídeo falhou como mídia. Tentando como documento MP4...", false, true);
-            ok = await sendFileViaBridge({
-              ...asset,
-              __forceVideoAsDocument: true,
-            });
-          }
         }
 
         if (!ok) {
