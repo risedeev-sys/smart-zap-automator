@@ -18,8 +18,14 @@ interface TopbarProps {
 }
 
 export function Topbar({ title }: TopbarProps) {
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
 
   useEffect(() => {
     saveAppSettings(settings);
