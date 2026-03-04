@@ -402,125 +402,139 @@
   }
 
   // ═══════════════════════════════════════════════════════
-  // DRAG-AND-DROP MEDIA SENDING (PRIMARY METHOD)
+  // ATTACH-MENU FILE INJECTION (PRIMARY METHOD)
   // ═══════════════════════════════════════════════════════
   //
-  // Strategy: Simulate a native file drop onto the WhatsApp Web
-  // chat panel. WhatsApp Web has a built-in drop handler that
-  // opens the media preview dialog, then we click Send.
+  // Root-cause fix:
+  // Synthetic drag-and-drop is unreliable on WA Web in embedded/browser
+  // contexts. We now use the same stable path users use manually:
+  //   [+] Attach menu -> existing file input -> inject File -> Send
   //
-  // This is the most reliable method because:
-  // 1. It uses the exact same code path as a real user drag-and-drop
-  // 2. No wa-js dependencies (avoids sendFileMessage bugs)
-  // 3. Works for ALL file types (images, videos, documents)
-  // 4. WhatsApp handles all thumbnail generation, encoding, etc.
+  // IMPORTANT:
+  // - Never use input.click() (forbidden)
+  // - We click only the Attach button/menu and inject files silently
   // ═══════════════════════════════════════════════════════
 
-  function findDropTarget() {
-    // WhatsApp Web's drop target is the main chat pane
-    // Try multiple selectors for robustness across WA Web versions
-    const selectors = [
-      '#main',                                    // Main chat panel
-      '[data-testid="conversation-panel-body"]',  // Conversation body
-      '#main div.copyable-area',                  // Copyable area inside main
-      '#main header + div',                       // Content area after header
+  function findAttachButton() {
+    const candidates = [
+      'button[title="Attach"]',
+      'button[aria-label="Attach"]',
+      'button[aria-label="Anexar"]',
+      'span[data-icon="plus-rounded"]',
+      'span[data-icon="clip"]',
     ];
 
-    for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (el && isElementVisible(el)) return el;
-    }
-
-    return document.querySelector('#main') || null;
-  }
-
-  function createDragEvent(type, file) {
-    const dataTransfer = new DataTransfer();
-    dataTransfer.items.add(file);
-
-    return new DragEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer,
-    });
-  }
-
-  async function waitForMediaPreviewDialog(timeoutMs = 8000) {
-    // After a drop, WhatsApp Web opens a media preview dialog.
-    // We need to wait for it and then find the send button inside it.
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt < timeoutMs) {
-      // Look for the send button that appears in the preview dialog
-      const sendBtn = findVisibleSendButton(document);
-      if (sendBtn) {
-        // Make sure it's the preview dialog send button, not the chat input send button.
-        // The preview dialog send button is typically inside a specific container.
-        // We check if there's a media preview visible (canvas, img, video in a dialog-like container)
-        const previewIndicators = document.querySelectorAll(
-          '[data-testid="media-canvas"], ' +
-          '[data-testid="image-preview"], ' +
-          '[data-testid="media-editor"], ' +
-          'div[tabindex="-1"] canvas, ' +
-          'div[tabindex="-1"] video, ' +
-          'div.overlay canvas, ' +
-          '[role="dialog"] canvas, ' +
-          '[role="dialog"] video, ' +
-          // Document preview often shows the file name
-          '[data-testid="document-preview"]'
-        );
-
-        // Also look for the media/document preview panel that WA shows
-        const overlayPanels = document.querySelectorAll(
-          'div._3kc4J, div.overlay, [data-animate-modal-popup="true"]'
-        );
-
-        if (previewIndicators.length > 0 || overlayPanels.length > 0) {
-          return sendBtn;
-        }
-
-        // Fallback: if there's a visible send button and the chat input is NOT focused,
-        // it's likely the preview dialog button
-        const chatInput = document.querySelector('#main div[contenteditable="true"][data-tab="10"]');
-        const chatInputFocused = chatInput && document.activeElement === chatInput;
-        if (!chatInputFocused) {
-          return sendBtn;
-        }
-      }
-
-      await sleep(300);
+    for (const selector of candidates) {
+      const anchor = document.querySelector(selector);
+      if (!anchor) continue;
+      const btn = anchor.closest("button") || anchor;
+      if (isElementVisible(btn)) return btn;
     }
 
     return null;
   }
 
-  async function sendFileViaDragDrop(asset) {
+  async function openAttachMenu() {
+    const attachBtn = findAttachButton();
+    if (!attachBtn) return false;
+    attachBtn.click();
+    await sleep(180);
+    return true;
+  }
+
+  async function waitForAttachmentInputs(timeoutMs = 4000) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
+      if (inputs.length) return inputs;
+      await sleep(120);
+    }
+
+    return [];
+  }
+
+  function pickAttachmentInput(inputs, assetType, mime = "") {
+    const lowerMime = String(mime || "").toLowerCase();
+
+    const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
+    const docInput = inputs.find((input) => {
+      const accept = String(input.accept || "").toLowerCase();
+      if (!accept || accept === "*/*") return true;
+      return accept.includes("application") || accept.includes("audio") || accept.includes("text");
+    });
+
+    if (assetType === "media") {
+      if (lowerMime.startsWith("video/")) return mediaInput || docInput || inputs[0];
+      return mediaInput || docInput || inputs[0];
+    }
+
+    if (assetType === "document") {
+      return docInput || mediaInput || inputs[0];
+    }
+
+    if (assetType === "audio") {
+      // audio menu option can map to doc input on some WA builds
+      return docInput || mediaInput || inputs[0];
+    }
+
+    return inputs[0];
+  }
+
+  function injectFileIntoInput(input, file) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    try {
+      input.files = dataTransfer.files;
+    } catch {
+      Object.defineProperty(input, "files", {
+        value: dataTransfer.files,
+        configurable: true,
+      });
+    }
+
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  async function waitForComposerSendButton(preferredRoot, timeoutMs = 10000) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (preferredRoot) {
+        const localBtn = findVisibleSendButton(preferredRoot);
+        if (localBtn) return localBtn;
+      }
+
+      const globalBtn = findVisibleSendButton(document);
+      if (globalBtn) return globalBtn;
+
+      await sleep(180);
+    }
+
+    return null;
+  }
+
+  async function sendFileViaAttachMenu(asset) {
     if (!asset?.storage_path) {
       showToast("Ativo sem arquivo associado", true);
       return false;
     }
 
-    const dropTarget = findDropTarget();
-    if (!dropTarget) {
-      showToast("Abra um chat para enviar", true);
-      return false;
-    }
-
-    console.log("[RiseZap] sendFileViaDragDrop start:", {
+    console.log("[RiseZap] sendFileViaAttachMenu start:", {
       assetId: asset.id,
       assetName: asset.name,
       resolvedType: asset.resolvedType,
       mime: asset.mime,
     });
 
-    // 1. Get signed URL
     const signedUrl = await getSignedUrl(asset.storage_path);
     if (!signedUrl) {
       showToast("Erro ao gerar URL do arquivo", true);
       return false;
     }
 
-    // 2. Fetch the file as blob
     let blob;
     try {
       blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
@@ -529,63 +543,60 @@
       return false;
     }
 
-    // 3. Create File object
     const fileName = resolveFileName(asset, blob.type);
     const fileMime = asset.mime || blob.type || "application/octet-stream";
     const file = new File([blob], fileName, { type: fileMime });
-
-    console.log("[RiseZap] File prepared for drop:", {
-      fileName,
-      fileMime,
-      fileSize: file.size,
-    });
-
-    // 4. Snapshot outgoing state BEFORE drop
     const beforeSnapshot = snapshotOutgoingState();
 
-    // 5. Simulate drag-and-drop sequence
-    dropTarget.dispatchEvent(createDragEvent("dragenter", file));
-    await sleep(100);
-    dropTarget.dispatchEvent(createDragEvent("dragover", file));
-    await sleep(100);
-    dropTarget.dispatchEvent(createDragEvent("drop", file));
-
-    console.log("[RiseZap] Drop events dispatched, waiting for preview dialog...");
-
-    // 6. Wait for WhatsApp to show the preview dialog
-    const sendBtn = await waitForMediaPreviewDialog(10000);
-
-    if (!sendBtn) {
-      // Preview didn't open — WhatsApp may not have accepted the drop.
-      // This can happen if no chat is open or the drop target was wrong.
-      showToast("WhatsApp não abriu a prévia do arquivo", true);
-      console.error("[RiseZap] Preview dialog did not open after drop");
-
-      // Try to dismiss any partial overlay
-      const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
-      document.dispatchEvent(escEvent);
-
+    const attachOpened = await openAttachMenu();
+    if (!attachOpened) {
+      showToast("Botão de anexo não encontrado no WhatsApp", true);
       return false;
     }
 
-    console.log("[RiseZap] Preview dialog detected, clicking send...");
+    const inputs = await waitForAttachmentInputs(5000);
+    if (!inputs.length) {
+      showToast("Entrada de upload não encontrada no WhatsApp", true);
+      return false;
+    }
 
-    // 7. Click the send button
+    const targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime);
+    if (!targetInput) {
+      showToast("Canal de upload não disponível no WhatsApp", true);
+      return false;
+    }
+
+    injectFileIntoInput(targetInput, file);
+
+    const composerRoot =
+      targetInput.closest('div[role="dialog"]') ||
+      targetInput.closest('[data-animate-modal-popup="true"]') ||
+      document;
+
+    const sendBtn = await waitForComposerSendButton(composerRoot, 12000);
+    if (!sendBtn) {
+      showToast("WhatsApp não abriu a prévia do arquivo", true);
+      console.error("[RiseZap] sendFileViaAttachMenu: composer send button not found", {
+        assetId: asset.id,
+        assetName: asset.name,
+        inputAccept: targetInput.accept,
+      });
+      return false;
+    }
+
     const sendBtnEl = sendBtn.closest("button") || sendBtn;
     sendBtnEl.click();
 
-    // 8. Wait for the message to appear in chat
     const isVideo = (fileMime || "").startsWith("video/");
     const confirmTimeoutMs = isVideo ? 120000 : 45000;
     const confirmation = await waitForOutgoingCommit(beforeSnapshot, confirmTimeoutMs);
 
     if (!confirmation.ok) {
       showToast(`WhatsApp não confirmou envio (${confirmation.reason})`, true);
-      console.error("[RiseZap] Outgoing commit not confirmed:", confirmation);
       return false;
     }
 
-    console.log("[RiseZap] sendFileViaDragDrop SUCCESS:", {
+    console.log("[RiseZap] sendFileViaAttachMenu SUCCESS:", {
       assetId: asset.id,
       assetName: asset.name,
       statusIcon: confirmation.statusIcon,
@@ -615,7 +626,6 @@
 
     // Prefetch in extension context to avoid CORS in page context
     const blobResult = await createBridgeBlobUrl(signedUrl);
-    const beforeSnapshot = snapshotOutgoingState();
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
     const payload = {
@@ -635,12 +645,13 @@
         if (blobResult?.blobUrl) URL.revokeObjectURL(blobResult.blobUrl);
       };
 
-      const timeoutId = setTimeout(() => {
+      const timeoutId = setTimeout(async () => {
         window.removeEventListener("risezap:result", handler);
         releaseBlobUrl();
-        console.error("[RiseZap] Audio bridge timeout");
-        showToast("Timeout ao enviar áudio via bridge", true);
-        resolve(false);
+        console.error("[RiseZap] Audio bridge timeout, falling back to attach menu");
+        showToast("Bridge falhou, tentando envio alternativo...", false, true);
+        const ok = await sendFileViaAttachMenu(asset);
+        resolve(ok);
       }, 90000);
 
       async function handler(evt) {
@@ -656,10 +667,9 @@
           return;
         }
 
-        // Bridge failed — try drag-and-drop as fallback for audio too
-        console.warn("[RiseZap] Audio bridge failed, trying drag-and-drop fallback:", detail.errorMessage);
+        console.warn("[RiseZap] Audio bridge failed, trying attach-menu fallback:", detail.errorMessage);
         showToast("Bridge falhou, tentando envio alternativo...", false, true);
-        const ok = await sendFileViaDragDrop(asset);
+        const ok = await sendFileViaAttachMenu(asset);
         resolve(ok);
       }
 
@@ -681,7 +691,7 @@
       } finally {
         clearTimeout(timeout);
       }
-    } catch (contentErr) {
+    } catch (_contentErr) {
       try {
         const response = await chrome.runtime.sendMessage({ type: "RISEZAP_FETCH_FILE_BUFFER", url: fileUrl });
         if (!response?.ok || !response.base64) throw new Error(response?.error || "background fetch failed");
@@ -697,11 +707,12 @@
 
   async function sendFile(asset) {
     if (asset.resolvedType === "audio") {
-      // Audio → bridge (PTT) with drag-and-drop fallback
+      // Audio → bridge PTT (fallback attach-menu)
       return sendAudioViaBridge(asset);
     }
-    // Images, Videos, Documents → drag-and-drop (primary and only method)
-    return sendFileViaDragDrop(asset);
+
+    // Images, Videos, Documents → attach-menu injection (primary)
+    return sendFileViaAttachMenu(asset);
   }
 
   // ─── Send Text via DOM (paste) ────────────────────────
