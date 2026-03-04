@@ -388,8 +388,9 @@
       blobSource: bridgeBlob?.source || null,
     });
 
-    // Send event and wait for response
-    const timeoutMs = sendType === "video" || (sendType === "document" && isVideoAsset) ? 320000 : 60000;
+    // Send event and wait for structured response from bridge v2
+    // Total timeout = fetch + send + result wait margins
+    const timeoutMs = isVideoAsset ? 420000 : 90000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {
@@ -401,7 +402,8 @@
       const timeout = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
         releaseBlobUrl();
-        showToast(`Timeout: bridge não respondeu em ${timeoutMs / 1000}s`, true);
+        console.error("[RiseZap] Bridge global timeout", { requestId, timeoutMs, asset: asset.name });
+        showToast(`Timeout: bridge não respondeu em ${Math.round(timeoutMs / 1000)}s`, true);
         resolve(false);
       }, timeoutMs);
 
@@ -413,11 +415,41 @@
         clearTimeout(timeout);
         releaseBlobUrl();
 
-        if (detail.success) {
+        const { success, stage, errorCode, errorMessage, strategy, messageId } = detail;
+
+        console.log("[RiseZap] Bridge result:", {
+          success,
+          stage,
+          errorCode,
+          strategy,
+          messageId,
+          asset: asset.name,
+        });
+
+        if (success) {
           resolve(true);
         } else {
-          console.error("[RiseZap] Bridge send failed:", detail.error);
-          showToast("Erro no envio: " + (detail.error || "falha desconhecida"), true);
+          const diagCode = errorCode || "UNKNOWN";
+          const diagMsg = errorMessage || "falha desconhecida";
+          console.error(`[RiseZap] Send failed [${diagCode}] at ${stage}:`, diagMsg);
+          showToast(`Erro [${diagCode}]: ${diagMsg}`, true);
+
+          // Persist diagnostic for support
+          try {
+            chrome.storage.local.set({
+              risezap_last_send_failure: {
+                assetName: asset.name,
+                assetId: asset.id,
+                sendType,
+                stage,
+                errorCode: diagCode,
+                errorMessage: diagMsg,
+                strategy: strategy || null,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          } catch {}
+
           resolve(false);
         }
       }
