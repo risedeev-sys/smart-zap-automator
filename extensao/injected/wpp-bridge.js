@@ -6,7 +6,9 @@
  *
  * Communication protocol:
  *   Content Script → CustomEvent("risezap:send", { detail: { requestId, type, url, isPtt, caption, fileName } })
- *   Bridge         → CustomEvent("risezap:result", { detail: { requestId, success, error } })
+ *   Bridge         → CustomEvent("risezap:result", { detail: { requestId, success, stage, errorCode, errorMessage, strategy, messageId } })
+ *
+ * Stages: FETCH_CONTENT → PREPARE_CONTENT → SEND_REQUEST → SEND_RESULT
  *
  * Storage bridge (chrome.storage proxy):
  *   Bridge         → CustomEvent("REQ_RISEZAP_STORE_GET", { detail: { requestCode, key } })
@@ -15,6 +17,36 @@
 
 (function () {
   "use strict";
+
+  // ─── Constants ─────────────────────────────────────────
+
+  const STAGE = Object.freeze({
+    FETCH_CONTENT: "FETCH_CONTENT",
+    PREPARE_CONTENT: "PREPARE_CONTENT",
+    SEND_REQUEST: "SEND_REQUEST",
+    SEND_RESULT: "SEND_RESULT",
+  });
+
+  const ERROR_CODE = Object.freeze({
+    BRIDGE_NOT_READY: "BRIDGE_NOT_READY",
+    NO_ACTIVE_CHAT: "NO_ACTIVE_CHAT",
+    NO_URL: "NO_URL",
+    FETCH_FAILED: "FETCH_FAILED",
+    SEND_FAILED: "SEND_FAILED",
+    SEND_RESULT_ERROR: "SEND_RESULT_ERROR",
+    SEND_TIMEOUT: "SEND_TIMEOUT",
+    FETCH_TIMEOUT: "FETCH_TIMEOUT",
+    UNKNOWN: "UNKNOWN",
+  });
+
+  // Timeouts by payload type
+  const TIMEOUT = Object.freeze({
+    FETCH_NORMAL: 45000,
+    FETCH_VIDEO: 180000,
+    SEND_NORMAL: 90000,
+    SEND_VIDEO: 300000,
+    SEND_RESULT_WAIT: 60000, // extra wait for sendMsgResult after send resolves
+  });
 
   // ─── State ──────────────────────────────────────────────
 
@@ -32,11 +64,9 @@
       WPP.webpack.onReady(function () {
         wppReady = true;
         console.log("[RiseZap:Bridge] WPP.webpack ready — bridge active");
-        // Dispatch readiness event for content script
         window.dispatchEvent(new CustomEvent("risezap:bridge-ready"));
       });
     } else {
-      // Fallback: poll for isReady
       const poll = setInterval(function () {
         if (WPP.isReady) {
           clearInterval(poll);
@@ -48,24 +78,24 @@
     }
   }
 
-  // ─── Bridge Helpers ────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────
+
+  function isVideoPayload(type, mime, fileName) {
+    const lowerMime = String(mime || "").toLowerCase();
+    const lowerName = String(fileName || "").toLowerCase();
+    if (type === "video") return true;
+    if (type === "document") {
+      return lowerMime.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/.test(lowerName);
+    }
+    return false;
+  }
 
   async function fetchBlobWithTimeout(targetUrl, timeoutMs) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(function () {
-      controller.abort();
-    }, timeoutMs);
-
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(targetUrl, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
+      const res = await fetch(targetUrl, { cache: "no-store", signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.blob();
     } finally {
       clearTimeout(timeoutId);
@@ -74,13 +104,9 @@
 
   async function withTimeout(promise, timeoutMs, label) {
     let timeoutId;
-
-    const timeoutPromise = new Promise(function (_, reject) {
-      timeoutId = setTimeout(function () {
-        reject(new Error(`${label} timeout after ${Math.round(timeoutMs / 1000)}s`));
-      }, timeoutMs);
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`${label} timeout after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
     });
-
     try {
       return await Promise.race([promise, timeoutPromise]);
     } finally {
@@ -89,17 +115,9 @@
   }
 
   function ensureSendableContent(content, type, fileName, mime) {
-    if (!(content instanceof Blob)) {
-      return content;
-    }
-
-    if (type !== "video" && type !== "document") {
-      return content;
-    }
-
-    if (typeof File === "undefined") {
-      return content;
-    }
+    if (!(content instanceof Blob)) return content;
+    if (type !== "video" && type !== "document") return content;
+    if (typeof File === "undefined") return content;
 
     const defaultName = type === "video" ? "video.mp4" : "file";
     const normalizedName = (fileName && String(fileName).trim()) || defaultName;
@@ -108,38 +126,156 @@
     const finalName = hasExt ? normalizedName : `${normalizedName}${fallbackExt}`;
     const finalMime = mime || content.type || (type === "video" ? "video/mp4" : "application/octet-stream");
 
-    return new File([content], finalName, {
-      type: finalMime,
+    return new File([content], finalName, { type: finalMime });
+  }
+
+  // ─── Structured Response ──────────────────────────────
+
+  function respond(requestId, payload) {
+    window.dispatchEvent(
+      new CustomEvent("risezap:result", {
+        detail: { requestId, ...payload },
+      })
+    );
+  }
+
+  function respondSuccess(requestId, stage, extra) {
+    respond(requestId, {
+      success: true,
+      stage,
+      errorCode: null,
+      errorMessage: null,
+      ...(extra || {}),
     });
+  }
+
+  function respondError(requestId, stage, errorCode, errorMessage, extra) {
+    respond(requestId, {
+      success: false,
+      stage,
+      errorCode,
+      errorMessage,
+      ...(extra || {}),
+    });
+  }
+
+  // ─── Build WPP Options ───────────────────────────────
+
+  function buildSendOptions(type, detail, isVideo, strategyOverride) {
+    const { isPtt, caption, fileName, asViewOnce, mime } = detail;
+    const opts = {};
+
+    switch (type) {
+      case "audio":
+        opts.type = "audio";
+        opts.isPtt = isPtt !== false;
+        opts.mimetype = "audio/ogg; codecs=opus";
+        if (asViewOnce) opts.isViewOnce = true;
+        break;
+
+      case "image":
+        opts.type = "image";
+        opts.caption = caption || undefined;
+        opts.mimetype = mime || "image/jpeg";
+        if (asViewOnce) opts.isViewOnce = true;
+        break;
+
+      case "video":
+      case "document":
+        // Videos always sent as document to avoid wa-js thumbnail hang
+        opts.type = "document";
+        opts.filename = fileName || (isVideo ? "video.mp4" : "file");
+        opts.caption = (type === "video" || isVideo) ? (caption || undefined) : undefined;
+
+        if (strategyOverride === "octet-stream") {
+          opts.mimetype = "application/octet-stream";
+        } else {
+          opts.mimetype = mime || (isVideo ? "video/mp4" : undefined);
+        }
+
+        // For video documents: don't wait for ack (large upload)
+        opts.waitForAck = !isVideo;
+        if (isVideo && asViewOnce) opts.isViewOnce = true;
+        break;
+
+      default:
+        opts.type = "auto-detect";
+        opts.caption = caption || undefined;
+        opts.filename = fileName || undefined;
+        break;
+    }
+
+    return opts;
+  }
+
+  // ─── Core Send Logic (single attempt) ─────────────────
+
+  async function attemptSend(chatId, content, options, sendTimeoutMs) {
+    const sendPromise = WPP.chat.sendFileMessage(chatId, content, options);
+    const sendReturn = await withTimeout(sendPromise, sendTimeoutMs, "sendFileMessage");
+
+    // Extract message ID if available
+    const messageId = sendReturn?.id?._serialized || sendReturn?.id || null;
+
+    // Validate sendMsgResult if available
+    if (sendReturn && typeof sendReturn.sendMsgResult === "object" && sendReturn.sendMsgResult !== null) {
+      const result = sendReturn.sendMsgResult;
+      const messageSendResult = result.messageSendResult;
+
+      if (messageSendResult !== undefined && messageSendResult !== 0 && messageSendResult !== "OK") {
+        return {
+          success: false,
+          errorCode: `SEND_RESULT_${messageSendResult}`,
+          errorMessage: `sendMsgResult: ${messageSendResult}`,
+          messageId,
+        };
+      }
+    }
+
+    // If sendMsgResult is a promise (waitForAck was true), await it with dedicated timeout
+    if (sendReturn && sendReturn.sendMsgResult && typeof sendReturn.sendMsgResult.then === "function") {
+      try {
+        const ackResult = await withTimeout(sendReturn.sendMsgResult, TIMEOUT.SEND_RESULT_WAIT, "sendMsgResult");
+        const messageSendResult = ackResult?.messageSendResult;
+
+        if (messageSendResult !== undefined && messageSendResult !== 0 && messageSendResult !== "OK") {
+          return {
+            success: false,
+            errorCode: `SEND_RESULT_${messageSendResult}`,
+            errorMessage: `sendMsgResult (ack): ${messageSendResult}`,
+            messageId,
+          };
+        }
+      } catch (ackErr) {
+        // Timeout waiting for ack — not necessarily a failure for video
+        // (upload may still be in progress server-side)
+        console.warn("[RiseZap:Bridge] sendMsgResult ack timeout (may still succeed):", ackErr.message);
+      }
+    }
+
+    return { success: true, messageId };
   }
 
   // ─── Send Handler ──────────────────────────────────────
 
   window.addEventListener("risezap:send", async function (evt) {
     const detail = evt.detail || {};
-    const { requestId, type, url, fallbackUrl, blobUrl, isPtt, caption, fileName, asViewOnce, mime } = detail;
-
-    const lowerMime = String(mime || "").toLowerCase();
-    const lowerFileName = String(fileName || "").toLowerCase();
-    const isLikelyVideoDocument =
-      type === "document" &&
-      (lowerMime.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/.test(lowerFileName));
-    const isLargeVideoPayload = type === "video" || isLikelyVideoDocument;
+    const { requestId, type, url, fallbackUrl, blobUrl, fileName, mime } = detail;
 
     if (!requestId) return;
 
-    const respond = (success, error) => {
-      window.dispatchEvent(
-        new CustomEvent("risezap:result", {
-          detail: { requestId, success, error: error || null },
-        })
-      );
+    const startMs = Date.now();
+    const isVideo = isVideoPayload(type, mime, fileName);
+
+    const log = (msg, data) => {
+      const elapsed = Date.now() - startMs;
+      console.log(`[RiseZap:Bridge] [${elapsed}ms] ${msg}`, data || "");
     };
 
     // ─── Guard: bridge must be ready ───────────────────
 
     if (!wppReady) {
-      respond(false, "WPP bridge not ready. WhatsApp Web modules not loaded yet.");
+      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.BRIDGE_NOT_READY, "WPP bridge not ready.");
       return;
     }
 
@@ -149,38 +285,38 @@
     try {
       const activeChat = await WPP.chat.getActiveChat();
       if (!activeChat || !activeChat.id) {
-        respond(false, "No active chat. Open a conversation first.");
+        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, "No active chat.");
         return;
       }
       chatId = activeChat.id;
     } catch (err) {
-      respond(false, "Failed to get active chat: " + (err.message || err));
+      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, err.message || String(err));
       return;
     }
 
-    // ─── Fetch file (resilient strategy) ───────────────
+    // ─── STAGE: FETCH_CONTENT ─────────────────────────
+
+    log("FETCH_CONTENT start", { type, isVideo });
 
     let content;
     const fetchErrors = [];
-    const fetchTimeoutMs = isLargeVideoPayload ? 180000 : 45000;
+    const fetchTimeoutMs = isVideo ? TIMEOUT.FETCH_VIDEO : TIMEOUT.FETCH_NORMAL;
 
     const candidates = [
       { value: blobUrl, label: "blobUrl" },
       { value: url, label: "url" },
       { value: fallbackUrl, label: "fallbackUrl" },
-    ].filter((candidate, index, arr) => {
-      if (!candidate.value) return false;
-      return arr.findIndex((x) => x.value === candidate.value) === index;
-    });
+    ].filter((c, i, arr) => c.value && arr.findIndex((x) => x.value === c.value) === i);
 
     if (!candidates.length) {
-      respond(false, "No URL provided for file send.");
+      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_URL, "No URL provided.");
       return;
     }
 
     for (const candidate of candidates) {
       try {
         content = await fetchBlobWithTimeout(candidate.value, fetchTimeoutMs);
+        log(`FETCH_CONTENT success via ${candidate.label}`, { size: content.size, type: content.type });
         break;
       } catch (err) {
         fetchErrors.push(`${candidate.label}: ${err.message || err}`);
@@ -188,89 +324,129 @@
     }
 
     if (!content) {
-      respond(false, "Failed to fetch file: " + fetchErrors.join(" | "));
+      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.FETCH_FAILED, fetchErrors.join(" | "));
       return;
     }
 
-    // ─── Build options based on type ──────────────────
+    // ─── STAGE: PREPARE_CONTENT ───────────────────────
 
-    let options = {};
+    log("PREPARE_CONTENT", { isVideo, originalType: type });
 
-    switch (type) {
-      case "audio":
-        options = {
-          type: "audio",
-          isPtt: isPtt !== false, // default true for audio
-          mimetype: "audio/ogg; codecs=opus",
-        };
-        if (asViewOnce) options.isViewOnce = true;
-        break;
+    const sendableContent = ensureSendableContent(content, type === "video" ? "document" : type, fileName, mime);
+    const sendTimeoutMs = isVideo ? TIMEOUT.SEND_VIDEO : TIMEOUT.SEND_NORMAL;
 
-      case "image":
-        options = {
-          type: "image",
-          caption: caption || undefined,
-          mimetype: mime || "image/jpeg",
-        };
-        if (asViewOnce) options.isViewOnce = true;
-        break;
+    // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
+    // For video: cascade strategy (document+video/mp4 → document+octet-stream)
 
-      case "video":
-        options = {
-          type: "video",
-          caption: caption || undefined,
-          filename: fileName || "video.mp4",
-          mimetype: mime || "video/mp4",
-          waitForAck: false,
-        };
-        if (asViewOnce) options.isViewOnce = true;
-        break;
+    const strategies = isVideo
+      ? ["video-document", "octet-stream"]
+      : ["default"];
 
-      case "document":
-        options = {
-          type: "document",
-          filename: fileName || "file",
-          mimetype: mime || undefined,
-          waitForAck: !isLikelyVideoDocument,
-        };
-        break;
+    for (let si = 0; si < strategies.length; si++) {
+      const strategy = strategies[si];
+      const isLastStrategy = si === strategies.length - 1;
+      const strategyOverride = strategy === "octet-stream" ? "octet-stream" : undefined;
 
-      default:
-        // Auto-detect
-        options = {
-          type: "auto-detect",
-          caption: caption || undefined,
-          filename: fileName || undefined,
-        };
-        break;
-    }
+      const options = buildSendOptions(type, detail, isVideo, strategyOverride);
 
-    const sendableContent = ensureSendableContent(content, type, fileName, options.mimetype || mime);
-
-    // ─── Send via WPP ─────────────────────────────────
-
-    try {
-      const sendTimeoutMs = isLargeVideoPayload ? 300000 : 90000;
-      console.log("[RiseZap:Bridge] Sending:", {
+      log(`SEND_REQUEST strategy=${strategy}`, {
         chatId: chatId.toString(),
-        type,
-        isPtt,
+        wppType: options.type,
+        mimetype: options.mimetype,
+        filename: options.filename,
         waitForAck: options.waitForAck ?? true,
       });
 
-      await withTimeout(WPP.chat.sendFileMessage(chatId, sendableContent, options), sendTimeoutMs, "sendFileMessage");
+      try {
+        const result = await attemptSend(chatId, sendableContent, options, sendTimeoutMs);
 
-      console.log("[RiseZap:Bridge] Sent successfully");
-      respond(true);
-    } catch (err) {
-      console.error("[RiseZap:Bridge] sendFileMessage failed:", err);
-      respond(false, "WPP send failed: " + (err.message || err));
+        if (result.success) {
+          log("SEND_RESULT success", { strategy, messageId: result.messageId });
+
+          // Persist success diagnostic
+          persistDiagnostic({
+            success: true,
+            strategy,
+            elapsedMs: Date.now() - startMs,
+            type,
+            isVideo,
+          });
+
+          respondSuccess(requestId, STAGE.SEND_RESULT, { strategy, messageId: result.messageId });
+          return;
+        }
+
+        // Send returned but with error result
+        log(`SEND_RESULT error (strategy=${strategy})`, { errorCode: result.errorCode });
+
+        if (!isLastStrategy) {
+          log(`Falling back to next strategy...`);
+          continue;
+        }
+
+        // Last strategy failed
+        persistDiagnostic({
+          success: false,
+          strategy,
+          errorCode: result.errorCode,
+          errorMessage: result.errorMessage,
+          elapsedMs: Date.now() - startMs,
+          type,
+          isVideo,
+        });
+
+        respondError(requestId, STAGE.SEND_RESULT, result.errorCode, result.errorMessage, { strategy });
+        return;
+
+      } catch (err) {
+        const errMsg = err.message || String(err);
+        log(`SEND_REQUEST exception (strategy=${strategy}):`, errMsg);
+
+        if (!isLastStrategy) {
+          log(`Falling back to next strategy...`);
+          continue;
+        }
+
+        const isTimeout = errMsg.includes("timeout");
+
+        persistDiagnostic({
+          success: false,
+          strategy,
+          errorCode: isTimeout ? ERROR_CODE.SEND_TIMEOUT : ERROR_CODE.SEND_FAILED,
+          errorMessage: errMsg,
+          elapsedMs: Date.now() - startMs,
+          type,
+          isVideo,
+        });
+
+        respondError(
+          requestId,
+          STAGE.SEND_REQUEST,
+          isTimeout ? ERROR_CODE.SEND_TIMEOUT : ERROR_CODE.SEND_FAILED,
+          errMsg,
+          { strategy }
+        );
+        return;
+      }
     }
   });
 
+  // ─── Diagnostic Persistence ───────────────────────────
+
+  function persistDiagnostic(data) {
+    try {
+      if (typeof window._rzStoreSet === "function") {
+        window._rzStoreSet("risezap_last_send_diagnostic", {
+          ...data,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+
   // ─── Storage Bridge ────────────────────────────────────
-  // The injected script cannot access chrome.storage directly.
-  // It sends requests via CustomEvent; the content script responds.
 
   let storeRequestCounter = 0;
 
@@ -290,7 +466,6 @@
         })
       );
 
-      // Timeout after 5s
       setTimeout(function () {
         window.removeEventListener("RES_RISEZAP_STORE_GET_" + requestCode, handler);
         resolve(null);
@@ -306,12 +481,9 @@
     );
   };
 
-  // ─── Helpers ───────────────────────────────────────────
-
   // ─── Init ──────────────────────────────────────────────
 
-  // Wait a tick for wa-js to be available (it's loaded as a script before this)
   setTimeout(initWpp, 100);
 
-  console.log("[RiseZap:Bridge] Bridge script loaded, waiting for WPP...");
+  console.log("[RiseZap:Bridge] Bridge script loaded (v2 — deterministic contract), waiting for WPP...");
 })();
