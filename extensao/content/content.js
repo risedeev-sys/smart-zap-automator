@@ -465,7 +465,8 @@
     });
 
     if (assetType === "media") {
-      if (lowerMime.startsWith("video/")) return mediaInput || docInput || inputs[0];
+      // Videos MUST use document input to avoid WA's media compatibility rejection
+      if (lowerMime.startsWith("video/")) return docInput || mediaInput || inputs[0];
       return mediaInput || docInput || inputs[0];
     }
 
