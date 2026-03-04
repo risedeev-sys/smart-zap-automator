@@ -32,9 +32,6 @@ export function Topbar({ title }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <Badge variant="secondary" className="hidden sm:inline-flex text-xs font-normal">
-          Plano Básico – chave restrita
-        </Badge>
 
 
         <Popover>
