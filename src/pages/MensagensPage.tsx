@@ -171,8 +171,8 @@ export default function MensagensPage() {
               <h3 className="font-semibold text-lg text-foreground">{selectedItem.name}</h3>
               <div className="flex items-center gap-1.5">
                 <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setDeleteOpen(true)}><Trash2 className="h-5 w-5 text-destructive" /></Button>
-                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleDuplicate}><Copy className="h-5 w-5" /></Button>
-                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={openEdit}><Pencil className="h-5 w-5" /></Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleDuplicate}><Copy className="h-5 w-5 text-primary" /></Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={openEdit}><Pencil className="h-5 w-5 text-primary" /></Button>
               </div>
             </div>
             <div className="flex-1 p-5">

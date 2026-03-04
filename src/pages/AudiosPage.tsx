@@ -168,7 +168,7 @@ export default function AudiosPage() {
                   <Download className="h-4 w-4" />
                 </Button>
                 <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={openEdit}>
-                  <Pencil className="h-4 w-4" />
+                  <Pencil className="h-4 w-4 text-primary" />
                 </Button>
                 <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={handleFavorite}>
                   <Heart className={`h-4 w-4 ${selectedItem.favorite ? "fill-primary text-primary" : ""}`} />

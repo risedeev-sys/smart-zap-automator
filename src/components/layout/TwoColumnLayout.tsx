@@ -83,7 +83,7 @@ export function TwoColumnLayout({
                     : "hover:bg-muted text-foreground border-transparent"
                 } ${dragClassName}`}
               >
-                <GripVertical className={`h-4 w-4 text-muted-foreground flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
+                <GripVertical className={`h-4 w-4 text-primary/50 flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
                 <span className="flex-1 truncate">{item.name}</span>
                 {renderItemExtra?.(item)}
                 <Heart
@@ -91,7 +91,7 @@ export function TwoColumnLayout({
                     item.favorite ? "fill-primary text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100"
                   }`}
                 />
-                <Pencil className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                <Pencil className="h-4 w-4 text-primary/70 opacity-0 group-hover:opacity-100 flex-shrink-0" />
               </button>
             );
           })}
