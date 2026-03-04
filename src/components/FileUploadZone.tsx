@@ -53,10 +53,10 @@ export function FileUploadZone({
 
   if (file) {
     return (
-      <div className="w-full max-w-full border border-border rounded-lg p-3 flex items-center gap-3 bg-muted/30 overflow-hidden">
+      <div className="w-full border border-border rounded-lg p-3 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 bg-muted/30 overflow-hidden">
         <IconComponent className="h-8 w-8 text-primary flex-shrink-0" />
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <p className="block w-full text-sm font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</p>
+        <div className="min-w-0 overflow-hidden">
+          <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
           <p className="text-xs text-muted-foreground truncate">{formatSize(file.size)}</p>
         </div>
         <button
