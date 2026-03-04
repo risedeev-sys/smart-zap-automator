@@ -21,6 +21,13 @@ interface DeleteAssetEverywhereResult {
   storageWarning?: string;
 }
 
+type AssetRow = {
+  id: string;
+  name: string;
+  user_id: string;
+  storage_path?: string | null;
+};
+
 export async function deleteAssetEverywhere({
   assetType,
   assetId,
@@ -30,21 +37,45 @@ export async function deleteAssetEverywhere({
   }
 
   const table = TABLE_BY_ASSET_TYPE[assetType];
+  const targetSelect = table === "messages" ? "id, name, user_id" : "id, name, user_id, storage_path";
 
-  let storagePath: string | null = null;
-  if (table !== "messages") {
-    const { data } = await supabase
-      .from(table)
-      .select("storage_path")
-      .eq("id", assetId)
-      .maybeSingle();
+  const { data: targetRow, error: targetError } = await supabase
+    .from(table as any)
+    .select(targetSelect)
+    .eq("id", assetId)
+    .maybeSingle();
 
-    storagePath = (data as { storage_path: string | null } | null)?.storage_path ?? null;
+  if (targetError) {
+    throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+  }
+
+  if (!targetRow) {
+    return {};
+  }
+
+  const row = targetRow as AssetRow;
+  const rowsSelect = table === "messages" ? "id" : "id, storage_path";
+
+  const { data: rowsWithSameName, error: rowsError } = await supabase
+    .from(table as any)
+    .select(rowsSelect)
+    .eq("user_id", row.user_id)
+    .eq("name", row.name);
+
+  if (rowsError) {
+    throw new Error(`Erro ao buscar duplicatas para exclusão: ${rowsError.message}`);
+  }
+
+  const rows = (rowsWithSameName ?? []) as Array<{ id: string; storage_path?: string | null }>;
+  const idsToDelete = rows.map((item) => item.id);
+
+  if (idsToDelete.length === 0) {
+    return {};
   }
 
   const [refsResult, assetResult] = await Promise.all([
-    supabase.from("funnel_items").delete().eq("type", assetType).eq("asset_id", assetId),
-    supabase.from(table).delete().eq("id", assetId),
+    supabase.from("funnel_items").delete().eq("type", assetType).in("asset_id", idsToDelete),
+    supabase.from(table as any).delete().in("id", idsToDelete),
   ]);
 
   if (refsResult.error) {
@@ -55,11 +86,19 @@ export async function deleteAssetEverywhere({
     throw new Error(`Erro ao excluir asset: ${assetResult.error.message}`);
   }
 
-  if (!storagePath) {
+  if (table === "messages") {
     return {};
   }
 
-  const { error: storageError } = await supabase.storage.from("assets").remove([storagePath]);
+  const storagePaths = rows
+    .map((item) => item.storage_path)
+    .filter((path): path is string => typeof path === "string" && path.length > 0);
+
+  if (storagePaths.length === 0) {
+    return {};
+  }
+
+  const { error: storageError } = await supabase.storage.from("assets").remove(storagePaths);
   if (storageError) {
     return { storageWarning: storageError.message };
   }
