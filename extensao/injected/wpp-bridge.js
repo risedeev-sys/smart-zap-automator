@@ -173,22 +173,24 @@
     switch (type) {
       case "audio": {
         opts.type = "audio";
-        opts.isPtt = isPtt !== false;
 
-        // Strategy controls what extra options we pass.
-        // "audio-clean": bare minimum — most compatible
-        // "audio-with-mime": adds mimetype
-        // "audio-with-viewonce": adds isViewOnce flag
-        if (strategy === "audio-clean") {
-          // Nothing extra — let wa-js auto-detect from data URL
-        } else if (strategy === "audio-with-mime") {
+        // Progressive fallback strategy:
+        // 1) PTT first (voice note UX)
+        // 2) Regular audio fallback if PTT is rejected by current WA build/codec
+        const normalizedStrategy = String(strategy || "");
+        const forceCommonAudio = normalizedStrategy.startsWith("audio-common");
+        opts.isPtt = !forceCommonAudio;
+
+        if (normalizedStrategy.endsWith("with-mime")) {
           const normalizedMime = String(mime || "").trim();
           if (normalizedMime) opts.mimetype = normalizedMime;
-        } else if (strategy === "audio-with-viewonce") {
-          if (asViewOnce) opts.isViewOnce = true;
         }
 
-        // NEVER pass filename for PTT — causes wa-js to treat it as document
+        if (normalizedStrategy === "audio-ptt-with-viewonce" && asViewOnce) {
+          opts.isViewOnce = true;
+        }
+
+        // NEVER pass filename for audio in bridge strategies.
         break;
       }
 
@@ -384,7 +386,7 @@
     const strategies = isVideo
       ? ["video-native"]
       : isAudio
-        ? ["audio-clean", "audio-with-mime", "audio-with-viewonce"]
+        ? ["audio-ptt-clean", "audio-ptt-with-mime", "audio-ptt-with-viewonce", "audio-common-clean", "audio-common-with-mime"]
         : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
