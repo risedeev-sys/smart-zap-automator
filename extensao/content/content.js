@@ -1414,13 +1414,43 @@
     return btn;
   }
 
+  // ─── Asset Refresh ─────────────────────────────────────
+
+  let lastAssetHash = "";
+
+  function hashAssets(a) {
+    const ids = [
+      ...(a.messages || []).map(r => r.id),
+      ...(a.audios || []).map(r => r.id),
+      ...(a.medias || []).map(r => r.id),
+      ...(a.documents || []).map(r => r.id),
+      ...(a.funnels || []).map(r => r.id),
+    ];
+    return ids.sort().join(",");
+  }
+
+  async function refreshAssetsAndBar() {
+    if (!token || globalSending) return;
+    const oldHash = lastAssetHash;
+    await loadAssets();
+    const newHash = hashAssets(assets);
+    if (newHash !== oldHash) {
+      lastAssetHash = newHash;
+      createBar();
+      console.log("[RiseZap] Assets refreshed — bar updated");
+    }
+  }
+
   // ─── Init ──────────────────────────────────────────────
 
   async function init() {
     await loadAuth();
     injectBridge();      // Still needed for audio PTT
     setupStorageBridge();
-    if (token) await loadAssets();
+    if (token) {
+      await loadAssets();
+      lastAssetHash = hashAssets(assets);
+    }
     createBar();
 
     window.addEventListener("risezap:bridge-ready", () => createBar());
@@ -1428,14 +1458,26 @@
     chrome.storage.onChanged.addListener(async (changes) => {
       if (changes.risezap_access_token) {
         await loadAuth();
-        if (token) await loadAssets();
+        if (token) {
+          await loadAssets();
+          lastAssetHash = hashAssets(assets);
+        }
         createBar();
       }
     });
 
+    // Re-check bar DOM presence every 3s
     setInterval(() => {
       if (!document.getElementById("risezap-bar")) createBar();
     }, 3000);
+
+    // Periodic asset refresh every 30s — deleted items vanish automatically
+    setInterval(refreshAssetsAndBar, 30000);
+
+    // Immediate refresh when user returns to the tab
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshAssetsAndBar();
+    });
   }
 
   if (document.readyState === "complete") init();
