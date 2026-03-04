@@ -36,12 +36,25 @@ chrome.runtime.onInstalled.addListener(() => {
   refreshToken();
 });
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+
+  return btoa(binary);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "RISEZAP_FETCH_FILE_BUFFER") return;
 
   (async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000);
+    const timeout = setTimeout(() => controller.abort(), 300000);
 
     try {
       const res = await fetch(message.url, {
@@ -57,7 +70,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       const buffer = await res.arrayBuffer();
       const mime = res.headers.get("content-type") || null;
-      sendResponse({ ok: true, buffer, mime });
+      const base64 = arrayBufferToBase64(buffer);
+
+      // runtime messaging in Chromium is JSON-serialized;
+      // base64 keeps binary intact across service worker <-> content script.
+      sendResponse({ ok: true, base64, mime, bytes: buffer.byteLength });
     } catch (err) {
       sendResponse({ ok: false, error: err?.message || String(err) });
     } finally {
