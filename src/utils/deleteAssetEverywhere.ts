@@ -37,36 +37,69 @@ export async function deleteAssetEverywhere({
   }
 
   const table = TABLE_BY_ASSET_TYPE[assetType];
-  const targetSelect = table === "messages" ? "id, name, user_id" : "id, name, user_id, storage_path";
+  let row: AssetRow;
+  let rows: Array<{ id: string; storage_path?: string | null }> = [];
 
-  const { data: targetRow, error: targetError } = await supabase
-    .from(table as any)
-    .select(targetSelect)
-    .eq("id", assetId)
-    .maybeSingle();
+  if (table === "messages") {
+    const { data: targetRow, error: targetError } = await supabase
+      .from("messages")
+      .select("id, name, user_id")
+      .eq("id", assetId)
+      .maybeSingle();
 
-  if (targetError) {
-    throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+    if (targetError) {
+      throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+    }
+
+    if (!targetRow) {
+      return {};
+    }
+
+    row = targetRow as unknown as AssetRow;
+
+    const { data: rowsWithSameName, error: rowsError } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("user_id", row.user_id)
+      .eq("name", row.name);
+
+    if (rowsError) {
+      throw new Error(`Erro ao buscar duplicatas para exclusão: ${rowsError.message}`);
+    }
+
+    rows = ((rowsWithSameName ?? []) as unknown as Array<{ id: string }>).map((item) => ({ id: item.id }));
+  } else {
+    const fileTable = table as "audios" | "medias" | "documents";
+
+    const { data: targetRow, error: targetError } = await supabase
+      .from(fileTable)
+      .select("id, name, user_id, storage_path")
+      .eq("id", assetId)
+      .maybeSingle();
+
+    if (targetError) {
+      throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+    }
+
+    if (!targetRow) {
+      return {};
+    }
+
+    row = targetRow as unknown as AssetRow;
+
+    const { data: rowsWithSameName, error: rowsError } = await supabase
+      .from(fileTable)
+      .select("id, storage_path")
+      .eq("user_id", row.user_id)
+      .eq("name", row.name);
+
+    if (rowsError) {
+      throw new Error(`Erro ao buscar duplicatas para exclusão: ${rowsError.message}`);
+    }
+
+    rows = (rowsWithSameName ?? []) as unknown as Array<{ id: string; storage_path?: string | null }>;
   }
 
-  if (!targetRow) {
-    return {};
-  }
-
-  const row = targetRow as AssetRow;
-  const rowsSelect = table === "messages" ? "id" : "id, storage_path";
-
-  const { data: rowsWithSameName, error: rowsError } = await supabase
-    .from(table as any)
-    .select(rowsSelect)
-    .eq("user_id", row.user_id)
-    .eq("name", row.name);
-
-  if (rowsError) {
-    throw new Error(`Erro ao buscar duplicatas para exclusão: ${rowsError.message}`);
-  }
-
-  const rows = (rowsWithSameName ?? []) as Array<{ id: string; storage_path?: string | null }>;
   const idsToDelete = rows.map((item) => item.id);
 
   if (idsToDelete.length === 0) {
