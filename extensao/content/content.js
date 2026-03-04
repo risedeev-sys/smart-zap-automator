@@ -787,30 +787,32 @@
       return false;
     }
 
-    // Prefetch in extension context to avoid CORS in page context
-    const blobResult = await createBridgeBlobUrl(signedUrl);
+    // Fetch blob in content script context, then convert to base64 data URL
+    let dataUrl;
+    try {
+      const blob = await fetchAssetBlob(signedUrl, asset.mime || "audio/ogg; codecs=opus");
+      dataUrl = await blobToDataUrl(blob);
+    } catch (err) {
+      showToast(`Erro ao baixar áudio: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
     const payload = {
       requestId,
       type: "audio",
-      url: signedUrl,
-      blobUrl: blobResult?.blobUrl || undefined,
+      dataUrl,
       isPtt: true,
       mime: asset.mime || "audio/ogg; codecs=opus",
       fileName: asset.name || "audio.ogg",
     };
 
-    console.log("[RiseZap] sendAudioViaBridge:", { name: asset.name, usingBlobUrl: !!payload.blobUrl });
+    console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", { name: asset.name, dataUrlLength: dataUrl.length });
 
     return new Promise((resolve) => {
-      const releaseBlobUrl = () => {
-        if (blobResult?.blobUrl) URL.revokeObjectURL(blobResult.blobUrl);
-      };
-
       const timeoutId = setTimeout(async () => {
         window.removeEventListener("risezap:result", handler);
-        releaseBlobUrl();
         console.error("[RiseZap] Audio bridge timeout, falling back to attach menu");
         showToast("Bridge falhou, tentando envio alternativo...", false, true);
         const ok = await sendFileViaAttachMenu(asset);
@@ -823,7 +825,6 @@
 
         window.removeEventListener("risezap:result", handler);
         clearTimeout(timeoutId);
-        releaseBlobUrl();
 
         if (detail.success === true) {
           resolve(true);
@@ -858,6 +859,7 @@
       return false;
     }
 
+    // Fetch blob in content script context, convert to base64 data URL
     let blob;
     try {
       blob = await fetchAssetBlob(signedUrl, asset.mime || "video/mp4");
@@ -874,8 +876,16 @@
       return false;
     }
 
+    // Convert prepared File to base64 data URL for cross-context delivery
+    let dataUrl;
+    try {
+      dataUrl = await blobToDataUrl(prepared.file);
+    } catch (err) {
+      showToast(`Erro ao converter vídeo para base64: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const blobUrl = URL.createObjectURL(prepared.file);
     const beforeSnapshot = snapshotOutgoingState();
 
     const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
@@ -889,27 +899,24 @@
     const payload = {
       requestId,
       type: "video",
-      url: signedUrl,
-      blobUrl,
+      dataUrl,
       mime: bridgeVideoMime,
       fileName: bridgeVideoName,
       caption: typeof metadata?.caption === "string" ? metadata.caption : undefined,
       asViewOnce,
     };
 
-    console.log("[RiseZap] sendVideoViaBridge:", {
+    console.log("[RiseZap] sendVideoViaBridge (base64 dataUrl):", {
       name: asset.name,
       fileName: payload.fileName,
       mime: payload.mime,
+      dataUrlLength: dataUrl.length,
       asViewOnce,
     });
 
     return new Promise((resolve) => {
-      const releaseBlobUrl = () => URL.revokeObjectURL(blobUrl);
-
       const timeoutId = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
-        releaseBlobUrl();
         showToast("Timeout no envio de vídeo via bridge", true);
         resolve(false);
       }, 300000);
@@ -920,7 +927,6 @@
 
         window.removeEventListener("risezap:result", handler);
         clearTimeout(timeoutId);
-        releaseBlobUrl();
 
         if (detail.success === true) {
           const confirmation = await waitForOutgoingCommit(beforeSnapshot, 180000);
