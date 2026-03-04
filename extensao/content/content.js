@@ -36,7 +36,7 @@
   async function loadAssets() {
     const [messages, audios, medias, documents, funnels] = await Promise.all([
       supaFetch("messages", "id,name,content"),
-      supaFetch("audios", "id,name,storage_path,mime,bytes"),
+      supaFetch("audios", "id,name,storage_path,mime,bytes,metadata"),
       supaFetch("medias", "id,name,storage_path,mime,bytes,metadata"),
       supaFetch("documents", "id,name,storage_path,mime,bytes"),
       supaFetch("funnels", "id,name,favorite"),
@@ -1033,6 +1033,10 @@
 
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+    const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
+    const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
+    const isForwarded = parseBooleanFlag(metadata?.forwarded);
+
     const payload = {
       requestId,
       type: "audio",
@@ -1040,9 +1044,11 @@
       isPtt: true,
       mime: asset.mime || "audio/ogg; codecs=opus",
       fileName: asset.name || "audio.ogg",
+      asViewOnce,
+      isForwarded,
     };
 
-    console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", { name: asset.name, dataUrlLength: dataUrl.length });
+    console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", { name: asset.name, dataUrlLength: dataUrl.length, asViewOnce, isForwarded });
 
     return new Promise((resolve) => {
       const timeoutId = setTimeout(async () => {

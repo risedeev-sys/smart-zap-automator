@@ -164,7 +164,7 @@
   // ─── Build WPP Options ───────────────────────────────
 
   function buildSendOptions(type, detail, isVideo, strategyOverride) {
-    const { isPtt, caption, fileName, asViewOnce, mime } = detail;
+    const { isPtt, caption, fileName, asViewOnce, isForwarded, mime } = detail;
     const opts = {};
 
     // IMPORTANT:
@@ -178,6 +178,7 @@
         opts.isPtt = isPtt !== false;
         opts.mimetype = mime || "audio/ogg; codecs=opus";
         if (asViewOnce) opts.isViewOnce = true;
+        if (isForwarded) opts.isForwarded = true;
         break;
 
       case "image":
