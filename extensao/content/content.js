@@ -382,8 +382,13 @@
     const fileNameMime = inferMimeFromFileName(fileName);
     const headerMime = await detectMimeFromBlobSignature(blob);
 
+    const mediaMimeCandidates = [headerMime, blob.type, asset?.mime, storagePathMime, fileNameMime];
+    const defaultMimeCandidates = [asset?.mime, blob.type, headerMime, storagePathMime, fileNameMime];
+
     let fileMime = String(
-      asset?.mime || blob.type || headerMime || storagePathMime || fileNameMime || "application/octet-stream"
+      (asset?.resolvedType === "media" ? mediaMimeCandidates : defaultMimeCandidates)
+        .map((value) => String(value || "").toLowerCase())
+        .find(Boolean) || "application/octet-stream"
     ).toLowerCase();
 
     const isVideo =
@@ -398,7 +403,7 @@
     let preparedBlob = blob;
     let normalizedWebp = false;
 
-    if (isImage && (fileMime.includes("image/webp") || getFileExtension(fileName) === "webp")) {
+    if (isImage && (fileMime.includes("image/webp") || headerMime === "image/webp" || getFileExtension(fileName) === "webp")) {
       try {
         preparedBlob = await convertWebpBlobToJpeg(blob);
         fileMime = "image/jpeg";
@@ -608,28 +613,88 @@
     return true;
   }
 
+  function getAttachmentInputContext(input) {
+    if (!(input instanceof HTMLInputElement)) return "";
+
+    const tokens = [];
+    const pushToken = (value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      tokens.push(raw.toLowerCase());
+    };
+
+    const collectFromElement = (el) => {
+      if (!(el instanceof Element)) return;
+      pushToken(el.getAttribute("aria-label"));
+      pushToken(el.getAttribute("title"));
+      pushToken(el.getAttribute("data-testid"));
+      pushToken(el.getAttribute("data-icon"));
+      pushToken(el.id);
+      pushToken(el.className);
+      pushToken((el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180));
+    };
+
+    collectFromElement(input);
+
+    const ancestors = [
+      input.closest("label"),
+      input.closest("button"),
+      input.closest('[role="button"]'),
+      input.closest("li"),
+      input.closest("[data-testid]"),
+      input.parentElement,
+      input.parentElement?.parentElement,
+    ];
+
+    for (const node of ancestors) collectFromElement(node);
+
+    return tokens.join(" | ");
+  }
+
+  function isStickerAttachmentInput(input) {
+    const context = getAttachmentInputContext(input);
+    return /(figurinha|sticker)/i.test(context);
+  }
+
+  function isPrimaryMediaAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    const context = getAttachmentInputContext(input);
+
+    if (accept.includes("image") && accept.includes("video")) return true;
+    if (/(fotos?\s*e\s*videos?|photos?\s*&?\s*videos?)/i.test(context)) return true;
+    if (/media upload/.test(context)) return true;
+
+    return false;
+  }
+
   function scoreAttachmentInput(input, targetKind) {
     const accept = String(input.accept || "").toLowerCase();
     const capture = String(input.getAttribute("capture") || "").toLowerCase();
     let score = 0;
 
+    const stickerInput = isStickerAttachmentInput(input);
+
     if (targetKind === "media") {
+      if (isPrimaryMediaAttachmentInput(input)) score += 260;
       if (accept.includes("video")) score += 120;
-      if (accept.includes("image")) score += 40;
-      if (accept.includes("application")) score -= 80;
-      if (accept.includes("audio")) score -= 40;
-      if (!accept || accept === "*/*") score -= 20;
+      if (accept.includes("image")) score += 60;
+      if (accept.includes("application")) score -= 120;
+      if (accept.includes("audio")) score -= 80;
+      if (!accept || accept === "*/*") score -= 40;
       if (capture) score -= 20;
+      if (stickerInput) score -= 1000;
     } else if (targetKind === "document") {
       if (accept.includes("application")) score += 120;
       if (accept.includes("text")) score += 60;
       if (!accept || accept === "*/*") score += 40;
       if (accept.includes("video") || accept.includes("image")) score -= 40;
+      if (stickerInput) score -= 120;
     } else if (targetKind === "audio") {
       if (accept.includes("audio")) score += 120;
       if (accept.includes("application")) score += 20;
       if (!accept || accept === "*/*") score += 10;
       if (accept.includes("video") || accept.includes("image")) score -= 30;
+      if (stickerInput) score -= 100;
     }
 
     if (input.multiple) score += 5;
@@ -640,6 +705,20 @@
     return Array.from(document.querySelectorAll('input[type="file"]')).filter(
       (el) => el instanceof HTMLInputElement && !el.disabled
     );
+  }
+
+  function uniqueAttachmentInputs(inputs) {
+    const seen = new Set();
+    const list = [];
+
+    for (const input of inputs) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      if (seen.has(input)) continue;
+      seen.add(input);
+      list.push(input);
+    }
+
+    return list;
   }
 
   function isMediaAttachmentInput(input) {
@@ -675,15 +754,15 @@
       }
 
       const newlyOpenedInputs = allInputs.filter((input) => !baselineSet.has(input));
-      const pool = newlyOpenedInputs.length ? newlyOpenedInputs : allInputs;
+      const pool = uniqueAttachmentInputs([...newlyOpenedInputs, ...allInputs]);
 
       if (preferredKind === "media") {
-        const mediaInputs = pool.filter(isMediaAttachmentInput);
+        const mediaInputs = pool.filter((input) => isMediaAttachmentInput(input) && !isStickerAttachmentInput(input));
         if (mediaInputs.length) return mediaInputs;
       }
 
       if (preferredKind === "document") {
-        const documentInputs = pool.filter(isDocumentAttachmentInput);
+        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input) && !isStickerAttachmentInput(input));
         if (documentInputs.length) return documentInputs;
       }
 
@@ -717,36 +796,47 @@
       .sort((a, b) => b.score - a.score);
 
     const rankedInputs = ranked.map((item) => item.input);
-    const mediaCandidates = rankedInputs.filter(isMediaAttachmentInput);
-    const documentCandidates = rankedInputs.filter(isDocumentAttachmentInput);
+    const mediaCandidates = rankedInputs.filter((input) => isMediaAttachmentInput(input) && !isStickerAttachmentInput(input));
+    const documentCandidates = rankedInputs.filter((input) => isDocumentAttachmentInput(input) && !isStickerAttachmentInput(input));
 
     if (assetType === "media") {
       const payloadIsVideoLike = isVideoFileLike(mime, fileName);
+      const payloadIsImageLike = isImageFileLike(mime, fileName);
 
       if (payloadIsVideoLike) {
         const strictVideoInput = mediaCandidates.find((input) => /video/i.test(String(input.accept || "")));
         if (strictVideoInput) return strictVideoInput;
       }
 
+      if (payloadIsImageLike) {
+        const strictPhotoVideoInput = mediaCandidates.find(isPrimaryMediaAttachmentInput);
+        if (strictPhotoVideoInput) return strictPhotoVideoInput;
+
+        const strictImageInput = mediaCandidates.find((input) => /image/i.test(String(input.accept || "")));
+        if (strictImageInput) return strictImageInput;
+      }
+
       if (mediaCandidates.length) return mediaCandidates[0];
 
-      const fallbackNonDocumentOnly = rankedInputs.find((input) => !isDocumentOnlyAttachmentInput(input));
+      const fallbackNonDocumentOnly = rankedInputs.find(
+        (input) => !isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input)
+      );
       return fallbackNonDocumentOnly || null;
     }
 
     if (assetType === "document") {
-      const strictDocumentInput = rankedInputs.find(isDocumentOnlyAttachmentInput);
+      const strictDocumentInput = rankedInputs.find((input) => isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input));
       if (strictDocumentInput) return strictDocumentInput;
-      return documentCandidates[0] || rankedInputs[0] || null;
+      return documentCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
     }
 
     if (assetType === "audio") {
       const audioFirst = rankedInputs.find((input) => /audio/i.test(String(input.accept || "")));
       if (audioFirst) return audioFirst;
-      return documentCandidates[0] || mediaCandidates[0] || rankedInputs[0] || null;
+      return documentCandidates[0] || mediaCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
     }
 
-    return rankedInputs[0] || null;
+    return rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
   }
 
   function injectFileIntoInput(input, file) {
