@@ -151,8 +151,12 @@
       .toLowerCase()
       .trim();
 
+  function parseBooleanFlag(value) {
+    return value === true || value === "true" || value === 1 || value === "1";
+  }
+
   // ─── WPP Bridge Injection ─────────────────────────────
-  // Bridge is now used ONLY for audio PTT sending
+  // Bridge is used for audio PTT and native video sending
 
   function injectBridge() {
     if (document.getElementById("RZBridgeReady")) {
@@ -828,6 +832,103 @@
     });
   }
 
+  async function sendVideoViaBridge(asset) {
+    if (!asset.storage_path) {
+      showToast("Vídeo sem arquivo associado", true);
+      return false;
+    }
+
+    if (!isBridgeReady()) {
+      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
+      return false;
+    }
+
+    const signedUrl = await getSignedUrl(asset.storage_path);
+    if (!signedUrl) {
+      showToast("Erro ao gerar URL do vídeo", true);
+      return false;
+    }
+
+    let blob;
+    try {
+      blob = await fetchAssetBlob(signedUrl, asset.mime || "video/mp4");
+    } catch (err) {
+      showToast(`Erro ao baixar vídeo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    let prepared;
+    try {
+      prepared = await prepareAssetFileForWhatsapp({ ...asset, resolvedType: "media" }, blob);
+    } catch (err) {
+      showToast(`Erro ao preparar vídeo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const blobUrl = URL.createObjectURL(prepared.file);
+    const beforeSnapshot = snapshotOutgoingState();
+
+    const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
+    const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
+
+    const bridgeVideoMime = isVideoFileLike(prepared.fileMime, prepared.fileName) ? prepared.fileMime : "video/mp4";
+    const bridgeVideoName = /\.mp4$/i.test(prepared.fileName || "")
+      ? prepared.fileName
+      : `${String(prepared.fileName || asset.name || "video").replace(/\.[a-z0-9]{2,8}$/i, "")}.mp4`;
+
+    const payload = {
+      requestId,
+      type: "video",
+      url: signedUrl,
+      blobUrl,
+      mime: bridgeVideoMime,
+      fileName: bridgeVideoName,
+      caption: typeof metadata?.caption === "string" ? metadata.caption : undefined,
+      asViewOnce,
+    };
+
+    console.log("[RiseZap] sendVideoViaBridge:", {
+      name: asset.name,
+      fileName: payload.fileName,
+      mime: payload.mime,
+      asViewOnce,
+    });
+
+    return new Promise((resolve) => {
+      const releaseBlobUrl = () => URL.revokeObjectURL(blobUrl);
+
+      const timeoutId = setTimeout(() => {
+        window.removeEventListener("risezap:result", handler);
+        releaseBlobUrl();
+        showToast("Timeout no envio de vídeo via bridge", true);
+        resolve(false);
+      }, 300000);
+
+      async function handler(evt) {
+        const detail = evt.detail || {};
+        if (detail.requestId !== requestId) return;
+
+        window.removeEventListener("risezap:result", handler);
+        clearTimeout(timeoutId);
+        releaseBlobUrl();
+
+        if (detail.success === true) {
+          const confirmation = await waitForOutgoingCommit(beforeSnapshot, 180000);
+          resolve(confirmation.ok);
+          return;
+        }
+
+        console.error("[RiseZap] Video bridge failed:", detail);
+        showToast(`Falha ao enviar vídeo (${detail.errorCode || "erro"})`, true);
+        resolve(false);
+      }
+
+      window.addEventListener("risezap:result", handler);
+      window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
+    });
+  }
+
   async function createBridgeBlobUrl(fileUrl) {
     if (!fileUrl) return null;
     try {
@@ -861,7 +962,12 @@
       return sendAudioViaBridge(asset);
     }
 
-    // Images, Videos, Documents → attach-menu injection (primary)
+    if (asset.resolvedType === "media" && isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || "")) {
+      // Video → bridge native video (never document mode)
+      return sendVideoViaBridge(asset);
+    }
+
+    // Images + Documents → attach-menu injection
     return sendFileViaAttachMenu(asset);
   }
 
