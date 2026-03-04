@@ -831,9 +831,11 @@
     }
 
     if (assetType === "audio") {
-      const audioFirst = rankedInputs.find((input) => /audio/i.test(String(input.accept || "")));
-      if (audioFirst) return audioFirst;
-      return documentCandidates[0] || mediaCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
+      // WhatsApp Web has no dedicated audio input in the attach menu.
+      // Route through document channel (accepts all file types).
+      const strictDocumentInput = rankedInputs.find((input) => isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input));
+      if (strictDocumentInput) return strictDocumentInput;
+      return documentCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
     }
 
     return rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
@@ -919,13 +921,13 @@
       return false;
     }
 
+    // Audio doesn't have a dedicated input in WhatsApp's attach menu,
+    // so we route it through the document channel as fallback
     const preferredKind = asset.resolvedType === "media"
       ? "media"
-      : asset.resolvedType === "document"
+      : asset.resolvedType === "document" || asset.resolvedType === "audio"
         ? "document"
-        : asset.resolvedType === "audio"
-          ? "audio"
-          : "default";
+        : "default";
 
     const inputs = await waitForAttachmentInputs({
       timeoutMs: 5000,
