@@ -119,6 +119,13 @@
     const detail = evt.detail || {};
     const { requestId, type, url, fallbackUrl, blobUrl, isPtt, caption, fileName, asViewOnce, mime } = detail;
 
+    const lowerMime = String(mime || "").toLowerCase();
+    const lowerFileName = String(fileName || "").toLowerCase();
+    const isLikelyVideoDocument =
+      type === "document" &&
+      (lowerMime.startsWith("video/") || /\.(mp4|mov|m4v|webm|mkv|avi)$/.test(lowerFileName));
+    const isLargeVideoPayload = type === "video" || isLikelyVideoDocument;
+
     if (!requestId) return;
 
     const respond = (success, error) => {
@@ -155,7 +162,7 @@
 
     let content;
     const fetchErrors = [];
-    const fetchTimeoutMs = type === "video" ? 120000 : 45000;
+    const fetchTimeoutMs = isLargeVideoPayload ? 180000 : 45000;
 
     const candidates = [
       { value: blobUrl, label: "blobUrl" },
@@ -224,6 +231,7 @@
           type: "document",
           filename: fileName || "file",
           mimetype: mime || undefined,
+          waitForAck: !isLikelyVideoDocument,
         };
         break;
 
@@ -242,7 +250,7 @@
     // ─── Send via WPP ─────────────────────────────────
 
     try {
-      const sendTimeoutMs = type === "video" ? 240000 : 90000;
+      const sendTimeoutMs = isLargeVideoPayload ? 300000 : 90000;
       console.log("[RiseZap:Bridge] Sending:", {
         chatId: chatId.toString(),
         type,

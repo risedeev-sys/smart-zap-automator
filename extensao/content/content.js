@@ -389,7 +389,7 @@
     });
 
     // Send event and wait for response
-    const timeoutMs = sendType === "video" || (sendType === "document" && isVideoAsset) ? 150000 : 60000;
+    const timeoutMs = sendType === "video" || (sendType === "document" && isVideoAsset) ? 320000 : 60000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {
@@ -560,7 +560,6 @@
         }
 
         let ok = false;
-        const isVideoStep = isVideoMediaAsset(asset);
 
         showToast(`⏳ Funil "${funnelName}" — item ${i + 1}/${items.length}: ${asset.name || asset.resolvedType}`, false, true);
 
