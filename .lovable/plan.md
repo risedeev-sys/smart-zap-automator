@@ -1,74 +1,111 @@
 
+Diagnóstico completo (raiz da raiz)
 
-# Auditoria de Conformidade: Protocolo RiseZap V1
+1) O problema não é “só timeout”.
+- O ativo de vídeo está válido no banco/storage (ex.: `11ed8ec8...mp4`, `mime=video/mp4`, ~14.46MB, path existente no bucket `assets`).
+- Então a falha principal não está no upload do arquivo para Supabase.
 
-## Status: VIOLAÇÕES CRÍTICAS DETECTADAS
+2) A definição de “sucesso” no bridge está incorreta para vídeo.
+- Hoje o fluxo considera sucesso quando `WPP.chat.sendFileMessage(...)` resolve.
+- Para vídeo/documento de vídeo, foi forçado `waitForAck: false`, então o retorno pode acontecer antes da confirmação real de envio/upload.
+- Resultado: funil avança/“parece enviado” sem garantia de entrega real.
 
-O protocolo **não** está sendo seguido corretamente. Abaixo, o diagnóstico honesto.
+3) Falta validação do resultado final do WhatsApp.
+- A API da wa-js retorna `SendMessageReturn.sendMsgResult` com `messageSendResult` (`OK`, `ERROR_UPLOAD`, `ERROR_NETWORK`, etc.).
+- Esse contrato não está sendo usado. Sem isso, erro real de upload fica invisível.
 
----
+4) Observabilidade insuficiente.
+- Só existe resposta binária `success/error`.
+- Sem stage (`fetch`, `prepare`, `send`, `sendMsgResult`) e sem código de erro estruturado.
+- Isso gera “travou em enviando funil” sem diagnóstico acionável.
 
-## VIOLAÇÕES ATIVAS
+Análise de Soluções
 
-### V1. Regra 5.5 — Zero Database Access from Frontend (CRÍTICA)
+### Solução A: Ajustar apenas timeout e waitForAck
+- Manutenibilidade: 5/10
+- Zero DT: 4/10
+- Arquitetura: 4/10
+- Escalabilidade: 5/10
+- Segurança: 8/10
+- NOTA FINAL: 5.1/10
+- Tempo estimado: 0.5 dia
 
-**9 arquivos** no frontend acessam o banco diretamente via `supabase.from()`. O protocolo diz:
+### Solução B: Forçar vídeo sempre como documento e fallback de MIME
+- Manutenibilidade: 7/10
+- Zero DT: 6/10
+- Arquitetura: 6/10
+- Escalabilidade: 7/10
+- Segurança: 8/10
+- NOTA FINAL: 6.8/10
+- Tempo estimado: 1 dia
 
-> "O frontend NUNCA acessa o banco diretamente. Todas as operações passam por Edge Functions."
+### Solução C: Contrato de entrega determinístico + estratégia de envio por etapas + telemetria estruturada
+- Manutenibilidade: 9/10
+- Zero DT: 9/10
+- Arquitetura: 9/10
+- Scalabilidade: 9/10
+- Segurança: 8/10
+- NOTA FINAL: 8.9/10
+- Tempo estimado: 2-3 dias
 
-**Arquivos violadores:**
+### DECISÃO: Solução C (Nota 8.9)
+As outras são inferiores porque continuam tratando “chamada retornou” como “mensagem entregue”. A Solução C elimina isso no desenho: o funil só considera sucesso quando recebe resultado final de envio (ou erro explícito), com diagnóstico de etapa.
 
-| Arquivo | Chamadas diretas |
-|---------|-----------------|
-| `src/pages/FunisPage.tsx` | ~10 chamadas (CRUD completo de funnels/items) |
-| `src/pages/EspacoTestePage.tsx` | ~6 chamadas (select de todas as tabelas) |
-| `src/pages/BackupsPage.tsx` | chamadas diretas de select/triggers |
-| `src/utils/exportFunnel.ts` | select direto em funnels, funnel_items, assets |
-| `src/utils/importBackupToSupabase.ts` | insert/delete direto em 7 tabelas |
-| `src/utils/uploadAssetFile.ts` | update direto + storage upload |
-| `src/hooks/use-real-whatsapp.ts` | select direto em whatsapp_instances |
+Plano de correção definitiva
 
-Estes arquivos deveriam invocar Edge Functions BFF (`supabase.functions.invoke`), nunca `supabase.from()`.
+1) Reescrever o contrato de resposta do bridge (extensao/injected/wpp-bridge.js)
+- Substituir `respond(success, error)` por payload estruturado:
+  - `success`, `stage`, `errorCode`, `errorMessage`, `strategy`, `messageId`, `sendMsgResult`.
+- Etapas explícitas:
+  - `FETCH_CONTENT` → `PREPARE_CONTENT` → `SEND_REQUEST` → `SEND_RESULT`.
+- Após `sendFileMessage`, aguardar `sendReturn.sendMsgResult` com timeout dedicado e validar `messageSendResult === "OK"`.
 
-### V2. Regra 5.6 — Isolamento Multi-Tenant (CRÍTICA)
+2) Implementar estratégia em cascata para vídeo (sem depender de acaso)
+- Estratégia 1: `type: "document"` com `filename .mp4` e `mimetype: "video/mp4"`.
+- Se `ERROR_UPLOAD/ERROR_NETWORK/TIMEOUT`:
+  - Estratégia 2: `type: "document"` com `mimetype: "application/octet-stream"` (força caminho estritamente documental).
+- Apenas se ambas falharem: erro final estruturado para o funil (sem falso positivo).
 
-**Zero referências a `workspace_id`** em todo o frontend. Nenhuma query filtra por tenant. O isolamento multi-tenant é inexistente na camada de aplicação. Toda a lógica atual assume single-tenant (filtra por `user_id` quando muito).
+3) Corrigir semântica de sucesso no content script (extensao/content/content.js)
+- `sendFileViaBridge` só retorna `true` quando bridge retornar `success=true` com `sendMsgResult.messageSendResult === "OK"`.
+- Em qualquer outro caso:
+  - aborta item do funil com toast técnico curto + código (`ERROR_UPLOAD`, `TIMEOUT_SEND_RESULT`, etc.).
+- Timeout único de 320s será substituído por timeouts por etapa (mais diagnósticos, menos “travou”).
 
-### V3. Regra 5.4 — Limite de 300 Linhas
+4) Observabilidade operacional mínima (obrigatória)
+- Logar no console por item:
+  - `assetId`, `sendType`, `strategy`, `stage`, `elapsedMs`, `errorCode`.
+- Persistir “último diagnóstico de falha” em `chrome.storage.local` para suporte rápido.
 
-`extensao/content/content.js` tem **731 linhas**. É um God Object que concentra: auth, fetch, UI, envio, bridge, funil, storage bridge, tudo num único arquivo.
+5) Controle de concorrência do funil para mídia pesada
+- Não avançar para próximo item até fechamento determinístico do item atual (sucesso real ou erro real).
+- Remove cenário de “pipeline segue sem entrega confirmada”.
 
-### V4. Regra 5.5 — Extensão acessa banco direto
+Arquivos a alterar
+- `extensao/injected/wpp-bridge.js` (núcleo da correção)
+- `extensao/content/content.js` (contrato/controle de funil/telemetria)
+- (Opcional de organização) extrair util de diagnóstico para `extensao/content/send-diagnostics.js` para reduzir acoplamento.
 
-A extensão (`content.js`) faz chamadas REST diretas ao Supabase (`/rest/v1/{table}`) nas linhas 24-34. Isso é equivalente a `supabase.from()` — acesso direto ao banco sem passar por Edge Functions.
+Fluxo alvo (determinístico)
 
-### V5. Memory Desatualizada — `extension/sending-strategy`
+```text
+Funnel item(video)
+  -> content.sendFileViaBridge()
+    -> bridge.fetch/prepare
+    -> bridge.sendFileMessage()
+    -> await sendReturn.sendMsgResult
+       -> OK      => success real
+       -> ERROR_* => fallback strategy / fail explícito
+  -> funil só avança com sucesso real
+```
 
-A memory ainda referencia: *"arquivos (áudio, mídia e documentos) são roteados via backend através da Edge Function whatsapp-send"*. Isso já foi migrado para wa-js nativo. A memory está desalinhada com a realidade do código.
+Critérios de aceite (fechamento do problema)
+1) Vídeo do funil envia e aparece no chat em cenário normal.
+2) Em falha de upload, funil interrompe com erro estruturado (sem “enviado” falso).
+3) Logs mostram etapa e motivo exato da falha.
+4) Repetição 5x consecutiva do mesmo funil sem travar em “Enviando funil...”.
+5) Envio manual de mídia e envio via funil compartilham o mesmo contrato robusto.
 
----
-
-## CONFORMIDADES VERIFICADAS
-
-| Regra | Status |
-|-------|--------|
-| 5.2 — Permissão para Breaking Changes | Aplicada (extensão reescrita) |
-| Extensão sem Evolution API | Confirmado — zero referências |
-| wa-js Bridge Architecture | Implementado corretamente (loader → bridge → CustomEvent) |
-| Storage Bridge (chrome.storage proxy) | Implementado |
-| Linter Supabase — RLS | Sem violações críticas de RLS |
-
----
-
-## PLANO DE CORREÇÃO NECESSÁRIO
-
-A correção destas violações exige a continuação da **Fase 2 e Fase 3** do Plano de Refatoração Arquitetural já definido:
-
-1. **Migrar todos os `supabase.from()` do frontend para Edge Functions BFF** — FunisPage, EspacoTestePage, BackupsPage, exportFunnel, importBackup, uploadAssetFile, use-real-whatsapp
-2. **Introduzir `workspace_id` no schema e em todas as queries** — migração de banco + RLS por workspace
-3. **Refatorar `content.js` (731 linhas) em módulos separados** — auth, ui, bridge-client, asset-loader, funnel-runner
-4. **Migrar a extensão de REST direto para Edge Functions** — `supaFetch` deve chamar Edge Functions, não `/rest/v1/`
-5. **Atualizar memories desatualizadas**
-
-Deseja que eu priorize e detalhe o plano de correção para uma dessas violações específicas?
-
+Validação final (obrigatória)
+- Teste ponta a ponta no WhatsApp Web com o funil real `FUNIL CONTEUDOS` (4 itens), incluindo o vídeo atual de ~14.46MB.
+- Executar com aba ativa e em uma execução adicional alternando abas para confirmar comportamento de fallback e diagnóstico.
