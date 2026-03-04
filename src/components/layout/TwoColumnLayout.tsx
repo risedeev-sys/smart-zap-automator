@@ -64,10 +64,10 @@ export function TwoColumnLayout({
                 key={item.id}
                 onClick={() => onSelect(item.id)}
                 {...restDragProps}
-                className={`w-full flex items-center gap-3 p-3 rounded-md text-left text-base transition-colors group ${
+                className={`w-full flex items-center gap-3 p-3 rounded-md text-left text-base transition-colors group border ${
                   selectedId === item.id
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted text-foreground"
+                    ? "bg-accent text-accent-foreground border-primary/50"
+                    : "hover:bg-muted text-foreground border-transparent"
                 } ${dragClassName}`}
               >
                 <GripVertical className={`h-4 w-4 text-muted-foreground flex-shrink-0 cursor-grab ${onReorder ? "opacity-50 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
