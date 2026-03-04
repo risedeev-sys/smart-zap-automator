@@ -15,6 +15,7 @@ import {
 import { Trash2, Copy, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { deleteAssetEverywhere } from "@/utils/deleteAssetEverywhere";
 
 interface MessageRow {
   id: string;
@@ -61,13 +62,15 @@ export default function MensagensPage() {
 
   const handleDelete = async () => {
     if (!selected) return;
-    const { error } = await supabase.from("messages").delete().eq("id", selected);
-    if (error) {
-      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
-    } else {
-      setMessages(prev => prev.filter(m => m.id !== selected));
+
+    try {
+      await deleteAssetEverywhere({ assetType: "mensagem", assetId: selected });
+      setMessages((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
+      toast({ title: "Mensagem excluída!" });
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     }
   };
 

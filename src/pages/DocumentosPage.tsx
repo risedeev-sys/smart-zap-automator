@@ -17,6 +17,7 @@ import { Trash2, Copy, Pencil, Heart, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAssetFile } from "@/utils/uploadAssetFile";
+import { deleteAssetEverywhere } from "@/utils/deleteAssetEverywhere";
 
 export default function DocumentosPage() {
   const { documentos, setDocumentos } = useAssets();
@@ -41,11 +42,20 @@ export default function DocumentosPage() {
   };
   const selectedItem = documentos.find((m) => m.id === selected);
 
-  const handleDelete = () => {
-    if (selected) {
+  const handleDelete = async () => {
+    if (!selected) return;
+
+    try {
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "documento", assetId: selected });
       setDocumentos((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
+      toast({
+        title: "Documento excluído!",
+        description: storageWarning ? `Cadastro removido, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
+      });
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     }
   };
 
