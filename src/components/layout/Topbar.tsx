@@ -1,4 +1,4 @@
-import { Moon, Sun, Settings, LogOut } from "lucide-react";
+import { Settings, LogOut } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
