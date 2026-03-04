@@ -636,20 +636,68 @@
     return score;
   }
 
-  async function waitForAttachmentInputs(timeoutMs = 4000) {
+  function listEnabledAttachmentInputs() {
+    return Array.from(document.querySelectorAll('input[type="file"]')).filter(
+      (el) => el instanceof HTMLInputElement && !el.disabled
+    );
+  }
+
+  function isMediaAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    return /(image|video)/i.test(accept);
+  }
+
+  function isDocumentAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    if (!accept || accept === "*/*") return true;
+    return /(application|audio|text|document)/i.test(accept);
+  }
+
+  function isDocumentOnlyAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    if (!accept || accept === "*/*") return false;
+    return /(application|audio|text|document)/i.test(accept) && !/(image|video)/i.test(accept);
+  }
+
+  async function waitForAttachmentInputs({
+    timeoutMs = 4000,
+    baselineInputs = [],
+    preferredKind = "default",
+  } = {}) {
     const startedAt = Date.now();
-    const chatRoot = document.querySelector("#main");
+    const baselineSet = new Set(baselineInputs || []);
 
     while (Date.now() - startedAt < timeoutMs) {
-      const allInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
-      const scopedInputs = chatRoot
-        ? allInputs.filter((el) => chatRoot.contains(el))
-        : allInputs;
+      const allInputs = listEnabledAttachmentInputs();
+      if (!allInputs.length) {
+        await sleep(120);
+        continue;
+      }
 
-      if (scopedInputs.length) return scopedInputs;
-      if (allInputs.length) return allInputs;
+      const newlyOpenedInputs = allInputs.filter((input) => !baselineSet.has(input));
+      const pool = newlyOpenedInputs.length ? newlyOpenedInputs : allInputs;
 
-      await sleep(120);
+      if (preferredKind === "media") {
+        const mediaInputs = pool.filter(isMediaAttachmentInput);
+        if (mediaInputs.length) return mediaInputs;
+      }
+
+      if (preferredKind === "document") {
+        const documentInputs = pool.filter(isDocumentAttachmentInput);
+        if (documentInputs.length) return documentInputs;
+      }
+
+      if (preferredKind === "audio") {
+        const audioInputs = pool.filter((input) => /audio/i.test(String(input.accept || "")));
+        if (audioInputs.length) return audioInputs;
+      }
+
+      if (!newlyOpenedInputs.length && Date.now() - startedAt < 1200) {
+        await sleep(120);
+        continue;
+      }
+
+      return pool;
     }
 
     return [];
@@ -664,38 +712,38 @@
           ? "audio"
           : "default";
 
-    const rankedInputs = inputs
+    const ranked = inputs
       .map((input) => ({ input, score: scoreAttachmentInput(input, targetKind) }))
-      .sort((a, b) => b.score - a.score)
-      .map((item) => item.input);
+      .sort((a, b) => b.score - a.score);
 
-    const mediaInput = rankedInputs.find((input) => /(image|video)/i.test(input.accept || ""));
-    const docInput = rankedInputs.find((input) => {
-      const accept = String(input.accept || "").toLowerCase();
-      if (!accept || accept === "*/*") return true;
-      return (
-        accept.includes("application") ||
-        accept.includes("audio") ||
-        accept.includes("text") ||
-        accept.includes("document")
-      );
-    });
+    const rankedInputs = ranked.map((item) => item.input);
+    const mediaCandidates = rankedInputs.filter(isMediaAttachmentInput);
+    const documentCandidates = rankedInputs.filter(isDocumentAttachmentInput);
 
     if (assetType === "media") {
       const payloadIsVideoLike = isVideoFileLike(mime, fileName);
-      if (mediaInput) return mediaInput;
+
       if (payloadIsVideoLike) {
-        return rankedInputs.find((input) => !/application|text/i.test(input.accept || "")) || null;
+        const strictVideoInput = mediaCandidates.find((input) => /video/i.test(String(input.accept || "")));
+        if (strictVideoInput) return strictVideoInput;
       }
-      return rankedInputs[0] || null;
+
+      if (mediaCandidates.length) return mediaCandidates[0];
+
+      const fallbackNonDocumentOnly = rankedInputs.find((input) => !isDocumentOnlyAttachmentInput(input));
+      return fallbackNonDocumentOnly || null;
     }
 
     if (assetType === "document") {
-      return docInput || mediaInput || rankedInputs[0] || null;
+      const strictDocumentInput = rankedInputs.find(isDocumentOnlyAttachmentInput);
+      if (strictDocumentInput) return strictDocumentInput;
+      return documentCandidates[0] || rankedInputs[0] || null;
     }
 
     if (assetType === "audio") {
-      return docInput || mediaInput || rankedInputs[0] || null;
+      const audioFirst = rankedInputs.find((input) => /audio/i.test(String(input.accept || "")));
+      if (audioFirst) return audioFirst;
+      return documentCandidates[0] || mediaCandidates[0] || rankedInputs[0] || null;
     }
 
     return rankedInputs[0] || null;
@@ -773,6 +821,7 @@
 
     const { file, fileName, fileMime, isVideo, normalizedWebp } = prepared;
     const beforeSnapshot = snapshotOutgoingState();
+    const baselineInputs = listEnabledAttachmentInputs();
 
     const attachOpened = await openAttachMenu();
     if (!attachOpened) {
@@ -780,7 +829,20 @@
       return false;
     }
 
-    const inputs = await waitForAttachmentInputs(5000);
+    const preferredKind = asset.resolvedType === "media"
+      ? "media"
+      : asset.resolvedType === "document"
+        ? "document"
+        : asset.resolvedType === "audio"
+          ? "audio"
+          : "default";
+
+    const inputs = await waitForAttachmentInputs({
+      timeoutMs: 5000,
+      baselineInputs,
+      preferredKind,
+    });
+
     if (!inputs.length) {
       showToast("Entrada de upload não encontrada no WhatsApp", true);
       return false;
@@ -788,7 +850,15 @@
 
     const targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime, fileName);
     if (!targetInput) {
-      showToast("Canal de upload não disponível no WhatsApp", true);
+      showToast(asset.resolvedType === "media"
+        ? "Não foi possível localizar o canal de foto/vídeo do WhatsApp"
+        : "Canal de upload não disponível no WhatsApp", true);
+      console.error("[RiseZap] pickAttachmentInput returned null", {
+        resolvedType: asset.resolvedType,
+        candidateInputs: inputs.map((input) => ({ accept: input.accept, multiple: input.multiple })),
+        fileName,
+        fileMime,
+      });
       return false;
     }
 
