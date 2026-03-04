@@ -8,20 +8,26 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-  theme: "light",
+  theme: "dark",
   toggleTheme: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem("theme-preference") as Theme | null;
+    return stored === "light" || stored === "dark" ? stored : "dark";
+  });
 
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove("light", "dark");
-    root.classList.add("dark");
-  }, []);
+    root.classList.add(theme);
+    localStorage.setItem("theme-preference", theme);
+  }, [theme]);
 
-  const toggleTheme = () => {};
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>

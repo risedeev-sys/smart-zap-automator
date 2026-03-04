@@ -1,4 +1,4 @@
-import { Settings, LogOut } from "lucide-react";
+import { Settings, LogOut, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -40,7 +40,9 @@ export function Topbar({ title }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleTheme}>
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
 
         <Popover>
           <PopoverTrigger asChild>
