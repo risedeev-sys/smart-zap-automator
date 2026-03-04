@@ -33,6 +33,7 @@ export default function AudiosPage() {
   const [forwarded, setForwarded] = useState(false);
   const [singleView, setSingleView] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   const fetchAudios = useCallback(async () => {
@@ -97,45 +98,62 @@ export default function AudiosPage() {
   };
 
   const handleAdd = async () => {
+    if (isSaving) return;
     if (!newName.trim() || !uploadFile) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
 
-    // 0. Convert audio to OGG/Opus for faster WhatsApp delivery
-    let fileToUpload: File;
+    setIsSaving(true);
+
     try {
-      fileToUpload = await convertAudioToOgg(uploadFile);
-    } catch {
-      fileToUpload = uploadFile;
-    }
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        toast({
+          title: "Sessão expirada",
+          description: "Faça login novamente para salvar o áudio.",
+          variant: "destructive",
+        });
+        return;
+      }
 
-    // 1. Insert record in Supabase
-    const { data: record, error } = await supabase
-      .from("audios")
-      .insert({ name: newName.trim(), user_id: user.id, metadata: { singleView, forwarded } })
-      .select("id, name")
-      .single();
-    if (error || !record) {
-      toast({ title: "Erro ao criar áudio", description: error?.message, variant: "destructive" });
-      return;
-    }
+      // 0. Convert short audio to OGG/Opus for faster WhatsApp delivery
+      // Long audios are uploaded as-is to avoid blocking the UI for minutes.
+      let fileToUpload: File;
+      try {
+        fileToUpload = await convertAudioToOgg(uploadFile);
+      } catch {
+        fileToUpload = uploadFile;
+      }
 
-    // 2. Upload converted file to bucket & update storage_path
-    try {
-      await uploadAssetFile("audios", record.id, fileToUpload, user.id);
-    } catch (e: any) {
-      toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
-    }
+      // 1. Insert record in Supabase
+      const { data: record, error } = await supabase
+        .from("audios")
+        .insert({ name: newName.trim(), user_id: user.id, metadata: { singleView, forwarded } })
+        .select("id, name")
+        .single();
+      if (error || !record) {
+        toast({ title: "Erro ao criar áudio", description: error?.message, variant: "destructive" });
+        return;
+      }
 
-    const fileUrl = URL.createObjectURL(uploadFile);
-    setAudios((prev) => [...prev, { id: record.id, name: newName.trim(), fileName: uploadFile.name, fileUrl, forwarded, singleView }]);
-    setSelected(record.id);
-    setNewName("");
-    setForwarded(false);
-    setSingleView(false);
-    setUploadFile(null);
-    setAddOpen(false);
-    toast({ title: "Áudio adicionado!" });
+      // 2. Upload converted file to bucket & update storage_path
+      try {
+        await uploadAssetFile("audios", record.id, fileToUpload, user.id);
+      } catch (e: any) {
+        toast({ title: "Erro no upload", description: e.message, variant: "destructive" });
+        return;
+      }
+
+      const fileUrl = URL.createObjectURL(uploadFile);
+      setAudios((prev) => [...prev, { id: record.id, name: newName.trim(), fileName: uploadFile.name, fileUrl, forwarded, singleView }]);
+      setSelected(record.id);
+      setNewName("");
+      setForwarded(false);
+      setSingleView(false);
+      setUploadFile(null);
+      setAddOpen(false);
+      toast({ title: "Áudio adicionado!" });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const openEdit = () => {
@@ -269,8 +287,8 @@ export default function AudiosPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim() || !uploadFile}>Salvar</Button>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={isSaving}>Cancelar</Button>
+            <Button onClick={handleAdd} disabled={isSaving || !newName.trim() || !uploadFile}>{isSaving ? "Salvando..." : "Salvar"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

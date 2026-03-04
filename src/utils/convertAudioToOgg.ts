@@ -10,6 +10,7 @@
 
 const OGG_MIME = "audio/ogg; codecs=opus";
 const FALLBACK_MIME = "audio/webm; codecs=opus";
+const MAX_REALTIME_CONVERSION_SECONDS = 15;
 
 function isAlreadyOgg(file: File): boolean {
   const mime = (file.type || "").toLowerCase();
@@ -47,6 +48,14 @@ export async function convertAudioToOgg(file: File): Promise<File> {
     decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
   } catch (err) {
     console.warn("[convertAudioToOgg] Failed to decode, returning original:", err);
+    await audioCtx.close();
+    return file;
+  }
+
+  if (decodedBuffer.duration > MAX_REALTIME_CONVERSION_SECONDS) {
+    console.warn(
+      `[convertAudioToOgg] Duration ${decodedBuffer.duration.toFixed(2)}s is above ${MAX_REALTIME_CONVERSION_SECONDS}s, skipping conversion`,
+    );
     await audioCtx.close();
     return file;
   }
