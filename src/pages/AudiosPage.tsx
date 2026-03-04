@@ -184,8 +184,8 @@ export default function AudiosPage() {
       >
         {selectedItem && (
           <div className="flex flex-col h-full">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="font-semibold text-lg text-foreground truncate">{selectedItem.name}</h3>
+            <div className="flex items-center justify-between p-4 border-b border-border gap-2">
+              <h3 className="font-semibold text-lg text-foreground truncate min-w-0">{selectedItem.name}</h3>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full bg-destructive/10 hover:bg-destructive/20" onClick={() => setDeleteOpen(true)}>
                   <Trash2 className="h-4 w-4 text-destructive" />
