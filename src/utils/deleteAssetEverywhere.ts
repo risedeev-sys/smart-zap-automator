@@ -9,7 +9,6 @@ const TABLE_BY_ASSET_TYPE: Record<AssetType, "messages" | "audios" | "medias" | 
   documento: "documents",
 };
 
-const FILE_ASSET_TABLES = new Set(["audios", "medias", "documents"] as const);
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -33,9 +32,9 @@ export async function deleteAssetEverywhere({
   const table = TABLE_BY_ASSET_TYPE[assetType];
 
   let storagePath: string | null = null;
-  if (FILE_ASSET_TABLES.has(table)) {
+  if (table !== "messages") {
     const { data } = await supabase
-      .from(table as "audios" | "medias" | "documents")
+      .from(table)
       .select("storage_path")
       .eq("id", assetId)
       .maybeSingle();
