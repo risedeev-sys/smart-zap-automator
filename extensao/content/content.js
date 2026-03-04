@@ -250,6 +250,29 @@
     });
   }
 
+  function normalizeAudioBridgePayload(asset, blob) {
+    const rawName = String(asset?.name || "audio").trim() || "audio";
+    const hasExt = /\.[a-z0-9]{2,8}$/i.test(rawName);
+    const baseMime = String(blob?.type || asset?.mime || "").toLowerCase().trim();
+
+    const normalizedMime = baseMime.includes("audio/ogg")
+      ? "audio/ogg; codecs=opus"
+      : baseMime || "audio/mpeg";
+
+    const ext = normalizedMime.includes("ogg") || normalizedMime.includes("opus")
+      ? "ogg"
+      : normalizedMime.includes("wav")
+        ? "wav"
+        : normalizedMime.includes("aac") || normalizedMime.includes("m4a")
+          ? "m4a"
+          : "mp3";
+
+    return {
+      mime: normalizedMime,
+      fileName: hasExt ? rawName : `${rawName}.${ext}`,
+    };
+  }
+
   async function fetchAssetBlob(fileUrl, fallbackMime) {
     // Try content script fetch first (same-origin or CORS-enabled)
     try {
@@ -1037,17 +1060,26 @@
       return false;
     }
 
-    // Fetch blob in content script context, then convert to base64 data URL
-    let dataUrl;
+    let blob;
     try {
-      const blob = await fetchAssetBlob(signedUrl, asset.mime || "audio/ogg; codecs=opus");
-      dataUrl = await blobToDataUrl(blob);
+      blob = await fetchAssetBlob(signedUrl, asset.mime || "audio/mpeg");
     } catch (err) {
       showToast(`Erro ao baixar áudio: ${err?.message || "desconhecido"}`, true);
       return false;
     }
 
+    const audioPayload = normalizeAudioBridgePayload(asset, blob);
+
+    let dataUrl;
+    try {
+      dataUrl = await blobToDataUrl(blob);
+    } catch (err) {
+      showToast(`Erro ao converter áudio para base64: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const beforeSnapshot = snapshotOutgoingState();
 
     const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
     const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
@@ -1058,23 +1090,27 @@
       type: "audio",
       dataUrl,
       isPtt: true,
-      mime: asset.mime || "audio/ogg; codecs=opus",
-      fileName: asset.name || "audio.ogg",
+      mime: audioPayload.mime,
+      fileName: audioPayload.fileName,
       asViewOnce,
       isForwarded,
     };
 
-    console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", { name: asset.name, dataUrlLength: dataUrl.length, asViewOnce, isForwarded });
+    console.log("[RiseZap] sendAudioViaBridge (base64 dataUrl):", {
+      name: asset.name,
+      fileName: payload.fileName,
+      mime: payload.mime,
+      dataUrlLength: dataUrl.length,
+      asViewOnce,
+      isForwarded,
+    });
 
     return new Promise((resolve) => {
-      let retryAttempted = false;
-
-      const timeoutId = setTimeout(async () => {
+      const timeoutId = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
         console.error("[RiseZap] Audio bridge timeout after 90s");
-        showToast("Bridge falhou no timeout, tentando envio alternativo...", false, true);
-        const ok = await sendFileViaAttachMenu(asset);
-        resolve(ok);
+        showToast("Bridge de áudio falhou por timeout", true);
+        resolve(false);
       }, 90000);
 
       async function handler(evt) {
@@ -1085,19 +1121,17 @@
         clearTimeout(timeoutId);
 
         if (detail.success === true) {
-          resolve(true);
+          const confirmation = await waitForOutgoingCommit(beforeSnapshot, 45000);
+          if (!confirmation.ok) {
+            showToast(`WhatsApp não confirmou envio do áudio (${confirmation.reason})`, true);
+          }
+          resolve(confirmation.ok);
           return;
         }
 
         console.warn("[RiseZap] Audio bridge failed:", detail.errorCode, detail.errorMessage, "strategy:", detail.strategy);
-
-        // If this was the first attempt, the bridge itself has a retry strategy (audio-ptt-minimal).
-        // The bridge handles retries internally now, so if we get here, both strategies failed.
-        // Log the failure clearly before falling back.
-        console.error("[RiseZap] All bridge strategies exhausted for audio. Falling back to attach-menu (will send as document).");
-        showToast("Bridge falhou, enviando como documento...", false, true);
-        const ok = await sendFileViaAttachMenu(asset);
-        resolve(ok);
+        showToast(`Falha ao enviar áudio (${detail.errorCode || "erro"})`, true);
+        resolve(false);
       }
 
       window.addEventListener("risezap:result", handler);
@@ -1105,9 +1139,11 @@
     });
   }
 
-  async function sendVideoViaBridge(asset) {
+  // ─── Send Media (Image/Video) via Bridge ──────────────
+
+  async function sendMediaViaBridge(asset) {
     if (!asset.storage_path) {
-      showToast("Vídeo sem arquivo associado", true);
+      showToast("Mídia sem arquivo associado", true);
       return false;
     }
 
@@ -1118,16 +1154,17 @@
 
     const signedUrl = await getSignedUrl(asset.storage_path);
     if (!signedUrl) {
-      showToast("Erro ao gerar URL do vídeo", true);
+      showToast("Erro ao gerar URL da mídia", true);
       return false;
     }
 
-    // Fetch blob in content script context, convert to base64 data URL
+    const mediaLooksLikeVideo = isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || "");
+
     let blob;
     try {
-      blob = await fetchAssetBlob(signedUrl, asset.mime || "video/mp4");
+      blob = await fetchAssetBlob(signedUrl, mediaLooksLikeVideo ? "video/mp4" : "image/jpeg");
     } catch (err) {
-      showToast(`Erro ao baixar vídeo: ${err?.message || "desconhecido"}`, true);
+      showToast(`Erro ao baixar mídia: ${err?.message || "desconhecido"}`, true);
       return false;
     }
 
@@ -1135,16 +1172,17 @@
     try {
       prepared = await prepareAssetFileForWhatsapp({ ...asset, resolvedType: "media" }, blob);
     } catch (err) {
-      showToast(`Erro ao preparar vídeo: ${err?.message || "desconhecido"}`, true);
+      showToast(`Erro ao preparar mídia: ${err?.message || "desconhecido"}`, true);
       return false;
     }
 
-    // Convert prepared File to base64 data URL for cross-context delivery
+    const payloadType = isVideoFileLike(prepared.fileMime, prepared.fileName) ? "video" : "image";
+
     let dataUrl;
     try {
       dataUrl = await blobToDataUrl(prepared.file);
     } catch (err) {
-      showToast(`Erro ao converter vídeo para base64: ${err?.message || "desconhecido"}`, true);
+      showToast(`Erro ao converter mídia para base64: ${err?.message || "desconhecido"}`, true);
       return false;
     }
 
@@ -1154,23 +1192,19 @@
     const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
     const asViewOnce = parseBooleanFlag(metadata?.singleView) || parseBooleanFlag(metadata?.single_view);
 
-    const bridgeVideoMime = isVideoFileLike(prepared.fileMime, prepared.fileName) ? prepared.fileMime : "video/mp4";
-    const bridgeVideoName = /\.mp4$/i.test(prepared.fileName || "")
-      ? prepared.fileName
-      : `${String(prepared.fileName || asset.name || "video").replace(/\.[a-z0-9]{2,8}$/i, "")}.mp4`;
-
     const payload = {
       requestId,
-      type: "video",
+      type: payloadType,
       dataUrl,
-      mime: bridgeVideoMime,
-      fileName: bridgeVideoName,
+      mime: prepared.fileMime,
+      fileName: prepared.fileName,
       caption: typeof metadata?.caption === "string" ? metadata.caption : undefined,
       asViewOnce,
     };
 
-    console.log("[RiseZap] sendVideoViaBridge (base64 dataUrl):", {
+    console.log("[RiseZap] sendMediaViaBridge (base64 dataUrl):", {
       name: asset.name,
+      payloadType,
       fileName: payload.fileName,
       mime: payload.mime,
       dataUrlLength: dataUrl.length,
@@ -1178,11 +1212,12 @@
     });
 
     return new Promise((resolve) => {
+      const timeoutMs = payloadType === "video" ? 300000 : 120000;
       const timeoutId = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
-        showToast("Timeout no envio de vídeo via bridge", true);
+        showToast(`Timeout no envio de ${payloadType === "video" ? "vídeo" : "imagem"} via bridge`, true);
         resolve(false);
-      }, 300000);
+      }, timeoutMs);
 
       async function handler(evt) {
         const detail = evt.detail || {};
@@ -1192,13 +1227,16 @@
         clearTimeout(timeoutId);
 
         if (detail.success === true) {
-          const confirmation = await waitForOutgoingCommit(beforeSnapshot, 180000);
+          const confirmation = await waitForOutgoingCommit(beforeSnapshot, payloadType === "video" ? 180000 : 45000);
+          if (!confirmation.ok) {
+            showToast(`WhatsApp não confirmou envio da mídia (${confirmation.reason})`, true);
+          }
           resolve(confirmation.ok);
           return;
         }
 
-        console.error("[RiseZap] Video bridge failed:", detail);
-        showToast(`Falha ao enviar vídeo (${detail.errorCode || "erro"})`, true);
+        console.error("[RiseZap] Media bridge failed:", detail);
+        showToast(`Falha ao enviar mídia (${detail.errorCode || "erro"})`, true);
         resolve(false);
       }
 
@@ -1207,45 +1245,18 @@
     });
   }
 
-  async function createBridgeBlobUrl(fileUrl) {
-    if (!fileUrl) return null;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 300000);
-      try {
-        const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        return { blobUrl: URL.createObjectURL(blob), mime: blob.type || null, source: "content" };
-      } finally {
-        clearTimeout(timeout);
-      }
-    } catch (_contentErr) {
-      try {
-        const response = await chrome.runtime.sendMessage({ type: "RISEZAP_FETCH_FILE_BUFFER", url: fileUrl });
-        if (!response?.ok || !response.base64) throw new Error(response?.error || "background fetch failed");
-        const blob = base64ToBlob(response.base64, response.mime || "application/octet-stream");
-        return { blobUrl: URL.createObjectURL(blob), mime: blob.type || null, source: "background-base64" };
-      } catch {
-        return null;
-      }
-    }
-  }
-
   // ─── Unified Send Dispatch ────────────────────────────
 
   async function sendFile(asset) {
     if (asset.resolvedType === "audio") {
-      // Audio → bridge PTT (fallback attach-menu)
       return sendAudioViaBridge(asset);
     }
 
-    if (asset.resolvedType === "media" && isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || "")) {
-      // Video → attach-menu injection (same path as manual WhatsApp upload)
-      return sendFileViaAttachMenu(asset);
+    if (asset.resolvedType === "media") {
+      return sendMediaViaBridge(asset);
     }
 
-    // Images + Documents → attach-menu injection
+    // Documento permanece no caminho de anexo manual
     return sendFileViaAttachMenu(asset);
   }
 

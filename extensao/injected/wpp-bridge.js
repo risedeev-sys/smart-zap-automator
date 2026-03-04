@@ -172,16 +172,27 @@
     // waitForAck=true can cause sendFileMessage to hang indefinitely on current WA builds.
     opts.waitForAck = false;
 
+    const strategy = String(strategyOverride || "");
+
     switch (type) {
-      case "audio":
+      case "audio": {
         opts.type = "audio";
         opts.isPtt = isPtt !== false;
-        // CRITICAL: PTT MUST always use OGG/Opus mime regardless of actual file format.
-        // WhatsApp rejects PTT with audio/mpeg or other mimes.
-        opts.mimetype = "audio/ogg; codecs=opus";
-        // Do NOT pass filename for PTT — it can cause wa-js to treat it as document
-        // Do NOT pass viewOnce/forwarded — unstable for audio in wa-js
+
+        const normalizedAudioMime = String(mime || "").trim();
+        if (normalizedAudioMime) {
+          opts.mimetype = normalizedAudioMime;
+        }
+
+        // Try optional flags only on explicit strategy; fallback strategies strip them.
+        if (strategy === "audio-with-flags") {
+          if (asViewOnce) opts.isViewOnce = true;
+          if (isForwarded) opts.isForwarded = true;
+        }
+
+        // Do NOT pass filename for PTT — it can cause wa-js to treat it as document.
         break;
+      }
 
       case "image":
         opts.type = "image";
@@ -373,25 +384,35 @@
     const strategies = isVideo
       ? ["video-native"]
       : isAudio
-        ? ["audio-ptt", "audio-ptt-minimal"]
+        ? ["audio-with-flags", "audio-ptt", "audio-ptt-minimal", "audio-ptt-no-mime"]
         : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
-      const strategyOverride = undefined;
+      const strategyOverride = strategy === "audio-with-flags" ? "audio-with-flags" : undefined;
 
       let options = buildSendOptions(type, detail, isVideo, strategyOverride);
 
-      // For minimal audio retry, strip everything except core PTT fields
+      // Retry 1: strip to core PTT + optional mimetype
       if (strategy === "audio-ptt-minimal") {
         options = {
           type: "audio",
           isPtt: true,
-          mimetype: "audio/ogg; codecs=opus",
           waitForAck: false,
         };
+        if (detail?.mime) options.mimetype = detail.mime;
         log("Using minimal PTT options (retry)");
+      }
+
+      // Retry 2: strip mimetype too (WA build compatibility)
+      if (strategy === "audio-ptt-no-mime") {
+        options = {
+          type: "audio",
+          isPtt: true,
+          waitForAck: false,
+        };
+        log("Using PTT options without explicit mimetype (retry)");
       }
 
       const sendTimeoutMs = isVideo
