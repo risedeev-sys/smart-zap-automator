@@ -1,5 +1,5 @@
 // Rise Zap — Content Script (barra no WhatsApp Web)
-// Texto: envio via DOM (paste) | Arquivos: envio nativo via wa-js bridge
+// Texto: envio via DOM (paste) | Áudio: bridge wa-js (PTT) | Mídia/Doc: drag-and-drop nativo
 (function () {
   "use strict";
 
@@ -79,23 +79,6 @@
     return null;
   }
 
-  function isVideoMediaAsset(asset) {
-    if (!asset || asset.resolvedType !== "media") return false;
-
-    const mime = String(asset.mime || "").toLowerCase();
-    const storagePath = String(asset.storage_path || "").toLowerCase();
-    const name = String(asset.name || "").toLowerCase();
-    const mediaType = String(asset.metadata?.mediaType || "").toLowerCase();
-    const videoExtPattern = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
-
-    return (
-      mime.startsWith("video/") ||
-      videoExtPattern.test(storagePath) ||
-      videoExtPattern.test(name) ||
-      mediaType === "video"
-    );
-  }
-
   function getCachedAsset(type, assetId) {
     const lookups = type
       ? [{ type, rows: type === "message" ? assets.messages : type === "audio" ? assets.audios : type === "media" ? assets.medias : assets.documents }]
@@ -109,20 +92,14 @@
     for (const lookup of lookups) {
       const found = (lookup.rows || []).find((row) => row.id === assetId);
       if (found) {
-        return {
-          ...found,
-          resolvedType: lookup.type,
-          table: getTableByAssetType(lookup.type),
-        };
+        return { ...found, resolvedType: lookup.type, table: getTableByAssetType(lookup.type) };
       }
     }
-
     return null;
   }
 
   async function resolveAsset(type, assetId) {
     const normalizedType = normalizeAssetType(type);
-
     const cached = getCachedAsset(normalizedType, assetId);
     if (cached) return cached;
 
@@ -134,11 +111,8 @@
     for (const table of tablePlan) {
       const rows = await supaFetch(table, "id,name,content,storage_path,mime,bytes,metadata", `&id=eq.${assetId}`);
       if (!rows.length) continue;
-
-      const resolvedType = getAssetTypeByTable(table);
-      return { ...rows[0], resolvedType, table };
+      return { ...rows[0], resolvedType: getAssetTypeByTable(table), table };
     }
-
     return null;
   }
 
@@ -178,7 +152,7 @@
       .trim();
 
   // ─── WPP Bridge Injection ─────────────────────────────
-  // Injects wa-js library + bridge into the page context
+  // Bridge is now used ONLY for audio PTT sending
 
   function injectBridge() {
     if (document.getElementById("RZBridgeReady")) {
@@ -186,15 +160,12 @@
       return;
     }
 
-    // 1. Inject wa-js library as a classic script (sets window.WPP)
     const waJsUrl = chrome.runtime.getURL("lib/wppconnect-wa.js");
     const waJsScript = document.createElement("script");
     waJsScript.src = waJsUrl;
     waJsScript.id = "rz-wajs-script";
     waJsScript.onload = function () {
       console.log("[RiseZap] wa-js library loaded");
-
-      // 2. After wa-js is loaded, inject the bridge
       const bridgeUrl = chrome.runtime.getURL("injected/wpp-bridge.js");
       const loaderUrl = chrome.runtime.getURL("injected/loader.js");
       const loaderScript = document.createElement("script");
@@ -205,21 +176,18 @@
     };
     document.head.appendChild(waJsScript);
 
-    // Listen for bridge readiness
     window.addEventListener("risezap:bridge-ready", function () {
       bridgeReady = true;
-      console.log("[RiseZap] Bridge is ready — native sending enabled");
+      console.log("[RiseZap] Bridge is ready — audio PTT enabled");
     });
   }
 
-  // ─── Storage Bridge (chrome.storage proxy for page context) ──
+  // ─── Storage Bridge ──────────────────────────────────
 
   function setupStorageBridge() {
-    // GET request from injected script
     window.addEventListener("REQ_RISEZAP_STORE_GET", async function (evt) {
       const { requestCode, key } = evt.detail || {};
       if (!requestCode || !key) return;
-
       try {
         const result = await chrome.storage.local.get([key]);
         window.dispatchEvent(
@@ -236,7 +204,6 @@
       }
     });
 
-    // SET request from injected script
     window.addEventListener("REQ_RISEZAP_STORE_SET", async function (evt) {
       const { key, value } = evt.detail || {};
       if (!key) return;
@@ -248,7 +215,7 @@
     });
   }
 
-  // ─── Send File via WPP Bridge ─────────────────────────
+  // ─── Blob Helpers ─────────────────────────────────────
 
   function isBridgeReady() {
     return bridgeReady || !!document.getElementById("RZBridgeReady");
@@ -259,7 +226,6 @@
     const binary = atob(cleanBase64);
     const chunkSize = 8192;
     const chunks = [];
-
     for (let i = 0; i < binary.length; i += chunkSize) {
       const slice = binary.slice(i, i + chunkSize);
       const bytes = new Uint8Array(slice.length);
@@ -268,234 +234,12 @@
       }
       chunks.push(bytes);
     }
-
     return new Blob(chunks, { type: mimeType || "application/octet-stream" });
   }
 
-  async function createBridgeBlobUrl(fileUrl) {
-    if (!fileUrl) return null;
-
-    const fetchInContent = async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 300000);
-      try {
-        const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        return {
-          blobUrl: URL.createObjectURL(blob),
-          mime: blob.type || null,
-          bytes: typeof blob.size === "number" ? blob.size : null,
-          source: "content",
-        };
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
-
-    try {
-      return await fetchInContent();
-    } catch (contentErr) {
-      try {
-        const response = await chrome.runtime.sendMessage({
-          type: "RISEZAP_FETCH_FILE_BUFFER",
-          url: fileUrl,
-        });
-
-        if (!response?.ok || !response.base64) {
-          throw new Error(response?.error || "background fetch failed");
-        }
-
-        const blob = base64ToBlob(response.base64, response.mime || "application/octet-stream");
-
-        return {
-          blobUrl: URL.createObjectURL(blob),
-          mime: blob.type || null,
-          bytes: typeof blob.size === "number" ? blob.size : null,
-          source: "background-base64",
-        };
-      } catch (backgroundErr) {
-        console.warn("[RiseZap] createBridgeBlobUrl failed", {
-          contentError: contentErr?.message || String(contentErr),
-          backgroundError: backgroundErr?.message || String(backgroundErr),
-        });
-        return null;
-      }
-    }
-  }
-
-  async function sendFileViaBridge(asset) {
-    if (!asset.storage_path) {
-      showToast("Ativo sem arquivo associado", true);
-      return false;
-    }
-
-    if (!isBridgeReady()) {
-      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
-      return false;
-    }
-
-    // Get signed URL for the file
-    const signedUrl = await getSignedUrl(asset.storage_path);
-    if (!signedUrl) {
-      showToast("Erro ao gerar URL do arquivo", true);
-      return false;
-    }
-
-    // Determine send type
-    // CRITICAL: Videos MUST be sent as "document" (not "video").
-    // wa-js type:"video" tries to generate thumbnail via <video> element,
-    // which browsers throttle/block, causing sends to hang indefinitely.
-    // Sending as document with video mimetype still plays inline in WhatsApp.
-    // See: https://github.com/wppconnect-team/wa-js/issues/2681
-    let sendType;
-    const resolvedType = asset.resolvedType;
-    const isVideoAsset = isVideoMediaAsset(asset);
-
-    if (resolvedType === "audio") {
-      sendType = "audio";
-    } else if (resolvedType === "media") {
-      sendType = isVideoAsset ? "document" : "image";
-    } else if (resolvedType === "document") {
-      sendType = "document";
-    } else {
-      sendType = "auto-detect";
-    }
-
-    const normalizedFileName = (() => {
-      const base = String(asset.name || "arquivo").trim() || "arquivo";
-      if (!isVideoAsset) return base;
-      if (/\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(base)) return base;
-      return `${base}.mp4`;
-    })();
-
-    // Always prefetch file in extension context (content/background) to avoid
-    // direct cross-origin fetch in page context, which is the main source of FETCH_FAILED.
-    const bridgeBlob = await createBridgeBlobUrl(signedUrl);
-    const beforeSendSnapshot = snapshotOutgoingState();
-
-    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-
-    // Build payload
-    const payload = {
-      requestId,
-      type: sendType,
-      url: signedUrl,
-      fallbackUrl: signedUrl,
-      blobUrl: bridgeBlob?.blobUrl || undefined,
-      isPtt: resolvedType === "audio", // audio always as PTT
-      caption: undefined,
-      fileName: normalizedFileName,
-      asViewOnce: !!(asset.metadata?.singleView || asset.metadata?.single_view),
-      mime: asset.mime || bridgeBlob?.mime || undefined,
-    };
-
-    console.log("[RiseZap] sendFileViaBridge:", {
-      type: sendType,
-      isPtt: payload.isPtt,
-      name: asset.name,
-      usingBlobUrl: !!payload.blobUrl,
-      blobSource: bridgeBlob?.source || null,
-    });
-
-    // Shorter timeout to avoid funnel lock; if bridge fails/hangs we fallback to DOM upload.
-    const timeoutMs = isVideoAsset ? 180000 : 60000;
-
-    return new Promise((resolve) => {
-      const releaseBlobUrl = () => {
-        if (bridgeBlob?.blobUrl) {
-          URL.revokeObjectURL(bridgeBlob.blobUrl);
-        }
-      };
-
-      const failAndPersist = (stage, diagCode, diagMsg, strategy, normalizedSendResult) => {
-        console.error(`[RiseZap] Send failed [${diagCode}] at ${stage}:`, diagMsg);
-        showToast(`Erro [${diagCode}]: ${diagMsg}`, true);
-
-        try {
-          chrome.storage.local.set({
-            risezap_last_send_failure: {
-              assetName: asset.name,
-              assetId: asset.id,
-              sendType,
-              stage,
-              errorCode: diagCode,
-              errorMessage: diagMsg,
-              strategy: strategy || null,
-              sendMsgResult: normalizedSendResult,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        } catch {}
-
-        resolve(false);
-      };
-
-      const timeout = setTimeout(() => {
-        window.removeEventListener("risezap:result", handler);
-        releaseBlobUrl();
-        console.error("[RiseZap] Bridge global timeout", { requestId, timeoutMs, asset: asset.name });
-        failAndPersist("SEND_REQUEST", "SEND_TIMEOUT", `bridge não respondeu em ${Math.round(timeoutMs / 1000)}s`, null, null);
-      }, timeoutMs);
-
-      async function handler(evt) {
-        const detail = evt.detail || {};
-        if (detail.requestId !== requestId) return;
-
-        window.removeEventListener("risezap:result", handler);
-        clearTimeout(timeout);
-        releaseBlobUrl();
-
-        const { success, stage, errorCode, errorMessage, strategy, messageId, sendMsgResult } = detail;
-
-        console.log("[RiseZap] Bridge result:", {
-          success,
-          stage,
-          errorCode,
-          strategy,
-          messageId,
-          sendMsgResult,
-          asset: asset.name,
-        });
-
-        const normalizedSendResult =
-          typeof sendMsgResult === "string"
-            ? sendMsgResult
-            : sendMsgResult?.messageSendResult ?? null;
-
-        const hasExplicitAck = normalizedSendResult === "OK" || normalizedSendResult === 0;
-
-        if (success === true && stage === "SEND_RESULT" && hasExplicitAck) {
-          resolve(true);
-          return;
-        }
-
-        // Some WA builds omit explicit ack in wa-js return.
-        // In this case, we only accept success if a new outgoing message is observed in chat.
-        if (success === true && stage === "SEND_RESULT" && messageId) {
-          const domConfirmation = await waitForOutgoingCommit(beforeSendSnapshot, isVideoAsset ? 90000 : 45000);
-          if (domConfirmation.ok) {
-            console.warn("[RiseZap] Bridge ack missing, but DOM confirmed outgoing message", {
-              messageId,
-              statusIcon: domConfirmation.statusIcon,
-            });
-            resolve(true);
-            return;
-          }
-        }
-
-        const diagCode = errorCode || (normalizedSendResult ? `SEND_RESULT_${normalizedSendResult}` : "SEND_RESULT_UNCONFIRMED");
-        const diagMsg = errorMessage || "envio não confirmado pelo WhatsApp";
-        failAndPersist(stage || "SEND_RESULT", diagCode, diagMsg, strategy, normalizedSendResult);
-      }
-
-      window.addEventListener("risezap:result", handler);
-      window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
-    });
-  }
-
   async function fetchAssetBlob(fileUrl, fallbackMime) {
-    const fetchInContent = async () => {
+    // Try content script fetch first (same-origin or CORS-enabled)
+    try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 300000);
       try {
@@ -505,25 +249,20 @@
       } finally {
         clearTimeout(timeout);
       }
-    };
-
-    try {
-      return await fetchInContent();
     } catch (contentErr) {
+      // Fallback to background script (bypasses CORS)
       const response = await chrome.runtime.sendMessage({
         type: "RISEZAP_FETCH_FILE_BUFFER",
         url: fileUrl,
       });
-
       if (!response?.ok || !response.base64) {
         throw new Error(response?.error || contentErr?.message || "asset fetch failed");
       }
-
       return base64ToBlob(response.base64, response.mime || fallbackMime || "application/octet-stream");
     }
   }
 
-  function resolveUploadFileName(asset, blobMime) {
+  function resolveFileName(asset, blobMime) {
     const base = String(asset?.name || "arquivo").trim() || "arquivo";
     if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
 
@@ -536,129 +275,436 @@
     if (mime.includes("audio/ogg")) return `${base}.ogg`;
     if (mime.includes("audio/mpeg")) return `${base}.mp3`;
     if (mime.includes("application/pdf")) return `${base}.pdf`;
-
     return `${base}.bin`;
   }
 
-  function pickAttachmentInput(inputs, preferMediaInput) {
-    const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
-    const documentInput = inputs.find((input) => {
-      const accept = String(input.accept || "").toLowerCase();
-      if (!accept || accept === "*/*") return true;
-      return accept.includes("application") || accept.includes("audio") || accept.includes("text");
-    });
+  // ─── Outgoing Message Detection ───────────────────────
 
-    return preferMediaInput
-      ? mediaInput || documentInput || inputs[0]
-      : documentInput || mediaInput || inputs[0];
+  function listOutgoingMessageNodes() {
+    const scope = document.querySelector("#main") || document;
+    const selectors = [
+      "div.message-out",
+      '[data-testid="msg-out-container"]',
+      '[data-testid="outgoing-message"]',
+      '[data-testid="outgoing-msg"]',
+    ];
+    for (const selector of selectors) {
+      const nodes = Array.from(scope.querySelectorAll(selector));
+      if (nodes.length) return nodes;
+    }
+    return [];
   }
 
-  async function sendFileViaDomUpload(asset) {
-    if (!asset?.storage_path) return false;
+  function getMessageNodeId(node) {
+    if (!node) return null;
+    const holder = node.matches("[data-id]") ? node : node.querySelector("[data-id]");
+    return holder?.getAttribute("data-id") || holder?.id || null;
+  }
 
-    try {
-      const signedUrl = await getSignedUrl(asset.storage_path);
-      if (!signedUrl) {
-        showToast("Erro ao gerar URL do arquivo", true);
-        return false;
+  function snapshotOutgoingState() {
+    const nodes = listOutgoingMessageNodes();
+    const lastNode = nodes[nodes.length - 1] || null;
+    return { count: nodes.length, lastMessageId: getMessageNodeId(lastNode) };
+  }
+
+  function readOutgoingStatus(node) {
+    if (!node) return { accepted: false, hasError: false, statusIcon: null };
+    const statusEl = node.querySelector(
+      '[data-icon="msg-time"], [data-icon="msg-check"], [data-icon="msg-dblcheck"], [data-icon="msg-dblcheck-ack"], [data-icon="msg-error"]'
+    );
+    const statusIcon = statusEl?.getAttribute("data-icon") || null;
+    const hasError = statusIcon === "msg-error" || !!node.querySelector('[data-icon="msg-error"], [data-testid="msg-error"]');
+    const accepted = !hasError && !!statusIcon && statusIcon !== "msg-error";
+    return { accepted, hasError, statusIcon };
+  }
+
+  async function waitForOutgoingCommit(previousSnapshot, timeoutMs = 45000) {
+    const baseline = previousSnapshot || { count: 0, lastMessageId: null };
+    const startedAt = Date.now();
+    let candidateKey = null;
+    let candidateSeenAt = 0;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const nodes = listOutgoingMessageNodes();
+      const lastNode = nodes[nodes.length - 1] || null;
+      const currentCount = nodes.length;
+      const currentId = getMessageNodeId(lastNode);
+
+      const hasNewMessage =
+        currentCount > baseline.count ||
+        (!!currentId && currentId !== baseline.lastMessageId);
+
+      if (hasNewMessage && lastNode) {
+        const key = `${currentCount}:${currentId || "no-id"}`;
+        if (key !== candidateKey) {
+          candidateKey = key;
+          candidateSeenAt = Date.now();
+        }
+
+        const status = readOutgoingStatus(lastNode);
+        if (status.hasError) return { ok: false, reason: "msg-error", statusIcon: status.statusIcon };
+        if (status.accepted) return { ok: true, reason: null, statusIcon: status.statusIcon };
+
+        // Accept if node is stable for 1.5s even without status icon
+        if (Date.now() - candidateSeenAt >= 1500) {
+          return { ok: true, reason: null, statusIcon: null };
+        }
       }
 
-      const blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
-      const fileName = resolveUploadFileName(asset, blob.type);
-      const fileMime = asset.mime || blob.type || "application/octet-stream";
-      const file = new File([blob], fileName, { type: fileMime });
-      const beforeSendSnapshot = snapshotOutgoingState();
+      await sleep(250);
+    }
 
-      const attachAnchor =
-        document.querySelector('button[title="Attach"]') ||
-        document.querySelector('button[aria-label="Attach"]') ||
-        document.querySelector('button[aria-label="Anexar"]') ||
-        document.querySelector('span[data-icon="plus-rounded"]') ||
-        document.querySelector('span[data-icon="clip"]');
+    return { ok: false, reason: "timeout", statusIcon: null };
+  }
 
-      if (attachAnchor) {
-        const attachBtn = attachAnchor.closest("button") || attachAnchor;
-        attachBtn.click();
-        await sleep(180);
-      }
+  // ─── DOM Element Helpers ──────────────────────────────
 
-      const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
-      if (!fileInputs.length) {
-        showToast("Entrada de upload não encontrada no WhatsApp", true);
-        return false;
-      }
+  function isElementVisible(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  }
 
-      const preferMediaInput = asset.resolvedType === "media";
-      const targetInput = pickAttachmentInput(fileInputs, preferMediaInput);
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
+  function findVisibleSendButton(scope = document) {
+    const root = scope || document;
+    const candidates = [];
+    const seen = new Set();
 
-      try {
-        targetInput.files = dataTransfer.files;
-      } catch {
-        Object.defineProperty(targetInput, "files", {
-          value: dataTransfer.files,
-          configurable: true,
-        });
-      }
+    const pushCandidate = (el) => {
+      if (!el) return;
+      const button = el.closest("button") || el;
+      if (!button || seen.has(button)) return;
+      seen.add(button);
+      candidates.push(button);
+    };
 
-      targetInput.dispatchEvent(new Event("input", { bubbles: true }));
-      targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelectorAll('button[aria-label="Send"], button[aria-label="Enviar"]').forEach(pushCandidate);
+    root.querySelectorAll('span[data-icon="send"]').forEach(pushCandidate);
 
-      const dialogRoot = targetInput.closest('div[role="dialog"]') || document;
-      let sendBtn = findVisibleSendButton(dialogRoot);
+    for (const candidate of candidates) {
+      if (isElementVisible(candidate)) return candidate;
+    }
+    return null;
+  }
 
-      if (!sendBtn) {
-        try {
-          await sleep(250);
-          sendBtn = findVisibleSendButton(document);
-        } catch {}
-      }
-
-      if (!sendBtn) {
-        showToast("Prévia não abriu para envio", true);
-        return false;
-      }
-
-      const sendBtnEl = sendBtn.closest("button") || sendBtn;
-      sendBtnEl.click();
-
-      const confirmation = await waitForOutgoingCommit(beforeSendSnapshot, isVideoMediaAsset(asset) ? 120000 : 45000);
-      if (!confirmation.ok) {
-        showToast(`WhatsApp não confirmou envio (${confirmation.reason})`, true);
-        return false;
-      }
-
-      console.log("[RiseZap] DOM upload fallback sent", {
-        assetId: asset.id,
-        assetName: asset.name,
-        mime: fileMime,
-        statusIcon: confirmation.statusIcon,
+  function waitForElement(selector, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+      const observer = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) { observer.disconnect(); resolve(found); }
       });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => { observer.disconnect(); reject(new Error(`waitForElement timeout: ${selector}`)); }, timeout);
+    });
+  }
 
-      return true;
-    } catch (err) {
-      console.error("[RiseZap] sendFileViaDomUpload error", err);
-      showToast(`Fallback DOM falhou: ${err?.message || "erro desconhecido"}`, true);
+  // ═══════════════════════════════════════════════════════
+  // DRAG-AND-DROP MEDIA SENDING (PRIMARY METHOD)
+  // ═══════════════════════════════════════════════════════
+  //
+  // Strategy: Simulate a native file drop onto the WhatsApp Web
+  // chat panel. WhatsApp Web has a built-in drop handler that
+  // opens the media preview dialog, then we click Send.
+  //
+  // This is the most reliable method because:
+  // 1. It uses the exact same code path as a real user drag-and-drop
+  // 2. No wa-js dependencies (avoids sendFileMessage bugs)
+  // 3. Works for ALL file types (images, videos, documents)
+  // 4. WhatsApp handles all thumbnail generation, encoding, etc.
+  // ═══════════════════════════════════════════════════════
+
+  function findDropTarget() {
+    // WhatsApp Web's drop target is the main chat pane
+    // Try multiple selectors for robustness across WA Web versions
+    const selectors = [
+      '#main',                                    // Main chat panel
+      '[data-testid="conversation-panel-body"]',  // Conversation body
+      '#main div.copyable-area',                  // Copyable area inside main
+      '#main header + div',                       // Content area after header
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el && isElementVisible(el)) return el;
+    }
+
+    return document.querySelector('#main') || null;
+  }
+
+  function createDragEvent(type, file) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    return new DragEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+  }
+
+  async function waitForMediaPreviewDialog(timeoutMs = 8000) {
+    // After a drop, WhatsApp Web opens a media preview dialog.
+    // We need to wait for it and then find the send button inside it.
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      // Look for the send button that appears in the preview dialog
+      const sendBtn = findVisibleSendButton(document);
+      if (sendBtn) {
+        // Make sure it's the preview dialog send button, not the chat input send button.
+        // The preview dialog send button is typically inside a specific container.
+        // We check if there's a media preview visible (canvas, img, video in a dialog-like container)
+        const previewIndicators = document.querySelectorAll(
+          '[data-testid="media-canvas"], ' +
+          '[data-testid="image-preview"], ' +
+          '[data-testid="media-editor"], ' +
+          'div[tabindex="-1"] canvas, ' +
+          'div[tabindex="-1"] video, ' +
+          'div.overlay canvas, ' +
+          '[role="dialog"] canvas, ' +
+          '[role="dialog"] video, ' +
+          // Document preview often shows the file name
+          '[data-testid="document-preview"]'
+        );
+
+        // Also look for the media/document preview panel that WA shows
+        const overlayPanels = document.querySelectorAll(
+          'div._3kc4J, div.overlay, [data-animate-modal-popup="true"]'
+        );
+
+        if (previewIndicators.length > 0 || overlayPanels.length > 0) {
+          return sendBtn;
+        }
+
+        // Fallback: if there's a visible send button and the chat input is NOT focused,
+        // it's likely the preview dialog button
+        const chatInput = document.querySelector('#main div[contenteditable="true"][data-tab="10"]');
+        const chatInputFocused = chatInput && document.activeElement === chatInput;
+        if (!chatInputFocused) {
+          return sendBtn;
+        }
+      }
+
+      await sleep(300);
+    }
+
+    return null;
+  }
+
+  async function sendFileViaDragDrop(asset) {
+    if (!asset?.storage_path) {
+      showToast("Ativo sem arquivo associado", true);
       return false;
+    }
+
+    const dropTarget = findDropTarget();
+    if (!dropTarget) {
+      showToast("Abra um chat para enviar", true);
+      return false;
+    }
+
+    console.log("[RiseZap] sendFileViaDragDrop start:", {
+      assetId: asset.id,
+      assetName: asset.name,
+      resolvedType: asset.resolvedType,
+      mime: asset.mime,
+    });
+
+    // 1. Get signed URL
+    const signedUrl = await getSignedUrl(asset.storage_path);
+    if (!signedUrl) {
+      showToast("Erro ao gerar URL do arquivo", true);
+      return false;
+    }
+
+    // 2. Fetch the file as blob
+    let blob;
+    try {
+      blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
+    } catch (err) {
+      showToast(`Erro ao baixar arquivo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    // 3. Create File object
+    const fileName = resolveFileName(asset, blob.type);
+    const fileMime = asset.mime || blob.type || "application/octet-stream";
+    const file = new File([blob], fileName, { type: fileMime });
+
+    console.log("[RiseZap] File prepared for drop:", {
+      fileName,
+      fileMime,
+      fileSize: file.size,
+    });
+
+    // 4. Snapshot outgoing state BEFORE drop
+    const beforeSnapshot = snapshotOutgoingState();
+
+    // 5. Simulate drag-and-drop sequence
+    dropTarget.dispatchEvent(createDragEvent("dragenter", file));
+    await sleep(100);
+    dropTarget.dispatchEvent(createDragEvent("dragover", file));
+    await sleep(100);
+    dropTarget.dispatchEvent(createDragEvent("drop", file));
+
+    console.log("[RiseZap] Drop events dispatched, waiting for preview dialog...");
+
+    // 6. Wait for WhatsApp to show the preview dialog
+    const sendBtn = await waitForMediaPreviewDialog(10000);
+
+    if (!sendBtn) {
+      // Preview didn't open — WhatsApp may not have accepted the drop.
+      // This can happen if no chat is open or the drop target was wrong.
+      showToast("WhatsApp não abriu a prévia do arquivo", true);
+      console.error("[RiseZap] Preview dialog did not open after drop");
+
+      // Try to dismiss any partial overlay
+      const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+      document.dispatchEvent(escEvent);
+
+      return false;
+    }
+
+    console.log("[RiseZap] Preview dialog detected, clicking send...");
+
+    // 7. Click the send button
+    const sendBtnEl = sendBtn.closest("button") || sendBtn;
+    sendBtnEl.click();
+
+    // 8. Wait for the message to appear in chat
+    const isVideo = (fileMime || "").startsWith("video/");
+    const confirmTimeoutMs = isVideo ? 120000 : 45000;
+    const confirmation = await waitForOutgoingCommit(beforeSnapshot, confirmTimeoutMs);
+
+    if (!confirmation.ok) {
+      showToast(`WhatsApp não confirmou envio (${confirmation.reason})`, true);
+      console.error("[RiseZap] Outgoing commit not confirmed:", confirmation);
+      return false;
+    }
+
+    console.log("[RiseZap] sendFileViaDragDrop SUCCESS:", {
+      assetId: asset.id,
+      assetName: asset.name,
+      statusIcon: confirmation.statusIcon,
+    });
+
+    return true;
+  }
+
+  // ─── Send Audio via Bridge (PTT only) ─────────────────
+
+  async function sendAudioViaBridge(asset) {
+    if (!asset.storage_path) {
+      showToast("Áudio sem arquivo associado", true);
+      return false;
+    }
+
+    if (!isBridgeReady()) {
+      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
+      return false;
+    }
+
+    const signedUrl = await getSignedUrl(asset.storage_path);
+    if (!signedUrl) {
+      showToast("Erro ao gerar URL do áudio", true);
+      return false;
+    }
+
+    // Prefetch in extension context to avoid CORS in page context
+    const blobResult = await createBridgeBlobUrl(signedUrl);
+    const beforeSnapshot = snapshotOutgoingState();
+    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    const payload = {
+      requestId,
+      type: "audio",
+      url: signedUrl,
+      blobUrl: blobResult?.blobUrl || undefined,
+      isPtt: true,
+      mime: asset.mime || "audio/ogg; codecs=opus",
+      fileName: asset.name || "audio.ogg",
+    };
+
+    console.log("[RiseZap] sendAudioViaBridge:", { name: asset.name, usingBlobUrl: !!payload.blobUrl });
+
+    return new Promise((resolve) => {
+      const releaseBlobUrl = () => {
+        if (blobResult?.blobUrl) URL.revokeObjectURL(blobResult.blobUrl);
+      };
+
+      const timeoutId = setTimeout(() => {
+        window.removeEventListener("risezap:result", handler);
+        releaseBlobUrl();
+        console.error("[RiseZap] Audio bridge timeout");
+        showToast("Timeout ao enviar áudio via bridge", true);
+        resolve(false);
+      }, 90000);
+
+      async function handler(evt) {
+        const detail = evt.detail || {};
+        if (detail.requestId !== requestId) return;
+
+        window.removeEventListener("risezap:result", handler);
+        clearTimeout(timeoutId);
+        releaseBlobUrl();
+
+        if (detail.success === true) {
+          resolve(true);
+          return;
+        }
+
+        // Bridge failed — try drag-and-drop as fallback for audio too
+        console.warn("[RiseZap] Audio bridge failed, trying drag-and-drop fallback:", detail.errorMessage);
+        showToast("Bridge falhou, tentando envio alternativo...", false, true);
+        const ok = await sendFileViaDragDrop(asset);
+        resolve(ok);
+      }
+
+      window.addEventListener("risezap:result", handler);
+      window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
+    });
+  }
+
+  async function createBridgeBlobUrl(fileUrl) {
+    if (!fileUrl) return null;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 300000);
+      try {
+        const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        return { blobUrl: URL.createObjectURL(blob), mime: blob.type || null, source: "content" };
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (contentErr) {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "RISEZAP_FETCH_FILE_BUFFER", url: fileUrl });
+        if (!response?.ok || !response.base64) throw new Error(response?.error || "background fetch failed");
+        const blob = base64ToBlob(response.base64, response.mime || "application/octet-stream");
+        return { blobUrl: URL.createObjectURL(blob), mime: blob.type || null, source: "background-base64" };
+      } catch {
+        return null;
+      }
     }
   }
 
-  async function sendFileWithFallback(asset) {
-    const nativeOk = await sendFileViaBridge(asset);
-    if (nativeOk) return true;
+  // ─── Unified Send Dispatch ────────────────────────────
 
-    console.warn("[RiseZap] Native bridge failed, trying DOM fallback", {
-      assetId: asset?.id,
-      assetName: asset?.name,
-      resolvedType: asset?.resolvedType,
-    });
-
-    showToast("Bridge falhou, tentando envio alternativo...", false, true);
-    return await sendFileViaDomUpload(asset);
+  async function sendFile(asset) {
+    if (asset.resolvedType === "audio") {
+      // Audio → bridge (PTT) with drag-and-drop fallback
+      return sendAudioViaBridge(asset);
+    }
+    // Images, Videos, Documents → drag-and-drop (primary and only method)
+    return sendFileViaDragDrop(asset);
   }
 
-  // ─── Send Text via DOM (only text stays DOM-based) ────
+  // ─── Send Text via DOM (paste) ────────────────────────
 
   async function sendTextViaDom(text) {
     try {
@@ -689,15 +735,11 @@
 
       await sleep(500);
 
-      const beforeSendSnapshot = snapshotOutgoingState();
+      const beforeSnapshot = snapshotOutgoingState();
       let sendBtn = findVisibleSendButton(document);
-
       if (!sendBtn) {
-        try {
-          sendBtn = await waitForElement('span[data-icon="send"]', 3000);
-        } catch {}
+        try { sendBtn = await waitForElement('span[data-icon="send"]', 3000); } catch {}
       }
-
       if (!sendBtn) {
         showToast("Botão de enviar não encontrado", true);
         return false;
@@ -706,7 +748,7 @@
       const sendBtnEl = sendBtn.closest("button") || sendBtn;
       sendBtnEl.click();
 
-      const confirmation = await waitForOutgoingCommit(beforeSendSnapshot, 45000);
+      const confirmation = await waitForOutgoingCommit(beforeSnapshot, 45000);
       if (!confirmation.ok) {
         showToast(`Texto não confirmado pelo WhatsApp (${confirmation.reason})`, true);
         return false;
@@ -718,149 +760,6 @@
       showToast("Erro ao enviar texto", true);
       return false;
     }
-  }
-
-  function waitForElement(selector, timeout = 5000) {
-    return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
-
-      const observer = new MutationObserver(() => {
-        const found = document.querySelector(selector);
-        if (found) {
-          observer.disconnect();
-          resolve(found);
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      setTimeout(() => {
-        observer.disconnect();
-        reject(new Error(`waitForElement timeout: ${selector}`));
-      }, timeout);
-    });
-  }
-
-  function isElementVisible(el) {
-    if (!el || !(el instanceof HTMLElement)) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-  }
-
-  function findVisibleSendButton(scope = document) {
-    const root = scope || document;
-    const candidates = [];
-    const seen = new Set();
-
-    const pushCandidate = (el) => {
-      if (!el) return;
-      const button = el.closest("button") || el;
-      if (!button || seen.has(button)) return;
-      seen.add(button);
-      candidates.push(button);
-    };
-
-    root.querySelectorAll('button[aria-label="Send"], button[aria-label="Enviar"]').forEach(pushCandidate);
-    root.querySelectorAll('span[data-icon="send"]').forEach(pushCandidate);
-
-    for (const candidate of candidates) {
-      if (isElementVisible(candidate)) return candidate;
-    }
-
-    return null;
-  }
-
-  function listOutgoingMessageNodes() {
-    const scope = document.querySelector("#main") || document;
-    const selectors = [
-      "div.message-out",
-      '[data-testid="msg-out-container"]',
-      '[data-testid="outgoing-message"]',
-      '[data-testid="outgoing-msg"]',
-    ];
-
-    for (const selector of selectors) {
-      const nodes = Array.from(scope.querySelectorAll(selector));
-      if (nodes.length) return nodes;
-    }
-
-    return [];
-  }
-
-  function getMessageNodeId(node) {
-    if (!node) return null;
-    const holder = node.matches("[data-id]") ? node : node.querySelector("[data-id]");
-    return holder?.getAttribute("data-id") || holder?.id || null;
-  }
-
-  function snapshotOutgoingState() {
-    const nodes = listOutgoingMessageNodes();
-    const lastNode = nodes[nodes.length - 1] || null;
-    return {
-      count: nodes.length,
-      lastMessageId: getMessageNodeId(lastNode),
-    };
-  }
-
-  function readOutgoingStatus(node) {
-    if (!node) {
-      return { accepted: false, hasError: false, statusIcon: null };
-    }
-
-    const statusEl = node.querySelector(
-      '[data-icon="msg-time"], [data-icon="msg-check"], [data-icon="msg-dblcheck"], [data-icon="msg-dblcheck-ack"], [data-icon="msg-error"]'
-    );
-    const statusIcon = statusEl?.getAttribute("data-icon") || null;
-    const hasError = statusIcon === "msg-error" || !!node.querySelector('[data-icon="msg-error"], [data-testid="msg-error"]');
-    const accepted = !hasError && !!statusIcon && statusIcon !== "msg-error";
-
-    return { accepted, hasError, statusIcon };
-  }
-
-  async function waitForOutgoingCommit(previousSnapshot, timeoutMs = 45000) {
-    const baseline = previousSnapshot || { count: 0, lastMessageId: null };
-    const startedAt = Date.now();
-    let candidateKey = null;
-    let candidateSeenAt = 0;
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const nodes = listOutgoingMessageNodes();
-      const lastNode = nodes[nodes.length - 1] || null;
-      const currentCount = nodes.length;
-      const currentId = getMessageNodeId(lastNode);
-
-      const hasNewMessage =
-        currentCount > baseline.count ||
-        (!!currentId && currentId !== baseline.lastMessageId);
-
-      if (hasNewMessage && lastNode) {
-        const key = `${currentCount}:${currentId || "no-id"}`;
-        if (key !== candidateKey) {
-          candidateKey = key;
-          candidateSeenAt = Date.now();
-        }
-
-        const status = readOutgoingStatus(lastNode);
-        if (status.hasError) {
-          return { ok: false, reason: "msg-error", statusIcon: status.statusIcon };
-        }
-
-        if (status.accepted) {
-          return { ok: true, reason: null, statusIcon: status.statusIcon };
-        }
-
-        // Some builds delay status icon rendering. If the new outgoing node is stable,
-        // accept it as a committed send.
-        if (Date.now() - candidateSeenAt >= 1500) {
-          return { ok: true, reason: null, statusIcon: null };
-        }
-      }
-
-      await sleep(250);
-    }
-
-    return { ok: false, reason: "timeout", statusIcon: null };
   }
 
   // ─── Send Funnel (sequential) ─────────────────────────
@@ -903,7 +802,6 @@
         }
 
         const item = items[i];
-
         const delayMs = ((item.delay_min || 0) * 60 + (item.delay_sec || 0)) * 1000;
         if (delayMs > 0) {
           console.log(`[RiseZap] Funnel delay: ${delayMs / 1000}s before item ${i + 1}`);
@@ -917,16 +815,13 @@
           return false;
         }
 
-        let ok = false;
-
         showToast(`⏳ Funil "${funnelName}" — item ${i + 1}/${items.length}: ${asset.name || asset.resolvedType}`, false, true);
 
+        let ok = false;
         if (asset.resolvedType === "message") {
-          // Text stays DOM-based
           ok = await sendTextViaDom(asset.content || asset.name);
         } else {
-          // Audio, Media, Document → native bridge with DOM fallback
-          ok = await sendFileWithFallback(asset);
+          ok = await sendFile(asset);
         }
 
         if (!ok) {
@@ -938,18 +833,13 @@
         }
 
         console.log(`[RiseZap] Funnel item ${i + 1}/${items.length} sent: ${asset.resolvedType}`);
-
-        if (i < items.length - 1) {
-          await sleep(800);
-        }
+        if (i < items.length - 1) await sleep(800);
       }
 
       showToast(`Funil "${funnelName}" concluído! ✓`);
       return true;
     } finally {
-      if (activeFunnelRunId === runId) {
-        activeFunnelRunId = null;
-      }
+      if (activeFunnelRunId === runId) activeFunnelRunId = null;
     }
   }
 
@@ -970,9 +860,7 @@
       boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
     });
     document.body.appendChild(t);
-    if (!persistent) {
-      setTimeout(() => t.remove(), 4000);
-    }
+    if (!persistent) setTimeout(() => t.remove(), 4000);
   }
 
   function dismissToast() {
@@ -1021,11 +909,8 @@
     overlay.querySelector(".rz-btn-send").addEventListener("click", async () => {
       if (globalSending) return;
       globalSending = true;
-
-      // Instant feedback: close modal + show toast immediately
       closeModal();
       showToast("⏳ Enviando...", false, true);
-
       try {
         const ok = await onSend();
         if (ok) {
@@ -1068,7 +953,7 @@
 
     bar.innerHTML = ``;
 
-    // Funis — roxo
+    // Funis
     assets.funnels.forEach((f) => {
       const btn = makeBtn("🎯", f.name, "rz-funnel");
       btn.addEventListener("click", () => {
@@ -1079,7 +964,7 @@
       bar.appendChild(btn);
     });
 
-    // Mensagens — verde (DOM)
+    // Mensagens
     assets.messages.forEach((m) => {
       const btn = makeBtn("💬", m.name, "rz-message");
       btn.addEventListener("click", () => {
@@ -1090,47 +975,38 @@
       bar.appendChild(btn);
     });
 
-    // Áudios — ciano (bridge + fallback DOM)
+    // Áudios (bridge PTT + drag-drop fallback)
     assets.audios.forEach((a) => {
       const btn = makeBtn("🎙", a.name, "rz-audio");
       btn.addEventListener("click", () => {
         if (!a.storage_path) return showToast("Áudio sem arquivo", true);
         showPreview("Enviar Áudio", `🎙 ${a.name}`, async () => {
-          return sendFileWithFallback({
-            ...a,
-            resolvedType: "audio",
-          });
+          return sendFile({ ...a, resolvedType: "audio" });
         });
       });
       bar.appendChild(btn);
     });
 
-    // Mídias — amarelo (bridge + fallback DOM)
+    // Mídias (drag-and-drop)
     assets.medias.forEach((m) => {
       const btn = makeBtn("🖼", m.name, "rz-media");
       btn.addEventListener("click", () => {
         if (!m.storage_path) return showToast("Mídia sem arquivo", true);
         const isVideo = (m.mime || "").startsWith("video");
         showPreview("Enviar Mídia", `${isVideo ? "🎬" : "🖼"} ${m.name}`, async () => {
-          return sendFileWithFallback({
-            ...m,
-            resolvedType: "media",
-          });
+          return sendFile({ ...m, resolvedType: "media" });
         });
       });
       bar.appendChild(btn);
     });
 
-    // Documentos — rosa/magenta (bridge + fallback DOM)
+    // Documentos (drag-and-drop)
     assets.documents.forEach((d) => {
       const btn = makeBtn("📄", d.name, "rz-document");
       btn.addEventListener("click", () => {
         if (!d.storage_path) return showToast("Documento sem arquivo", true);
         showPreview("Enviar Documento", `📄 ${d.name}`, async () => {
-          return sendFileWithFallback({
-            ...d,
-            resolvedType: "document",
-          });
+          return sendFile({ ...d, resolvedType: "document" });
         });
       });
       bar.appendChild(btn);
@@ -1138,7 +1014,6 @@
 
     document.body.appendChild(bar);
 
-    // Push WhatsApp UI up so bar doesn't cover the chat
     const barH = bar.offsetHeight || 40;
     const appEl = document.getElementById("app");
     if (appEl) {
@@ -1146,16 +1021,13 @@
       appEl.style.overflow = "hidden";
     }
 
-    // Position bar starting from the chat panel divider (right of conversation list)
     function positionBar() {
       const sidePanel = document.getElementById("side") ||
         document.querySelector("[data-side]") ||
         document.querySelector("._pane-list") ||
         document.querySelector('[data-testid="chat-list"]');
-      
       if (sidePanel) {
-        const sidePanelRight = sidePanel.getBoundingClientRect().right;
-        bar.style.left = sidePanelRight + "px";
+        bar.style.left = sidePanel.getBoundingClientRect().right + "px";
       } else {
         bar.style.left = "30%";
       }
@@ -1165,7 +1037,6 @@
     window.addEventListener("resize", positionBar);
   }
 
-  // Map CSS class to emblem image filename
   const EMBLEM_MAP = {
     "rz-audio": "emblem-audio.png",
     "rz-media": "emblem-media.png",
@@ -1177,7 +1048,6 @@
   function makeBtn(icon, label, cls) {
     const btn = document.createElement("button");
     btn.className = `rz-btn ${cls}`;
-    
     const emblemFile = EMBLEM_MAP[cls];
     if (emblemFile) {
       const imgUrl = chrome.runtime.getURL(`icons/${emblemFile}`);
@@ -1192,20 +1062,12 @@
 
   async function init() {
     await loadAuth();
-
-    // Inject wa-js bridge into page context
-    injectBridge();
+    injectBridge();      // Still needed for audio PTT
     setupStorageBridge();
-
-    if (token) {
-      await loadAssets();
-    }
+    if (token) await loadAssets();
     createBar();
 
-    // Update bridge status indicator when bridge becomes ready
-    window.addEventListener("risezap:bridge-ready", () => {
-      createBar(); // Rebuild bar to show green status
-    });
+    window.addEventListener("risezap:bridge-ready", () => createBar());
 
     chrome.storage.onChanged.addListener(async (changes) => {
       if (changes.risezap_access_token) {
