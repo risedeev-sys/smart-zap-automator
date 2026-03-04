@@ -188,19 +188,18 @@
         break;
 
       case "video":
+        opts.type = "video";
+        opts.filename = fileName || "video.mp4";
+        opts.caption = caption || undefined;
+        opts.mimetype = mime || "video/mp4";
+        if (asViewOnce) opts.isViewOnce = true;
+        break;
+
       case "document":
-        // Videos always sent as document to avoid wa-js thumbnail hang
         opts.type = "document";
-        opts.filename = fileName || (isVideo ? "video.mp4" : "file");
-        opts.caption = (type === "video" || isVideo) ? (caption || undefined) : undefined;
-
-        if (strategyOverride === "octet-stream") {
-          opts.mimetype = "application/octet-stream";
-        } else {
-          opts.mimetype = mime || (isVideo ? "video/mp4" : undefined);
-        }
-
-        if (isVideo && asViewOnce) opts.isViewOnce = true;
+        opts.filename = fileName || "file";
+        opts.caption = caption || undefined;
+        opts.mimetype = mime || undefined;
         break;
 
       default:
@@ -351,25 +350,22 @@
 
     log("PREPARE_CONTENT", { isVideo, originalType: type });
 
-    const sendableContent = ensureSendableContent(content, type === "video" ? "document" : type, fileName, mime);
+    const sendableContent = ensureSendableContent(content, type, fileName, mime);
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
-    // For video: cascade strategy prioritizing reliability first
 
     const strategies = isVideo
-      ? ["octet-stream", "video-document"]
+      ? ["video-native"]
       : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
-      const strategyOverride = strategy === "octet-stream" ? "octet-stream" : undefined;
+      const strategyOverride = undefined;
 
       const options = buildSendOptions(type, detail, isVideo, strategyOverride);
       const sendTimeoutMs = isVideo
-        ? strategy === "video-document"
-          ? TIMEOUT.SEND_VIDEO_FAST_PATH
-          : TIMEOUT.SEND_VIDEO
+        ? TIMEOUT.SEND_VIDEO
         : TIMEOUT.SEND_NORMAL;
 
       log(`SEND_REQUEST strategy=${strategy}`, {
