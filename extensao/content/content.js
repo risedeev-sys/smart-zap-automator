@@ -241,6 +241,15 @@
     return new Blob(chunks, { type: mimeType || "application/octet-stream" });
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("FileReader failed"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
   async function fetchAssetBlob(fileUrl, fallbackMime) {
     // Try content script fetch first (same-origin or CORS-enabled)
     try {
