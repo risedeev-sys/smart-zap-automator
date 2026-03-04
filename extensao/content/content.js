@@ -151,8 +151,12 @@
       .toLowerCase()
       .trim();
 
+  function parseBooleanFlag(value) {
+    return value === true || value === "true" || value === 1 || value === "1";
+  }
+
   // ─── WPP Bridge Injection ─────────────────────────────
-  // Bridge is now used ONLY for audio PTT sending
+  // Bridge is used for audio PTT and native video sending
 
   function injectBridge() {
     if (document.getElementById("RZBridgeReady")) {
