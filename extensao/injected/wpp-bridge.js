@@ -367,16 +367,25 @@
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
 
+    // For audio with viewOnce/forwarded flags, add a retry without those flags
+    const hasAudioFlags = type === "audio" && (detail.asViewOnce || detail.isForwarded);
     const strategies = isVideo
       ? ["video-native"]
-      : ["default"];
+      : hasAudioFlags
+        ? ["default", "audio-no-flags"]
+        : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
       const strategyOverride = undefined;
 
-      const options = buildSendOptions(type, detail, isVideo, strategyOverride);
+      // On retry strategy, strip problematic flags
+      const effectiveDetail = strategy === "audio-no-flags"
+        ? { ...detail, asViewOnce: false, isForwarded: false }
+        : detail;
+
+      const options = buildSendOptions(type, effectiveDetail, isVideo, strategyOverride);
       const sendTimeoutMs = isVideo
         ? TIMEOUT.SEND_VIDEO
         : TIMEOUT.SEND_NORMAL;
