@@ -156,7 +156,7 @@
   }
 
   // ─── WPP Bridge Injection ─────────────────────────────
-  // Bridge is used for audio PTT and native video sending
+  // Bridge is used for audio PTT
 
   function injectBridge() {
     if (document.getElementById("RZBridgeReady")) {
@@ -410,9 +410,26 @@
     }
 
     if (isVideo) {
-      fileMime = "video/mp4";
-      if (!fileName.endsWith(".mp4")) {
-        fileName = fileName.replace(/\.[a-z0-9]{2,8}$/i, "") + ".mp4";
+      const normalizedVideoMime = (() => {
+        const candidates = [headerMime, fileMime, storagePathMime, fileNameMime]
+          .map((value) => String(value || "").toLowerCase())
+          .filter((value) => value.startsWith("video/"));
+        return candidates[0] || "video/mp4";
+      })();
+
+      const extByMime = {
+        "video/mp4": "mp4",
+        "video/webm": "webm",
+        "video/quicktime": "mov",
+        "video/3gpp": "3gp",
+        "video/x-matroska": "mkv",
+        "video/x-msvideo": "avi",
+      };
+
+      fileMime = normalizedVideoMime;
+      const preferredExt = extByMime[fileMime] || getFileExtension(fileName) || "mp4";
+      if (!new RegExp(`\\.${preferredExt}$`, "i").test(fileName)) {
+        fileName = fileName.replace(/\.[a-z0-9]{2,8}$/i, "") + `.${preferredExt}`;
       }
     }
 
@@ -591,12 +608,47 @@
     return true;
   }
 
+  function scoreAttachmentInput(input, targetKind) {
+    const accept = String(input.accept || "").toLowerCase();
+    const capture = String(input.getAttribute("capture") || "").toLowerCase();
+    let score = 0;
+
+    if (targetKind === "media") {
+      if (accept.includes("video")) score += 120;
+      if (accept.includes("image")) score += 40;
+      if (accept.includes("application")) score -= 80;
+      if (accept.includes("audio")) score -= 40;
+      if (!accept || accept === "*/*") score -= 20;
+      if (capture) score -= 20;
+    } else if (targetKind === "document") {
+      if (accept.includes("application")) score += 120;
+      if (accept.includes("text")) score += 60;
+      if (!accept || accept === "*/*") score += 40;
+      if (accept.includes("video") || accept.includes("image")) score -= 40;
+    } else if (targetKind === "audio") {
+      if (accept.includes("audio")) score += 120;
+      if (accept.includes("application")) score += 20;
+      if (!accept || accept === "*/*") score += 10;
+      if (accept.includes("video") || accept.includes("image")) score -= 30;
+    }
+
+    if (input.multiple) score += 5;
+    return score;
+  }
+
   async function waitForAttachmentInputs(timeoutMs = 4000) {
     const startedAt = Date.now();
+    const chatRoot = document.querySelector("#main");
 
     while (Date.now() - startedAt < timeoutMs) {
-      const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
-      if (inputs.length) return inputs;
+      const allInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
+      const scopedInputs = chatRoot
+        ? allInputs.filter((el) => chatRoot.contains(el))
+        : allInputs;
+
+      if (scopedInputs.length) return scopedInputs;
+      if (allInputs.length) return allInputs;
+
       await sleep(120);
     }
 
@@ -604,8 +656,21 @@
   }
 
   function pickAttachmentInput(inputs, assetType, mime = "", fileName = "") {
-    const mediaInput = inputs.find((input) => /(image|video)/i.test(input.accept || ""));
-    const docInput = inputs.find((input) => {
+    const targetKind = assetType === "media"
+      ? "media"
+      : assetType === "document"
+        ? "document"
+        : assetType === "audio"
+          ? "audio"
+          : "default";
+
+    const rankedInputs = inputs
+      .map((input) => ({ input, score: scoreAttachmentInput(input, targetKind) }))
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.input);
+
+    const mediaInput = rankedInputs.find((input) => /(image|video)/i.test(input.accept || ""));
+    const docInput = rankedInputs.find((input) => {
       const accept = String(input.accept || "").toLowerCase();
       if (!accept || accept === "*/*") return true;
       return (
@@ -617,19 +682,23 @@
     });
 
     if (assetType === "media") {
-      // Never downgrade media to document input, otherwise WA renders as file
-      return mediaInput || null;
+      const payloadIsVideoLike = isVideoFileLike(mime, fileName);
+      if (mediaInput) return mediaInput;
+      if (payloadIsVideoLike) {
+        return rankedInputs.find((input) => !/application|text/i.test(input.accept || "")) || null;
+      }
+      return rankedInputs[0] || null;
     }
 
     if (assetType === "document") {
-      return docInput || mediaInput || inputs[0];
+      return docInput || mediaInput || rankedInputs[0] || null;
     }
 
     if (assetType === "audio") {
-      return docInput || mediaInput || inputs[0];
+      return docInput || mediaInput || rankedInputs[0] || null;
     }
 
-    return inputs[0];
+    return rankedInputs[0] || null;
   }
 
   function injectFileIntoInput(input, file) {
@@ -725,12 +794,16 @@
 
     injectFileIntoInput(targetInput, file);
 
+    const assetLooksLikeVideo =
+      isVideo || isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || fileName);
+
     const composerRoot =
       targetInput.closest('div[role="dialog"]') ||
       targetInput.closest('[data-animate-modal-popup="true"]') ||
       document;
 
-    const sendBtn = await waitForComposerSendButton(composerRoot, 12000);
+    const sendBtnTimeoutMs = assetLooksLikeVideo ? 120000 : 12000;
+    const sendBtn = await waitForComposerSendButton(composerRoot, sendBtnTimeoutMs);
     if (!sendBtn) {
       showToast("WhatsApp não abriu a prévia do arquivo", true);
       console.error("[RiseZap] sendFileViaAttachMenu: composer send button not found", {
@@ -740,6 +813,7 @@
         fileName,
         fileMime,
         isVideo,
+        assetLooksLikeVideo,
       });
       return false;
     }
@@ -747,7 +821,7 @@
     const sendBtnEl = sendBtn.closest("button") || sendBtn;
     sendBtnEl.click();
 
-    const confirmTimeoutMs = isVideo ? 720000 : 45000;
+    const confirmTimeoutMs = assetLooksLikeVideo ? 720000 : 45000;
     const confirmation = await waitForOutgoingCommit(beforeSnapshot, confirmTimeoutMs);
 
     if (!confirmation.ok) {
@@ -978,8 +1052,8 @@
     }
 
     if (asset.resolvedType === "media" && isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || "")) {
-      // Video → bridge native video (never document mode)
-      return sendVideoViaBridge(asset);
+      // Video → attach-menu injection (same path as manual WhatsApp upload)
+      return sendFileViaAttachMenu(asset);
     }
 
     // Images + Documents → attach-menu injection
