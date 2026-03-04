@@ -801,6 +801,8 @@
       if (preferredKind === "media") {
         const mediaInputs = pool.filter((input) => isMediaAttachmentInput(input));
         if (mediaInputs.length) return mediaInputs;
+        await sleep(120);
+        continue;
       }
 
       if (preferredKind === "document") {
@@ -859,7 +861,7 @@
       }
 
       if (mediaCandidates.length) return mediaCandidates[0];
-      return fallbackPool[0] || rankedInputs[0] || null;
+      return null;
     }
 
     if (assetType === "document" || assetType === "audio") {
@@ -1069,10 +1071,13 @@
     }
 
     const audioPayload = normalizeAudioBridgePayload(asset, blob);
+    const bridgeBlob = String(blob?.type || "").toLowerCase() === String(audioPayload.mime || "").toLowerCase()
+      ? blob
+      : new Blob([blob], { type: audioPayload.mime || "audio/mpeg" });
 
     let dataUrl;
     try {
-      dataUrl = await blobToDataUrl(blob);
+      dataUrl = await blobToDataUrl(bridgeBlob);
     } catch (err) {
       showToast(`Erro ao converter áudio para base64: ${err?.message || "desconhecido"}`, true);
       return false;
@@ -1125,7 +1130,9 @@
         }
 
         console.warn("[RiseZap] Audio bridge failed:", detail.errorCode, detail.errorMessage, "strategy:", detail.strategy);
-        showToast(`Falha ao enviar áudio (${detail.errorCode || "erro"})`, true);
+        const rawError = typeof detail.errorMessage === "string" ? detail.errorMessage.trim() : "";
+        const clippedError = rawError ? `: ${rawError.slice(0, 140)}` : "";
+        showToast(`Falha ao enviar áudio (${detail.errorCode || "erro"})${clippedError}`, true);
         resolve(false);
       }
 
@@ -1248,7 +1255,7 @@
     }
 
     if (asset.resolvedType === "media") {
-      return sendMediaViaBridge(asset);
+      return sendFileViaAttachMenu(asset);
     }
 
     // Documento permanece no caminho de anexo manual
