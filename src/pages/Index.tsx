@@ -200,7 +200,7 @@ export default function Index() {
                 className="flex flex-col items-center gap-1 p-3 rounded-lg bg-muted/50 text-center"
               >
                 <item.icon className="h-5 w-5 text-muted-foreground" />
-                <span className="text-2xl font-bold text-primary">{item.count}</span>
+                <span className="text-2xl font-bold text-foreground">{item.count}</span>
                 <span className="text-xs text-muted-foreground">{item.label}</span>
               </div>
             ))}
