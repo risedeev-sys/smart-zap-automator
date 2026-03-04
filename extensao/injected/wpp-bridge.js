@@ -34,6 +34,7 @@
     FETCH_FAILED: "FETCH_FAILED",
     SEND_FAILED: "SEND_FAILED",
     SEND_RESULT_ERROR: "SEND_RESULT_ERROR",
+    SEND_RESULT_TIMEOUT: "SEND_RESULT_TIMEOUT",
     SEND_TIMEOUT: "SEND_TIMEOUT",
     FETCH_TIMEOUT: "FETCH_TIMEOUT",
     UNKNOWN: "UNKNOWN",
@@ -44,8 +45,9 @@
     FETCH_NORMAL: 45000,
     FETCH_VIDEO: 180000,
     SEND_NORMAL: 90000,
+    SEND_VIDEO_FAST_PATH: 90000,
     SEND_VIDEO: 300000,
-    SEND_RESULT_WAIT: 60000, // extra wait for sendMsgResult after send resolves
+    SEND_RESULT_WAIT: 120000,
   });
 
   // ─── State ──────────────────────────────────────────────
@@ -193,8 +195,8 @@
           opts.mimetype = mime || (isVideo ? "video/mp4" : undefined);
         }
 
-        // For video documents: don't wait for ack (large upload)
-        opts.waitForAck = !isVideo;
+        // Deterministic contract: always wait for ACK to avoid false success
+        opts.waitForAck = true;
         if (isVideo && asViewOnce) opts.isViewOnce = true;
         break;
 
@@ -217,43 +219,46 @@
     // Extract message ID if available
     const messageId = sendReturn?.id?._serialized || sendReturn?.id || null;
 
-    // Validate sendMsgResult if available
-    if (sendReturn && typeof sendReturn.sendMsgResult === "object" && sendReturn.sendMsgResult !== null) {
-      const result = sendReturn.sendMsgResult;
-      const messageSendResult = result.messageSendResult;
+    if (!sendReturn || !sendReturn.sendMsgResult) {
+      return {
+        success: false,
+        errorCode: ERROR_CODE.SEND_RESULT_ERROR,
+        errorMessage: "sendMsgResult missing from sendFileMessage return",
+        messageId,
+      };
+    }
 
+    try {
+      const ackResult = await withTimeout(
+        Promise.resolve(sendReturn.sendMsgResult),
+        TIMEOUT.SEND_RESULT_WAIT,
+        "sendMsgResult"
+      );
+
+      const messageSendResult = ackResult?.messageSendResult;
       if (messageSendResult !== undefined && messageSendResult !== 0 && messageSendResult !== "OK") {
         return {
           success: false,
           errorCode: `SEND_RESULT_${messageSendResult}`,
           errorMessage: `sendMsgResult: ${messageSendResult}`,
           messageId,
+          sendMsgResult: messageSendResult,
         };
       }
+
+      return {
+        success: true,
+        messageId,
+        sendMsgResult: messageSendResult ?? "OK",
+      };
+    } catch (ackErr) {
+      return {
+        success: false,
+        errorCode: ERROR_CODE.SEND_RESULT_TIMEOUT,
+        errorMessage: ackErr?.message || String(ackErr),
+        messageId,
+      };
     }
-
-    // If sendMsgResult is a promise (waitForAck was true), await it with dedicated timeout
-    if (sendReturn && sendReturn.sendMsgResult && typeof sendReturn.sendMsgResult.then === "function") {
-      try {
-        const ackResult = await withTimeout(sendReturn.sendMsgResult, TIMEOUT.SEND_RESULT_WAIT, "sendMsgResult");
-        const messageSendResult = ackResult?.messageSendResult;
-
-        if (messageSendResult !== undefined && messageSendResult !== 0 && messageSendResult !== "OK") {
-          return {
-            success: false,
-            errorCode: `SEND_RESULT_${messageSendResult}`,
-            errorMessage: `sendMsgResult (ack): ${messageSendResult}`,
-            messageId,
-          };
-        }
-      } catch (ackErr) {
-        // Timeout waiting for ack — not necessarily a failure for video
-        // (upload may still be in progress server-side)
-        console.warn("[RiseZap:Bridge] sendMsgResult ack timeout (may still succeed):", ackErr.message);
-      }
-    }
-
-    return { success: true, messageId };
   }
 
   // ─── Send Handler ──────────────────────────────────────
@@ -333,13 +338,12 @@
     log("PREPARE_CONTENT", { isVideo, originalType: type });
 
     const sendableContent = ensureSendableContent(content, type === "video" ? "document" : type, fileName, mime);
-    const sendTimeoutMs = isVideo ? TIMEOUT.SEND_VIDEO : TIMEOUT.SEND_NORMAL;
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
-    // For video: cascade strategy (document+video/mp4 → document+octet-stream)
+    // For video: cascade strategy prioritizing reliability first
 
     const strategies = isVideo
-      ? ["video-document", "octet-stream"]
+      ? ["octet-stream", "video-document"]
       : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
@@ -348,6 +352,11 @@
       const strategyOverride = strategy === "octet-stream" ? "octet-stream" : undefined;
 
       const options = buildSendOptions(type, detail, isVideo, strategyOverride);
+      const sendTimeoutMs = isVideo
+        ? strategy === "video-document"
+          ? TIMEOUT.SEND_VIDEO_FAST_PATH
+          : TIMEOUT.SEND_VIDEO
+        : TIMEOUT.SEND_NORMAL;
 
       log(`SEND_REQUEST strategy=${strategy}`, {
         chatId: chatId.toString(),
@@ -355,24 +364,30 @@
         mimetype: options.mimetype,
         filename: options.filename,
         waitForAck: options.waitForAck ?? true,
+        sendTimeoutMs,
       });
 
       try {
         const result = await attemptSend(chatId, sendableContent, options, sendTimeoutMs);
 
         if (result.success) {
-          log("SEND_RESULT success", { strategy, messageId: result.messageId });
+          log("SEND_RESULT success", { strategy, messageId: result.messageId, sendMsgResult: result.sendMsgResult });
 
           // Persist success diagnostic
           persistDiagnostic({
             success: true,
             strategy,
+            sendMsgResult: result.sendMsgResult,
             elapsedMs: Date.now() - startMs,
             type,
             isVideo,
           });
 
-          respondSuccess(requestId, STAGE.SEND_RESULT, { strategy, messageId: result.messageId });
+          respondSuccess(requestId, STAGE.SEND_RESULT, {
+            strategy,
+            messageId: result.messageId,
+            sendMsgResult: result.sendMsgResult,
+          });
           return;
         }
 

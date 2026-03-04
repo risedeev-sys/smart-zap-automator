@@ -258,15 +258,21 @@
     if (!fileUrl) return null;
 
     const fetchInContent = async () => {
-      const res = await fetch(fileUrl, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      return {
-        blobUrl: URL.createObjectURL(blob),
-        mime: blob.type || null,
-        bytes: typeof blob.size === "number" ? blob.size : null,
-        source: "content",
-      };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+      try {
+        const res = await fetch(fileUrl, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        return {
+          blobUrl: URL.createObjectURL(blob),
+          mime: blob.type || null,
+          bytes: typeof blob.size === "number" ? blob.size : null,
+          source: "content",
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
     };
 
     try {
@@ -389,8 +395,8 @@
     });
 
     // Send event and wait for structured response from bridge v2
-    // Total timeout = fetch + send + result wait margins
-    const timeoutMs = isVideoAsset ? 420000 : 90000;
+    // Timeout aligned with bridge video cascade + ack validation
+    const timeoutMs = isVideoAsset ? 720000 : 90000;
 
     return new Promise((resolve) => {
       const releaseBlobUrl = () => {
@@ -415,7 +421,7 @@
         clearTimeout(timeout);
         releaseBlobUrl();
 
-        const { success, stage, errorCode, errorMessage, strategy, messageId } = detail;
+        const { success, stage, errorCode, errorMessage, strategy, messageId, sendMsgResult } = detail;
 
         console.log("[RiseZap] Bridge result:", {
           success,
@@ -423,13 +429,24 @@
           errorCode,
           strategy,
           messageId,
+          sendMsgResult,
           asset: asset.name,
         });
 
-        if (success) {
+        const normalizedSendResult =
+          typeof sendMsgResult === "string"
+            ? sendMsgResult
+            : sendMsgResult?.messageSendResult ?? null;
+
+        const isDeterministicSuccess =
+          success === true &&
+          stage === "SEND_RESULT" &&
+          (!normalizedSendResult || normalizedSendResult === "OK" || normalizedSendResult === 0);
+
+        if (isDeterministicSuccess) {
           resolve(true);
         } else {
-          const diagCode = errorCode || "UNKNOWN";
+          const diagCode = errorCode || (normalizedSendResult ? `SEND_RESULT_${normalizedSendResult}` : "UNKNOWN");
           const diagMsg = errorMessage || "falha desconhecida";
           console.error(`[RiseZap] Send failed [${diagCode}] at ${stage}:`, diagMsg);
           showToast(`Erro [${diagCode}]: ${diagMsg}`, true);
@@ -445,6 +462,7 @@
                 errorCode: diagCode,
                 errorMessage: diagMsg,
                 strategy: strategy || null,
+                sendMsgResult: normalizedSendResult,
                 timestamp: new Date().toISOString(),
               },
             });
