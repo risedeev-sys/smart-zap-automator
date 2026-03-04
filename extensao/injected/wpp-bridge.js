@@ -278,7 +278,7 @@
 
   window.addEventListener("risezap:send", async function (evt) {
     const detail = evt.detail || {};
-    const { requestId, type, url, fallbackUrl, blobUrl, fileName, mime } = detail;
+    const { requestId, type, url, fallbackUrl, blobUrl, dataUrl, fileName, mime } = detail;
 
     if (!requestId) return;
 
@@ -314,43 +314,55 @@
 
     // ─── STAGE: FETCH_CONTENT ─────────────────────────
 
-    log("FETCH_CONTENT start", { type, isVideo });
-
     let content;
-    const fetchErrors = [];
-    const fetchTimeoutMs = isVideo ? TIMEOUT.FETCH_VIDEO : TIMEOUT.FETCH_NORMAL;
 
-    const candidates = [
-      { value: blobUrl, label: "blobUrl" },
-      { value: url, label: "url" },
-      { value: fallbackUrl, label: "fallbackUrl" },
-    ].filter((c, i, arr) => c.value && arr.findIndex((x) => x.value === c.value) === i);
+    // Priority 1: dataUrl (base64 string from content script — no CORS, no context issues)
+    if (dataUrl && typeof dataUrl === "string" && dataUrl.startsWith("data:")) {
+      log("FETCH_CONTENT using dataUrl (base64)", { type, length: dataUrl.length });
+      content = dataUrl;
+    } else {
+      // Legacy path: fetch from URL candidates
+      log("FETCH_CONTENT start (URL fetch)", { type, isVideo });
 
-    if (!candidates.length) {
-      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_URL, "No URL provided.");
-      return;
-    }
+      const fetchErrors = [];
+      const fetchTimeoutMs = isVideo ? TIMEOUT.FETCH_VIDEO : TIMEOUT.FETCH_NORMAL;
 
-    for (const candidate of candidates) {
-      try {
-        content = await fetchBlobWithTimeout(candidate.value, fetchTimeoutMs);
-        log(`FETCH_CONTENT success via ${candidate.label}`, { size: content.size, type: content.type });
-        break;
-      } catch (err) {
-        fetchErrors.push(`${candidate.label}: ${err.message || err}`);
+      const candidates = [
+        { value: blobUrl, label: "blobUrl" },
+        { value: url, label: "url" },
+        { value: fallbackUrl, label: "fallbackUrl" },
+      ].filter((c, i, arr) => c.value && arr.findIndex((x) => x.value === c.value) === i);
+
+      if (!candidates.length) {
+        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_URL, "No URL or dataUrl provided.");
+        return;
       }
-    }
 
-    if (!content) {
-      respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.FETCH_FAILED, fetchErrors.join(" | "));
-      return;
+      for (const candidate of candidates) {
+        try {
+          content = await fetchBlobWithTimeout(candidate.value, fetchTimeoutMs);
+          log(`FETCH_CONTENT success via ${candidate.label}`, { size: content.size, type: content.type });
+          break;
+        } catch (err) {
+          fetchErrors.push(`${candidate.label}: ${err.message || err}`);
+        }
+      }
+
+      if (!content) {
+        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.FETCH_FAILED, fetchErrors.join(" | "));
+        return;
+      }
     }
 
     // ─── STAGE: PREPARE_CONTENT ───────────────────────
 
-    log("PREPARE_CONTENT", { isVideo, originalType: type });
+    log("PREPARE_CONTENT", { isVideo, originalType: type, contentIsDataUrl: typeof content === "string" });
 
-    const sendableContent = ensureSendableContent(content, type, fileName, mime);
+    // When content is a data URL string, wa-js accepts it directly — no further prep needed.
+    // When content is a Blob, wrap it as a File for proper filename/mime handling.
+    const sendableContent = typeof content === "string"
+      ? content
+      : ensureSendableContent(content, type, fileName, mime);
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
 
