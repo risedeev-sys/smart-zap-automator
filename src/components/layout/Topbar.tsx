@@ -1,5 +1,7 @@
 import { Settings, LogOut } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -16,8 +18,14 @@ interface TopbarProps {
 }
 
 export function Topbar({ title }: TopbarProps) {
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
 
   useEffect(() => {
     saveAppSettings(settings);
@@ -65,7 +73,7 @@ export function Topbar({ title }: TopbarProps) {
           </PopoverContent>
         </Popover>
 
-        <Button variant="ghost" size="icon" className="h-8 w-8">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleLogout}>
           <LogOut className="h-4 w-4" />
         </Button>
 
