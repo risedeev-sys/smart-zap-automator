@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useState, useMemo } from "react";
 import { Search, Plus, GripVertical, Heart, Pencil } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,14 @@ export function TwoColumnLayout({
   emptyDetail,
   renderItemExtra,
 }: TwoColumnLayoutProps) {
+  const [search, setSearch] = useState("");
   const { getDragProps } = useDragReorder(items, onReorder ?? (() => {}));
+
+  const filteredItems = useMemo(() => {
+    if (!search.trim()) return items;
+    const q = search.toLowerCase();
+    return items.filter((item) => item.name.toLowerCase().includes(q));
+  }, [items, search]);
 
   return (
     <div className="flex gap-4 h-[calc(100vh-10rem)]">
@@ -43,7 +50,12 @@ export function TwoColumnLayout({
         <div className="p-4 border-b border-border space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input placeholder={searchPlaceholder} className="pl-10 h-11 text-base" />
+            <Input
+              placeholder={searchPlaceholder}
+              className="pl-10 h-11 text-base"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
           <Button onClick={onAdd} className="w-full h-11 text-base">
             <Plus className="h-5 w-5 mr-1" /> Adicionar
@@ -51,13 +63,14 @@ export function TwoColumnLayout({
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {items.length === 0 && (
+          {filteredItems.length === 0 && (
             <div className="text-center py-8 text-base text-muted-foreground">
-              Nenhum item cadastrado.
+              {search.trim() ? "Nenhum resultado encontrado." : "Nenhum item cadastrado."}
             </div>
           )}
-          {items.map((item, index) => {
-            const dragProps = onReorder ? getDragProps(index) : { className: "" };
+          {filteredItems.map((item) => {
+            const originalIndex = items.indexOf(item);
+            const dragProps = onReorder ? getDragProps(originalIndex) : { className: "" };
             const { className: dragClassName, ...restDragProps } = dragProps;
             return (
               <button
