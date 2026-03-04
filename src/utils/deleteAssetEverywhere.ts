@@ -15,6 +15,7 @@ const UUID_REGEX =
 interface DeleteAssetEverywhereParams {
   assetType: AssetType;
   assetId: string;
+  assetName?: string;
 }
 
 interface DeleteAssetEverywhereResult {
@@ -31,36 +32,73 @@ type AssetRow = {
 export async function deleteAssetEverywhere({
   assetType,
   assetId,
+  assetName,
 }: DeleteAssetEverywhereParams): Promise<DeleteAssetEverywhereResult> {
-  if (!UUID_REGEX.test(assetId)) {
-    return {};
+  const table = TABLE_BY_ASSET_TYPE[assetType];
+  const normalizedAssetName = String(assetName || "").trim();
+  const isUuidAssetId = UUID_REGEX.test(assetId);
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError) {
+    throw new Error(`Erro de autenticação ao excluir asset: ${authError.message}`);
+  }
+  if (!user) {
+    throw new Error("Usuário não autenticado.");
   }
 
-  const table = TABLE_BY_ASSET_TYPE[assetType];
+  const userId = user.id;
   let row: AssetRow;
   let rows: Array<{ id: string; storage_path?: string | null }> = [];
 
-  if (table === "messages") {
-    const { data: targetRow, error: targetError } = await supabase
-      .from("messages")
-      .select("id, name, user_id")
-      .eq("id", assetId)
-      .maybeSingle();
+  if (!isUuidAssetId && !normalizedAssetName) {
+    throw new Error("Não foi possível identificar o asset para exclusão (ID inválido sem nome).");
+  }
 
-    if (targetError) {
-      throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+  if (table === "messages") {
+    let targetRow: AssetRow | null = null;
+
+    if (isUuidAssetId) {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, name, user_id")
+        .eq("id", assetId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Erro ao buscar asset para exclusão: ${error.message}`);
+      }
+
+      targetRow = (data as unknown as AssetRow) ?? null;
     }
 
-    if (!targetRow) {
+    if (!targetRow && normalizedAssetName) {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, name, user_id")
+        .eq("user_id", userId)
+        .eq("name", normalizedAssetName)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Erro ao localizar asset por nome: ${error.message}`);
+      }
+
+      targetRow = (data as unknown as AssetRow) ?? null;
+    }
+
+    if (!targetRow && !normalizedAssetName) {
       return {};
     }
 
-    row = targetRow as unknown as AssetRow;
+    row = targetRow ?? { id: assetId, name: normalizedAssetName, user_id: userId };
 
     const { data: rowsWithSameName, error: rowsError } = await supabase
       .from("messages")
       .select("id")
-      .eq("user_id", row.user_id)
+      .eq("user_id", userId)
       .eq("name", row.name);
 
     if (rowsError) {
@@ -70,27 +108,50 @@ export async function deleteAssetEverywhere({
     rows = ((rowsWithSameName ?? []) as unknown as Array<{ id: string }>).map((item) => ({ id: item.id }));
   } else {
     const fileTable = table as "audios" | "medias" | "documents";
+    let targetRow: AssetRow | null = null;
 
-    const { data: targetRow, error: targetError } = await supabase
-      .from(fileTable)
-      .select("id, name, user_id, storage_path")
-      .eq("id", assetId)
-      .maybeSingle();
+    if (isUuidAssetId) {
+      const { data, error } = await supabase
+        .from(fileTable)
+        .select("id, name, user_id, storage_path")
+        .eq("id", assetId)
+        .eq("user_id", userId)
+        .maybeSingle();
 
-    if (targetError) {
-      throw new Error(`Erro ao buscar asset para exclusão: ${targetError.message}`);
+      if (error) {
+        throw new Error(`Erro ao buscar asset para exclusão: ${error.message}`);
+      }
+
+      targetRow = (data as unknown as AssetRow) ?? null;
     }
 
-    if (!targetRow) {
+    if (!targetRow && normalizedAssetName) {
+      const { data, error } = await supabase
+        .from(fileTable)
+        .select("id, name, user_id, storage_path")
+        .eq("user_id", userId)
+        .eq("name", normalizedAssetName)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Erro ao localizar asset por nome: ${error.message}`);
+      }
+
+      targetRow = (data as unknown as AssetRow) ?? null;
+    }
+
+    if (!targetRow && !normalizedAssetName) {
       return {};
     }
 
-    row = targetRow as unknown as AssetRow;
+    row = targetRow ?? { id: assetId, name: normalizedAssetName, user_id: userId };
 
     const { data: rowsWithSameName, error: rowsError } = await supabase
       .from(fileTable)
       .select("id, storage_path")
-      .eq("user_id", row.user_id)
+      .eq("user_id", userId)
       .eq("name", row.name);
 
     if (rowsError) {

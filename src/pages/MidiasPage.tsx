@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
@@ -35,6 +35,36 @@ export default function MidiasPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
+  const fetchMedias = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("medias")
+      .select("id, name, storage_path, mime")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      toast({ title: "Erro ao carregar mídias", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    const rows: AssetItem[] = (data ?? []).map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
+      fileType: row.mime || undefined,
+    }));
+
+    setMidias(rows);
+    setSelected((prev) => {
+      if (!rows.length) return null;
+      if (!prev) return rows[0].id;
+      return rows.some((item) => item.id === prev) ? prev : rows[0].id;
+    });
+  }, [setMidias, toast]);
+
+  useEffect(() => {
+    fetchMedias();
+  }, [fetchMedias]);
+
   const listItems: ListItem[] = midias.map(m => ({ id: m.id, name: m.name, favorite: m.favorite }));
 
   const handleReorder = (reordered: ListItem[]) => {
@@ -50,9 +80,8 @@ export default function MidiasPage() {
     if (!selected) return;
 
     try {
-      const { storageWarning } = await deleteAssetEverywhere({ assetType: "midia", assetId: selected });
-      setMidias((prev) => prev.filter((m) => m.id !== selected));
-      setSelected(null);
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "midia", assetId: selected, assetName: selectedItem?.name });
+      await fetchMedias();
       setDeleteOpen(false);
       toast({
         title: "Mídia excluída!",

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
@@ -31,6 +31,35 @@ export default function DocumentosPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
+  const fetchDocuments = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("documents")
+      .select("id, name, storage_path")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      toast({ title: "Erro ao carregar documentos", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    const rows: AssetItem[] = (data ?? []).map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
+    }));
+
+    setDocumentos(rows);
+    setSelected((prev) => {
+      if (!rows.length) return null;
+      if (!prev) return rows[0].id;
+      return rows.some((item) => item.id === prev) ? prev : rows[0].id;
+    });
+  }, [setDocumentos, toast]);
+
+  useEffect(() => {
+    fetchDocuments();
+  }, [fetchDocuments]);
+
   const listItems: ListItem[] = documentos.map(d => ({ id: d.id, name: d.name, favorite: d.favorite }));
 
   const handleReorder = (reordered: ListItem[]) => {
@@ -46,9 +75,8 @@ export default function DocumentosPage() {
     if (!selected) return;
 
     try {
-      const { storageWarning } = await deleteAssetEverywhere({ assetType: "documento", assetId: selected });
-      setDocumentos((prev) => prev.filter((m) => m.id !== selected));
-      setSelected(null);
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "documento", assetId: selected, assetName: selectedItem?.name });
+      await fetchDocuments();
       setDeleteOpen(false);
       toast({
         title: "Documento excluído!",

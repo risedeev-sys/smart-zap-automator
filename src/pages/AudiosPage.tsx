@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { useAssets, AssetItem } from "@/contexts/AssetsContext";
 import { TwoColumnLayout, ListItem } from "@/components/layout/TwoColumnLayout";
@@ -35,6 +35,40 @@ export default function AudiosPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const { toast } = useToast();
 
+  const fetchAudios = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("audios")
+      .select("id, name, storage_path, metadata")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      toast({ title: "Erro ao carregar áudios", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    const rows: AssetItem[] = (data ?? []).map((row: any) => {
+      const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+      return {
+        id: row.id,
+        name: row.name,
+        fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
+        forwarded: metadata.forwarded === true,
+        singleView: metadata.singleView === true || metadata.single_view === true,
+      };
+    });
+
+    setAudios(rows);
+    setSelected((prev) => {
+      if (!rows.length) return null;
+      if (!prev) return rows[0].id;
+      return rows.some((item) => item.id === prev) ? prev : rows[0].id;
+    });
+  }, [setAudios, toast]);
+
+  useEffect(() => {
+    fetchAudios();
+  }, [fetchAudios]);
+
   const listItems: ListItem[] = audios.map(a => ({ id: a.id, name: a.name, favorite: a.favorite }));
 
   const handleReorder = (reordered: ListItem[]) => {
@@ -50,9 +84,8 @@ export default function AudiosPage() {
     if (!selected) return;
 
     try {
-      const { storageWarning } = await deleteAssetEverywhere({ assetType: "audio", assetId: selected });
-      setAudios((prev) => prev.filter((m) => m.id !== selected));
-      setSelected(null);
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "audio", assetId: selected, assetName: selectedItem?.name });
+      await fetchAudios();
       setDeleteOpen(false);
       toast({
         title: "Áudio excluído!",

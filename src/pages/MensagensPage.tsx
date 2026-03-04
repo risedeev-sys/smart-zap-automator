@@ -64,7 +64,7 @@ export default function MensagensPage() {
     if (!selected) return;
 
     try {
-      await deleteAssetEverywhere({ assetType: "mensagem", assetId: selected });
+      await deleteAssetEverywhere({ assetType: "mensagem", assetId: selected, assetName: selectedItem?.name });
       setMessages((prev) => prev.filter((m) => m.id !== selected));
       setSelected(null);
       setDeleteOpen(false);
