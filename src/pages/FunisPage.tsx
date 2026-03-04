@@ -442,7 +442,7 @@ export default function FunisPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setDeleteTarget({ title: "Excluir funil", name: selectedFunnel.name, type: "funnel" }); setDeleteOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicateFunnel}><Copy className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDuplicateFunnel}><Copy className="h-4 w-4 text-primary" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8" onClick={async () => {
                     try {
                       await exportFunnel(selected!);
@@ -450,8 +450,8 @@ export default function FunisPage() {
                     } catch (e: any) {
                       toast({ title: "Erro ao exportar", description: e.message, variant: "destructive" });
                     }
-                  }}><Download className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditFunnelName(selectedFunnel.name); setEditFunnelOpen(true); }}><Pencil className="h-4 w-4" /></Button>
+                  }}><Download className="h-4 w-4 text-primary" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditFunnelName(selectedFunnel.name); setEditFunnelOpen(true); }}><Pencil className="h-4 w-4 text-primary" /></Button>
                   <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFavoriteFunnel}>
                     <Heart className={`h-4 w-4 ${selectedFunnel.favorite ? "fill-primary text-primary" : ""}`} />
                   </Button>
