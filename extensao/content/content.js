@@ -652,8 +652,27 @@
   }
 
   function isStickerAttachmentInput(input) {
-    const context = getAttachmentInputContext(input);
-    return /(figurinha|sticker)/i.test(context);
+    if (!(input instanceof HTMLInputElement)) return false;
+
+    const accept = String(input.accept || "").toLowerCase();
+    const localContext = [
+      input.getAttribute("aria-label"),
+      input.getAttribute("title"),
+      input.getAttribute("data-testid"),
+      input.getAttribute("data-icon"),
+      input.id,
+      input.className,
+    ]
+      .map((value) => String(value || "").toLowerCase())
+      .join(" | ");
+
+    const hasStickerKeyword = /(figurinha|sticker)/i.test(localContext);
+    const looksLikeStickerMime =
+      accept.includes("image/webp") &&
+      !accept.includes("video") &&
+      !accept.includes("application");
+
+    return hasStickerKeyword || looksLikeStickerMime;
   }
 
   function isPrimaryMediaAttachmentInput(input) {
@@ -757,18 +776,21 @@
       const pool = uniqueAttachmentInputs([...newlyOpenedInputs, ...allInputs]);
 
       if (preferredKind === "media") {
-        const mediaInputs = pool.filter((input) => isMediaAttachmentInput(input) && !isStickerAttachmentInput(input));
+        const mediaInputs = pool.filter((input) => isMediaAttachmentInput(input));
         if (mediaInputs.length) return mediaInputs;
       }
 
       if (preferredKind === "document") {
-        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input) && !isStickerAttachmentInput(input));
+        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input));
         if (documentInputs.length) return documentInputs;
       }
 
       if (preferredKind === "audio") {
         const audioInputs = pool.filter((input) => /audio/i.test(String(input.accept || "")));
         if (audioInputs.length) return audioInputs;
+
+        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input));
+        if (documentInputs.length) return documentInputs;
       }
 
       if (!newlyOpenedInputs.length && Date.now() - startedAt < 1200) {
@@ -783,21 +805,18 @@
   }
 
   function pickAttachmentInput(inputs, assetType, mime = "", fileName = "") {
-    const targetKind = assetType === "media"
-      ? "media"
-      : assetType === "document"
-        ? "document"
-        : assetType === "audio"
-          ? "audio"
-          : "default";
+    const targetKind = assetType === "media" ? "media" : "document";
 
     const ranked = inputs
       .map((input) => ({ input, score: scoreAttachmentInput(input, targetKind) }))
       .sort((a, b) => b.score - a.score);
 
     const rankedInputs = ranked.map((item) => item.input);
-    const mediaCandidates = rankedInputs.filter((input) => isMediaAttachmentInput(input) && !isStickerAttachmentInput(input));
-    const documentCandidates = rankedInputs.filter((input) => isDocumentAttachmentInput(input) && !isStickerAttachmentInput(input));
+    const nonStickerInputs = rankedInputs.filter((input) => !isStickerAttachmentInput(input));
+    const fallbackPool = nonStickerInputs.length ? nonStickerInputs : rankedInputs;
+
+    const mediaCandidates = fallbackPool.filter((input) => isMediaAttachmentInput(input));
+    const documentCandidates = fallbackPool.filter((input) => isDocumentAttachmentInput(input));
 
     if (assetType === "media") {
       const payloadIsVideoLike = isVideoFileLike(mime, fileName);
@@ -817,28 +836,16 @@
       }
 
       if (mediaCandidates.length) return mediaCandidates[0];
-
-      const fallbackNonDocumentOnly = rankedInputs.find(
-        (input) => !isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input)
-      );
-      return fallbackNonDocumentOnly || null;
+      return fallbackPool[0] || rankedInputs[0] || null;
     }
 
-    if (assetType === "document") {
-      const strictDocumentInput = rankedInputs.find((input) => isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input));
+    if (assetType === "document" || assetType === "audio") {
+      const strictDocumentInput = fallbackPool.find((input) => isDocumentOnlyAttachmentInput(input));
       if (strictDocumentInput) return strictDocumentInput;
-      return documentCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
+      return documentCandidates[0] || fallbackPool[0] || rankedInputs[0] || null;
     }
 
-    if (assetType === "audio") {
-      // WhatsApp Web has no dedicated audio input in the attach menu.
-      // Route through document channel (accepts all file types).
-      const strictDocumentInput = rankedInputs.find((input) => isDocumentOnlyAttachmentInput(input) && !isStickerAttachmentInput(input));
-      if (strictDocumentInput) return strictDocumentInput;
-      return documentCandidates[0] || rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
-    }
-
-    return rankedInputs.find((input) => !isStickerAttachmentInput(input)) || null;
+    return fallbackPool[0] || rankedInputs[0] || null;
   }
 
   function injectFileIntoInput(input, file) {
@@ -940,7 +947,13 @@
       return false;
     }
 
-    const targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime, fileName);
+    let targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime, fileName);
+
+    if (!targetInput) {
+      const emergencyInputs = uniqueAttachmentInputs(listEnabledAttachmentInputs());
+      targetInput = pickAttachmentInput(emergencyInputs, asset.resolvedType, fileMime, fileName);
+    }
+
     if (!targetInput) {
       showToast(asset.resolvedType === "media"
         ? "Não foi possível localizar o canal de foto/vídeo do WhatsApp"
@@ -948,6 +961,7 @@
       console.error("[RiseZap] pickAttachmentInput returned null", {
         resolvedType: asset.resolvedType,
         candidateInputs: inputs.map((input) => ({ accept: input.accept, multiple: input.multiple })),
+        emergencyInputs: listEnabledAttachmentInputs().map((input) => ({ accept: input.accept, multiple: input.multiple })),
         fileName,
         fileMime,
       });

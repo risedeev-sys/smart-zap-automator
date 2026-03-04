@@ -177,8 +177,9 @@
         opts.type = "audio";
         opts.isPtt = isPtt !== false;
         opts.mimetype = mime || "audio/ogg; codecs=opus";
-        if (asViewOnce) opts.isViewOnce = true;
-        if (isForwarded) opts.isForwarded = true;
+        // WhatsApp Web/wa-js has unstable behavior for audio+flags.
+        // We intentionally ignore view-once/forwarded flags for audio
+        // to prioritize deterministic delivery.
         break;
 
       case "image":
@@ -367,25 +368,16 @@
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────
 
-    // For audio with viewOnce/forwarded flags, add a retry without those flags
-    const hasAudioFlags = type === "audio" && (detail.asViewOnce || detail.isForwarded);
     const strategies = isVideo
       ? ["video-native"]
-      : hasAudioFlags
-        ? ["default", "audio-no-flags"]
-        : ["default"];
+      : ["default"];
 
     for (let si = 0; si < strategies.length; si++) {
       const strategy = strategies[si];
       const isLastStrategy = si === strategies.length - 1;
       const strategyOverride = undefined;
 
-      // On retry strategy, strip problematic flags
-      const effectiveDetail = strategy === "audio-no-flags"
-        ? { ...detail, asViewOnce: false, isForwarded: false }
-        : detail;
-
-      const options = buildSendOptions(type, effectiveDetail, isVideo, strategyOverride);
+      const options = buildSendOptions(type, detail, isVideo, strategyOverride);
       const sendTimeoutMs = isVideo
         ? TIMEOUT.SEND_VIDEO
         : TIMEOUT.SEND_NORMAL;
