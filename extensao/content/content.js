@@ -372,6 +372,7 @@
     // Always prefetch file in extension context (content/background) to avoid
     // direct cross-origin fetch in page context, which is the main source of FETCH_FAILED.
     const bridgeBlob = await createBridgeBlobUrl(signedUrl);
+    const beforeSendSnapshot = snapshotOutgoingState();
 
     const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -407,15 +408,37 @@
         }
       };
 
+      const failAndPersist = (stage, diagCode, diagMsg, strategy, normalizedSendResult) => {
+        console.error(`[RiseZap] Send failed [${diagCode}] at ${stage}:`, diagMsg);
+        showToast(`Erro [${diagCode}]: ${diagMsg}`, true);
+
+        try {
+          chrome.storage.local.set({
+            risezap_last_send_failure: {
+              assetName: asset.name,
+              assetId: asset.id,
+              sendType,
+              stage,
+              errorCode: diagCode,
+              errorMessage: diagMsg,
+              strategy: strategy || null,
+              sendMsgResult: normalizedSendResult,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch {}
+
+        resolve(false);
+      };
+
       const timeout = setTimeout(() => {
         window.removeEventListener("risezap:result", handler);
         releaseBlobUrl();
         console.error("[RiseZap] Bridge global timeout", { requestId, timeoutMs, asset: asset.name });
-        showToast(`Timeout: bridge não respondeu em ${Math.round(timeoutMs / 1000)}s`, true);
-        resolve(false);
+        failAndPersist("SEND_REQUEST", "SEND_TIMEOUT", `bridge não respondeu em ${Math.round(timeoutMs / 1000)}s`, null, null);
       }, timeoutMs);
 
-      function handler(evt) {
+      async function handler(evt) {
         const detail = evt.detail || {};
         if (detail.requestId !== requestId) return;
 
@@ -440,38 +463,30 @@
             ? sendMsgResult
             : sendMsgResult?.messageSendResult ?? null;
 
-        const isDeterministicSuccess =
-          success === true &&
-          stage === "SEND_RESULT" &&
-          (!normalizedSendResult || normalizedSendResult === "OK" || normalizedSendResult === 0);
+        const hasExplicitAck = normalizedSendResult === "OK" || normalizedSendResult === 0;
 
-        if (isDeterministicSuccess) {
+        if (success === true && stage === "SEND_RESULT" && hasExplicitAck) {
           resolve(true);
-        } else {
-          const diagCode = errorCode || (normalizedSendResult ? `SEND_RESULT_${normalizedSendResult}` : "UNKNOWN");
-          const diagMsg = errorMessage || "falha desconhecida";
-          console.error(`[RiseZap] Send failed [${diagCode}] at ${stage}:`, diagMsg);
-          showToast(`Erro [${diagCode}]: ${diagMsg}`, true);
-
-          // Persist diagnostic for support
-          try {
-            chrome.storage.local.set({
-              risezap_last_send_failure: {
-                assetName: asset.name,
-                assetId: asset.id,
-                sendType,
-                stage,
-                errorCode: diagCode,
-                errorMessage: diagMsg,
-                strategy: strategy || null,
-                sendMsgResult: normalizedSendResult,
-                timestamp: new Date().toISOString(),
-              },
-            });
-          } catch {}
-
-          resolve(false);
+          return;
         }
+
+        // Some WA builds omit explicit ack in wa-js return.
+        // In this case, we only accept success if a new outgoing message is observed in chat.
+        if (success === true && stage === "SEND_RESULT" && messageId) {
+          const domConfirmation = await waitForOutgoingCommit(beforeSendSnapshot, isVideoAsset ? 90000 : 45000);
+          if (domConfirmation.ok) {
+            console.warn("[RiseZap] Bridge ack missing, but DOM confirmed outgoing message", {
+              messageId,
+              statusIcon: domConfirmation.statusIcon,
+            });
+            resolve(true);
+            return;
+          }
+        }
+
+        const diagCode = errorCode || (normalizedSendResult ? `SEND_RESULT_${normalizedSendResult}` : "SEND_RESULT_UNCONFIRMED");
+        const diagMsg = errorMessage || "envio não confirmado pelo WhatsApp";
+        failAndPersist(stage || "SEND_RESULT", diagCode, diagMsg, strategy, normalizedSendResult);
       }
 
       window.addEventListener("risezap:result", handler);
@@ -552,6 +567,7 @@
       const fileName = resolveUploadFileName(asset, blob.type);
       const fileMime = asset.mime || blob.type || "application/octet-stream";
       const file = new File([blob], fileName, { type: fileMime });
+      const beforeSendSnapshot = snapshotOutgoingState();
 
       const attachAnchor =
         document.querySelector('button[title="Attach"]') ||
@@ -589,14 +605,13 @@
       targetInput.dispatchEvent(new Event("input", { bubbles: true }));
       targetInput.dispatchEvent(new Event("change", { bubbles: true }));
 
-      let sendBtn =
-        document.querySelector('span[data-icon="send"]') ||
-        document.querySelector('button[aria-label="Send"]') ||
-        document.querySelector('button[aria-label="Enviar"]');
+      const dialogRoot = targetInput.closest('div[role="dialog"]') || document;
+      let sendBtn = findVisibleSendButton(dialogRoot);
 
       if (!sendBtn) {
         try {
-          sendBtn = await waitForElement('span[data-icon="send"]', 10000);
+          await sleep(250);
+          sendBtn = findVisibleSendButton(document);
         } catch {}
       }
 
@@ -607,12 +622,18 @@
 
       const sendBtnEl = sendBtn.closest("button") || sendBtn;
       sendBtnEl.click();
-      await sleep(600);
+
+      const confirmation = await waitForOutgoingCommit(beforeSendSnapshot, isVideoMediaAsset(asset) ? 120000 : 45000);
+      if (!confirmation.ok) {
+        showToast(`WhatsApp não confirmou envio (${confirmation.reason})`, true);
+        return false;
+      }
 
       console.log("[RiseZap] DOM upload fallback sent", {
         assetId: asset.id,
         assetName: asset.name,
         mime: fileMime,
+        statusIcon: confirmation.statusIcon,
       });
 
       return true;
@@ -668,10 +689,8 @@
 
       await sleep(500);
 
-      let sendBtn =
-        document.querySelector('span[data-icon="send"]') ||
-        document.querySelector('button[aria-label="Send"]') ||
-        document.querySelector('button[aria-label="Enviar"]');
+      const beforeSendSnapshot = snapshotOutgoingState();
+      let sendBtn = findVisibleSendButton(document);
 
       if (!sendBtn) {
         try {
@@ -683,8 +702,15 @@
         showToast("Botão de enviar não encontrado", true);
         return false;
       }
+
       const sendBtnEl = sendBtn.closest("button") || sendBtn;
       sendBtnEl.click();
+
+      const confirmation = await waitForOutgoingCommit(beforeSendSnapshot, 45000);
+      if (!confirmation.ok) {
+        showToast(`Texto não confirmado pelo WhatsApp (${confirmation.reason})`, true);
+        return false;
+      }
 
       return true;
     } catch (err) {
@@ -713,6 +739,128 @@
         reject(new Error(`waitForElement timeout: ${selector}`));
       }, timeout);
     });
+  }
+
+  function isElementVisible(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  }
+
+  function findVisibleSendButton(scope = document) {
+    const root = scope || document;
+    const candidates = [];
+    const seen = new Set();
+
+    const pushCandidate = (el) => {
+      if (!el) return;
+      const button = el.closest("button") || el;
+      if (!button || seen.has(button)) return;
+      seen.add(button);
+      candidates.push(button);
+    };
+
+    root.querySelectorAll('button[aria-label="Send"], button[aria-label="Enviar"]').forEach(pushCandidate);
+    root.querySelectorAll('span[data-icon="send"]').forEach(pushCandidate);
+
+    for (const candidate of candidates) {
+      if (isElementVisible(candidate)) return candidate;
+    }
+
+    return null;
+  }
+
+  function listOutgoingMessageNodes() {
+    const scope = document.querySelector("#main") || document;
+    const selectors = [
+      "div.message-out",
+      '[data-testid="msg-out-container"]',
+      '[data-testid="outgoing-message"]',
+      '[data-testid="outgoing-msg"]',
+    ];
+
+    for (const selector of selectors) {
+      const nodes = Array.from(scope.querySelectorAll(selector));
+      if (nodes.length) return nodes;
+    }
+
+    return [];
+  }
+
+  function getMessageNodeId(node) {
+    if (!node) return null;
+    const holder = node.matches("[data-id]") ? node : node.querySelector("[data-id]");
+    return holder?.getAttribute("data-id") || holder?.id || null;
+  }
+
+  function snapshotOutgoingState() {
+    const nodes = listOutgoingMessageNodes();
+    const lastNode = nodes[nodes.length - 1] || null;
+    return {
+      count: nodes.length,
+      lastMessageId: getMessageNodeId(lastNode),
+    };
+  }
+
+  function readOutgoingStatus(node) {
+    if (!node) {
+      return { accepted: false, hasError: false, statusIcon: null };
+    }
+
+    const statusEl = node.querySelector(
+      '[data-icon="msg-time"], [data-icon="msg-check"], [data-icon="msg-dblcheck"], [data-icon="msg-dblcheck-ack"], [data-icon="msg-error"]'
+    );
+    const statusIcon = statusEl?.getAttribute("data-icon") || null;
+    const hasError = statusIcon === "msg-error" || !!node.querySelector('[data-icon="msg-error"], [data-testid="msg-error"]');
+    const accepted = !hasError && !!statusIcon && statusIcon !== "msg-error";
+
+    return { accepted, hasError, statusIcon };
+  }
+
+  async function waitForOutgoingCommit(previousSnapshot, timeoutMs = 45000) {
+    const baseline = previousSnapshot || { count: 0, lastMessageId: null };
+    const startedAt = Date.now();
+    let candidateKey = null;
+    let candidateSeenAt = 0;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const nodes = listOutgoingMessageNodes();
+      const lastNode = nodes[nodes.length - 1] || null;
+      const currentCount = nodes.length;
+      const currentId = getMessageNodeId(lastNode);
+
+      const hasNewMessage =
+        currentCount > baseline.count ||
+        (!!currentId && currentId !== baseline.lastMessageId);
+
+      if (hasNewMessage && lastNode) {
+        const key = `${currentCount}:${currentId || "no-id"}`;
+        if (key !== candidateKey) {
+          candidateKey = key;
+          candidateSeenAt = Date.now();
+        }
+
+        const status = readOutgoingStatus(lastNode);
+        if (status.hasError) {
+          return { ok: false, reason: "msg-error", statusIcon: status.statusIcon };
+        }
+
+        if (status.accepted) {
+          return { ok: true, reason: null, statusIcon: status.statusIcon };
+        }
+
+        // Some builds delay status icon rendering. If the new outgoing node is stable,
+        // accept it as a committed send.
+        if (Date.now() - candidateSeenAt >= 1500) {
+          return { ok: true, reason: null, statusIcon: null };
+        }
+      }
+
+      await sleep(250);
+    }
+
+    return { ok: false, reason: "timeout", statusIcon: null };
   }
 
   // ─── Send Funnel (sequential) ─────────────────────────
