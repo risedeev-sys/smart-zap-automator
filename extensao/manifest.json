@@ -25,6 +25,7 @@
         "injected/loader.js",
         "injected/wpp-bridge.js",
         "lib/wppconnect-wa.js",
+        "icons/risezap-logo.webp",
         "icons/emblem-audio.png",
         "icons/emblem-media.png",
         "icons/emblem-funnel.png",
