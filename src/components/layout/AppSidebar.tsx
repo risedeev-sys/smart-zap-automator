@@ -48,13 +48,8 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 border-b border-sidebar-border">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center">
           <img src={risezapLogo} alt="Rise Zap" className="h-10 w-10 rounded-lg flex-shrink-0" />
-          {!collapsed && (
-            <span className="font-bold text-2xl text-sidebar-foreground tracking-tight">
-              Rise Zap
-            </span>
-          )}
         </div>
       </SidebarHeader>
 
