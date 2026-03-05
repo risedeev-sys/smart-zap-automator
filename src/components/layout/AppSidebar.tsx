@@ -12,6 +12,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
+import risezapLogo from "@/assets/risezap-logo.webp";
 import { useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -48,9 +49,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2">
-          <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-            <Zap className="h-6 w-6 text-primary-foreground" />
-          </div>
+          <img src={risezapLogo} alt="Rise Zap" className="h-10 w-10 rounded-lg flex-shrink-0" />
           {!collapsed && (
             <span className="font-bold text-2xl text-sidebar-foreground tracking-tight">
               Rise Zap
