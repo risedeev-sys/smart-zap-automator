@@ -49,7 +49,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 border-b border-sidebar-border">
         <div className="flex items-center">
-          <img src={risezapLogo} alt="Rise Zap" className="w-full object-contain flex-shrink-0" />
+          <img src={risezapLogo} alt="Rise Zap" className="h-8 object-contain flex-shrink-0" />
         </div>
       </SidebarHeader>
 
