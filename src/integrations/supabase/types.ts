@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           bytes: number | null
           created_at: string
+          favorite: boolean | null
           id: string
           metadata: Json | null
           mime: string | null
@@ -28,6 +29,7 @@ export type Database = {
         Insert: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           metadata?: Json | null
           mime?: string | null
@@ -38,6 +40,7 @@ export type Database = {
         Update: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           metadata?: Json | null
           mime?: string | null
@@ -92,6 +95,7 @@ export type Database = {
         Row: {
           bytes: number | null
           created_at: string
+          favorite: boolean | null
           id: string
           mime: string | null
           name: string
@@ -101,6 +105,7 @@ export type Database = {
         Insert: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           mime?: string | null
           name: string
@@ -110,6 +115,7 @@ export type Database = {
         Update: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           mime?: string | null
           name?: string
@@ -211,6 +217,7 @@ export type Database = {
         Row: {
           bytes: number | null
           created_at: string
+          favorite: boolean | null
           id: string
           metadata: Json | null
           mime: string | null
@@ -221,6 +228,7 @@ export type Database = {
         Insert: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           metadata?: Json | null
           mime?: string | null
@@ -231,6 +239,7 @@ export type Database = {
         Update: {
           bytes?: number | null
           created_at?: string
+          favorite?: boolean | null
           id?: string
           metadata?: Json | null
           mime?: string | null
