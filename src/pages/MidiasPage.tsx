@@ -36,9 +36,10 @@ export default function MidiasPage() {
   const { toast } = useToast();
 
   const fetchMedias = useCallback(async () => {
-    const { data: resData, error } = await supabase.functions.invoke("assets-manager", {
-      body: { action: "list", table: "medias" },
-    });
+    const { data, error } = await supabase
+      .from("medias")
+      .select("id, name, storage_path, mime")
+      .order("created_at", { ascending: true });
 
     if (error) {
       toast({ title: "Erro ao carregar mídias", description: error.message, variant: "destructive" });
@@ -46,7 +47,7 @@ export default function MidiasPage() {
     }
 
     const rows: AssetItem[] = await Promise.all(
-      (resData?.data ?? []).map(async (row: any) => {
+      (data ?? []).map(async (row: any) => {
         let fileUrl: string | undefined;
         if (row.storage_path) {
           const { data: urlData } = await supabase.storage
@@ -59,7 +60,6 @@ export default function MidiasPage() {
           name: row.name,
           fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
           fileType: row.mime || undefined,
-          favorite: row.favorite === true,
           fileUrl,
         };
       })
@@ -92,16 +92,12 @@ export default function MidiasPage() {
     if (!selected) return;
 
     try {
-      const { data, error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "delete", table: "medias", asset_id: selected }
-      });
-      if (error) throw error;
-
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "midia", assetId: selected, assetName: selectedItem?.name });
       await fetchMedias();
       setDeleteOpen(false);
       toast({
         title: "Mídia excluída!",
-        description: data?.storageWarning ? `Storage warning: ${data.storageWarning}` : undefined,
+        description: storageWarning ? `Cadastro removido, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
       });
     } catch (err: any) {
       toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
@@ -147,51 +143,24 @@ export default function MidiasPage() {
     setEditOpen(true);
   };
 
-  const handleEdit = async () => {
+  const handleEdit = () => {
     if (!selected || !editName.trim()) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "rename", table: "medias", asset_id: selected, new_name: editName.trim() }
-      });
-      if (error) throw error;
-
-      setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
-      setEditOpen(false);
-      toast({ title: "Mídia atualizada" });
-    } catch (err: any) {
-      toast({ title: "Erro ao atualizar", description: err.message, variant: "destructive" });
-    }
+    setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setEditOpen(false);
+    toast({ title: "Mídia atualizada" });
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = () => {
     if (!selectedItem) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "duplicate", table: "medias", asset_id: selectedItem.id }
-      });
-      if (error) throw error;
-
-      await fetchMedias();
-      toast({ title: "Mídia duplicada com sucesso" });
-    } catch (err: any) {
-      toast({ title: "Erro ao duplicar", description: err.message, variant: "destructive" });
-    }
+    const id = Date.now().toString();
+    setMidias((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
+    setSelected(id);
+    toast({ title: "Mídia duplicada" });
   };
 
-  const handleFavorite = async () => {
+  const handleFavorite = () => {
     if (!selected) return;
     setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "toggle_favorite", table: "medias", asset_id: selected }
-      });
-      if (error) {
-        setMidias((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-        throw error;
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao favoritar", description: err.message, variant: "destructive" });
-    }
   };
 
   const isVideo = (type?: string) => type?.startsWith("video/");

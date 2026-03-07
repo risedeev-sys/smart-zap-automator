@@ -118,67 +118,17 @@
 
   function ensureSendableContent(content, type, fileName, mime) {
     if (!(content instanceof Blob)) return content;
-
-    const finalMime = mime || content.type || (
-      type === "video" ? "video/mp4" :
-        type === "audio" ? "audio/mpeg" :
-          type === "image" ? "image/jpeg" :
-            "application/octet-stream"
-    );
-
-    // Bypassing InvalidMediaCheck on WhatsApp Business (@lid):
-    // PTT audio cannot have filename or File wrapper, MUST be a raw Blob.
-    if (type === "audio") {
-      return new Blob([content], { type: finalMime });
-    }
-
-    if (content instanceof File && content.name) return content; // already a valid File
+    if (type !== "video" && type !== "document") return content;
     if (typeof File === "undefined") return content;
 
-    const defaultName = type === "video" ? "video.mp4" :
-      type === "image" ? "image.jpg" : "file";
-
+    const defaultName = type === "video" ? "video.mp4" : "file";
     const normalizedName = (fileName && String(fileName).trim()) || defaultName;
     const hasExt = normalizedName.includes(".");
-    const fallbackExt = type === "video" ? ".mp4" :
-      type === "image" ? ".jpg" : "";
-
+    const fallbackExt = type === "video" ? ".mp4" : "";
     const finalName = hasExt ? normalizedName : `${normalizedName}${fallbackExt}`;
+    const finalMime = mime || content.type || (type === "video" ? "video/mp4" : "application/octet-stream");
 
-    try {
-      return new File([content], finalName, { type: finalMime });
-    } catch (e) {
-      log("File constructor failed, using Blob", { error: String(e) });
-      const b = new Blob([content], { type: finalMime });
-      b.name = finalName;
-      return b;
-    }
-  }
-
-  function dataUrlToFile(dataUrl, fileName) {
-    if (!dataUrl || typeof dataUrl !== "string") return dataUrl;
-    try {
-      const arr = dataUrl.split(",");
-      const mimeMatch = arr[0].match(/:(.*?);/);
-      const mime = mimeMatch ? mimeMatch[1] : "";
-      const bstr = atob(arr[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-      }
-      const defaultName = fileName || `file_${Date.now()}`;
-      try {
-        return new File([u8arr], defaultName, { type: mime || "application/octet-stream" });
-      } catch (e) {
-        const b = new Blob([u8arr], { type: mime || "application/octet-stream" });
-        b.name = defaultName;
-        return b;
-      }
-    } catch (e) {
-      log("dataUrlToFile failed", { error: String(e) });
-      return dataUrl;
-    }
+    return new File([content], finalName, { type: finalMime });
   }
 
   // ─── Structured Response ──────────────────────────────
@@ -222,7 +172,7 @@
 
     switch (type) {
       case "audio": {
-        opts.type = "auto-detect";
+        opts.type = "audio";
 
         // Progressive fallback strategy:
         // 1) PTT first (voice note UX)
@@ -231,19 +181,31 @@
         const forceCommonAudio = normalizedStrategy.startsWith("audio-common");
         opts.isPtt = !forceCommonAudio;
 
-        // Omitting mimetype parameter mimics native attachment processing
+        if (normalizedStrategy.endsWith("with-mime")) {
+          const normalizedMime = String(mime || "").trim();
+          if (normalizedMime) opts.mimetype = normalizedMime;
+        }
+
         if (normalizedStrategy === "audio-ptt-with-viewonce" && asViewOnce) {
           opts.isViewOnce = true;
         }
+
+        // NEVER pass filename for audio in bridge strategies.
         break;
       }
 
       case "image":
-      case "video":
-        // Forcing exact types + mimetypes on media sends triggers InvalidMediaCheck in @lid chats. 
-        // Using "auto-detect" lets wa-js / WhatsApp derive it naturally from the DataUrl header.
-        opts.type = "auto-detect";
+        opts.type = "image";
         opts.caption = caption || undefined;
+        opts.mimetype = mime || "image/jpeg";
+        if (asViewOnce) opts.isViewOnce = true;
+        break;
+
+      case "video":
+        opts.type = "video";
+        opts.filename = fileName || "video.mp4";
+        opts.caption = caption || undefined;
+        opts.mimetype = mime || "video/mp4";
         if (asViewOnce) opts.isViewOnce = true;
         break;
 
@@ -251,7 +213,7 @@
         opts.type = "document";
         opts.filename = fileName || "file";
         opts.caption = caption || undefined;
-        // Specifically omitting mimetype avoids strict typing mismatches
+        opts.mimetype = mime || undefined;
         break;
 
       default:
@@ -353,51 +315,13 @@
 
     let chatId;
     try {
-      let activeChat = await WPP.chat.getActiveChat();
-
-      // Fallback manual caso a lib WPPConnect (WA-JS) esteja com a Store.Chat quebrada para a UI atual
+      const activeChat = await WPP.chat.getActiveChat();
       if (!activeChat || !activeChat.id) {
-        log("WPP.chat.getActiveChat failed. Attempting DOM heuristic fallback...");
-        const allChats = await WPP.chat.getChats();
-        const fallbackChat = allChats.find(c => c.active) || allChats[0];
-        if (fallbackChat) activeChat = fallbackChat;
-      }
-
-      if (!activeChat || !activeChat.id) {
-        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, "No active chat found after fallback.");
+        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, "No active chat.");
         return;
       }
-
-      function stringifyWid(wid) {
-        if (!wid) return "";
-        if (typeof wid === "string") return wid;
-        if (typeof wid._serialized === "string") return wid._serialized;
-        const user = wid.user || wid.id || "";
-        const server = wid.server || wid.domain || "c.us";
-        if (user) return `${user}@${server}`;
-        const fallback = wid.toString();
-        return fallback === "[object Object]" ? "" : fallback;
-      }
-
-      chatId = stringifyWid(activeChat.id);
-
-      if (!chatId || typeof chatId !== "string" || !chatId.includes("@")) {
-        respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.INVALID_WID, "Invalid WID formatting.");
-        return;
-      }
-
-      // ─── STAGE: Text Message ────────────────────────────
-      if (type === "text") {
-        try {
-          const sendReturn = await WPP.chat.sendTextMessage(chatId, detail.content, { waitForAck: false });
-          const messageId = sendReturn?.id?._serialized || sendReturn?.id || null;
-          respond(requestId, { success: true, messageId, sendMsgResult: "OK" });
-        } catch (err) {
-          respondError(requestId, "SEND_RESULT", "SEND_TEXT_ERROR", err?.message || String(err));
-        }
-        return;
-      }
-
+      // activeChat.id is a Wid object — sendFileMessage needs a serialized string
+      chatId = activeChat.id._serialized || activeChat.id.toString() || String(activeChat.id);
       log("Active chat resolved", { chatId });
     } catch (err) {
       respondError(requestId, STAGE.FETCH_CONTENT, ERROR_CODE.NO_ACTIVE_CHAT, err.message || String(err));
@@ -450,13 +374,10 @@
 
     log("PREPARE_CONTENT", { isVideo, originalType: type, contentIsDataUrl: typeof content === "string" });
 
-    // Trust wa-js to handle the DataURL natively, as our DataURLs now have strict magic byte MimeTypes.
-    // Converting them to Blobs/Files manually here seems to trigger InvalidMediaCheckRepairFailedType
-    // in the WA module pipeline for certain media types.
-    // UPDATE: Actually, native wa-js on @lid performs better when receiving clean bloated Blobs/Files 
-    // rather than dealing with base64 parsing directly which triggers rigid heuristics.
+    // When content is a data URL string, wa-js accepts it directly — no further prep needed.
+    // When content is a Blob, wrap it as a File for proper filename/mime handling.
     const sendableContent = typeof content === "string"
-      ? ensureSendableContent(dataUrlToFile(content, fileName), type, fileName, mime)
+      ? content
       : ensureSendableContent(content, type, fileName, mime);
 
     // ─── STAGE: SEND_REQUEST + SEND_RESULT ────────────

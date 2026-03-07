@@ -32,9 +32,10 @@ export default function DocumentosPage() {
   const { toast } = useToast();
 
   const fetchDocuments = useCallback(async () => {
-    const { data: resData, error } = await supabase.functions.invoke("assets-manager", {
-      body: { action: "list", table: "documents" },
-    });
+    const { data, error } = await supabase
+      .from("documents")
+      .select("id, name, storage_path")
+      .order("created_at", { ascending: true });
 
     if (error) {
       toast({ title: "Erro ao carregar documentos", description: error.message, variant: "destructive" });
@@ -42,7 +43,7 @@ export default function DocumentosPage() {
     }
 
     const rows: AssetItem[] = await Promise.all(
-      (resData?.data ?? []).map(async (row: any) => {
+      (data ?? []).map(async (row: any) => {
         let fileUrl: string | undefined;
         if (row.storage_path) {
           const { data: urlData } = await supabase.storage
@@ -54,7 +55,6 @@ export default function DocumentosPage() {
           id: row.id,
           name: row.name,
           fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
-          favorite: row.favorite === true,
           fileUrl,
         };
       })
@@ -87,16 +87,12 @@ export default function DocumentosPage() {
     if (!selected) return;
 
     try {
-      const { data, error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "delete", table: "documents", asset_id: selected }
-      });
-      if (error) throw error;
-
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "documento", assetId: selected, assetName: selectedItem?.name });
       await fetchDocuments();
       setDeleteOpen(false);
       toast({
         title: "Documento excluído!",
-        description: data?.storageWarning ? `Storage warning: ${data.storageWarning}` : undefined,
+        description: storageWarning ? `Cadastro removido, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
       });
     } catch (err: any) {
       toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
@@ -139,51 +135,24 @@ export default function DocumentosPage() {
     setEditOpen(true);
   };
 
-  const handleEdit = async () => {
+  const handleEdit = () => {
     if (!selected || !editName.trim()) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "rename", table: "documents", asset_id: selected, new_name: editName.trim() }
-      });
-      if (error) throw error;
-
-      setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
-      setEditOpen(false);
-      toast({ title: "Documento atualizado" });
-    } catch (err: any) {
-      toast({ title: "Erro ao atualizar", description: err.message, variant: "destructive" });
-    }
+    setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setEditOpen(false);
+    toast({ title: "Documento atualizado" });
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = () => {
     if (!selectedItem) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "duplicate", table: "documents", asset_id: selectedItem.id }
-      });
-      if (error) throw error;
-
-      await fetchDocuments();
-      toast({ title: "Documento duplicado com sucesso" });
-    } catch (err: any) {
-      toast({ title: "Erro ao duplicar", description: err.message, variant: "destructive" });
-    }
+    const id = Date.now().toString();
+    setDocumentos((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
+    setSelected(id);
+    toast({ title: "Documento duplicado" });
   };
 
-  const handleFavorite = async () => {
+  const handleFavorite = () => {
     if (!selected) return;
     setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "toggle_favorite", table: "documents", asset_id: selected }
-      });
-      if (error) {
-        setDocumentos((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-        throw error;
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao favoritar", description: err.message, variant: "destructive" });
-    }
   };
 
   return (

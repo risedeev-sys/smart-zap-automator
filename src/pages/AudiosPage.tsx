@@ -37,9 +37,10 @@ export default function AudiosPage() {
   const { toast } = useToast();
 
   const fetchAudios = useCallback(async () => {
-    const { data: resData, error } = await supabase.functions.invoke("assets-manager", {
-      body: { action: "list", table: "audios" },
-    });
+    const { data, error } = await supabase
+      .from("audios")
+      .select("id, name, storage_path, metadata")
+      .order("created_at", { ascending: true });
 
     if (error) {
       toast({ title: "Erro ao carregar áudios", description: error.message, variant: "destructive" });
@@ -47,7 +48,7 @@ export default function AudiosPage() {
     }
 
     const rows: AssetItem[] = await Promise.all(
-      (resData?.data ?? []).map(async (row: any) => {
+      (data ?? []).map(async (row: any) => {
         const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
         let fileUrl: string | undefined;
         if (row.storage_path) {
@@ -62,7 +63,6 @@ export default function AudiosPage() {
           fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
           forwarded: metadata.forwarded === true,
           singleView: metadata.singleView === true || metadata.single_view === true,
-          favorite: row.favorite === true,
           fileUrl,
         };
       })
@@ -95,16 +95,12 @@ export default function AudiosPage() {
     if (!selected) return;
 
     try {
-      const { data, error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "delete", table: "audios", asset_id: selected }
-      });
-      if (error) throw error;
-
+      const { storageWarning } = await deleteAssetEverywhere({ assetType: "audio", assetId: selected, assetName: selectedItem?.name });
       await fetchAudios();
       setDeleteOpen(false);
       toast({
         title: "Áudio excluído!",
-        description: data?.storageWarning ? `Storage warning: ${data.storageWarning}` : undefined,
+        description: storageWarning ? `Arquivo removido do cadastro, mas houve falha ao limpar storage: ${storageWarning}` : undefined,
       });
     } catch (err: any) {
       toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
@@ -176,51 +172,24 @@ export default function AudiosPage() {
     setEditOpen(true);
   };
 
-  const handleEdit = async () => {
+  const handleEdit = () => {
     if (!selected || !editName.trim()) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "rename", table: "audios", asset_id: selected, new_name: editName.trim() }
-      });
-      if (error) throw error;
-
-      setAudios((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
-      setEditOpen(false);
-      toast({ title: "Áudio atualizado" });
-    } catch (err: any) {
-      toast({ title: "Erro ao atualizar", description: err.message, variant: "destructive" });
-    }
+    setAudios((prev) => prev.map((m) => m.id === selected ? { ...m, name: editName.trim() } : m));
+    setEditOpen(false);
+    toast({ title: "Áudio atualizado" });
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = () => {
     if (!selectedItem) return;
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "duplicate", table: "audios", asset_id: selectedItem.id }
-      });
-      if (error) throw error;
-
-      await fetchAudios(); // Recarrega para pegar o clone físico de storage
-      toast({ title: "Áudio duplicado com sucesso" });
-    } catch (err: any) {
-      toast({ title: "Erro ao duplicar", description: err.message, variant: "destructive" });
-    }
+    const id = Date.now().toString();
+    setAudios((prev) => [...prev, { ...selectedItem, id, name: `${selectedItem.name} (cópia)` }]);
+    setSelected(id);
+    toast({ title: "Áudio duplicado" });
   };
 
-  const handleFavorite = async () => {
+  const handleFavorite = () => {
     if (!selected) return;
     setAudios((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-    try {
-      const { error } = await supabase.functions.invoke("assets-manager", {
-        body: { action: "toggle_favorite", table: "audios", asset_id: selected }
-      });
-      if (error) {
-        setAudios((prev) => prev.map((m) => m.id === selected ? { ...m, favorite: !m.favorite } : m));
-        throw error;
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao favoritar", description: err.message, variant: "destructive" });
-    }
   };
 
   return (

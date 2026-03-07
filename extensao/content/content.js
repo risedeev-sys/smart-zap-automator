@@ -83,11 +83,11 @@
     const lookups = type
       ? [{ type, rows: type === "message" ? assets.messages : type === "audio" ? assets.audios : type === "media" ? assets.medias : assets.documents }]
       : [
-        { type: "message", rows: assets.messages },
-        { type: "audio", rows: assets.audios },
-        { type: "media", rows: assets.medias },
-        { type: "document", rows: assets.documents },
-      ];
+          { type: "message", rows: assets.messages },
+          { type: "audio", rows: assets.audios },
+          { type: "media", rows: assets.medias },
+          { type: "document", rows: assets.documents },
+        ];
 
     for (const lookup of lookups) {
       const found = (lookup.rows || []).find((row) => row.id === assetId);
@@ -170,8 +170,8 @@
     waJsScript.id = "rz-wajs-script";
     waJsScript.onload = function () {
       console.log("[RiseZap] wa-js library loaded");
-      const bridgeUrl = chrome.runtime.getURL("injected/wpp-bridge.js") + "?v=" + Date.now();
-      const loaderUrl = chrome.runtime.getURL("injected/loader.js") + "?v=" + Date.now();
+      const bridgeUrl = chrome.runtime.getURL("injected/wpp-bridge.js");
+      const loaderUrl = chrome.runtime.getURL("injected/loader.js");
       const loaderScript = document.createElement("script");
       loaderScript.src = loaderUrl;
       loaderScript.setAttribute("data-bridge-url", bridgeUrl);
@@ -250,20 +250,25 @@
     });
   }
 
-  function normalizeAudioBridgePayload(asset, trueMime) {
+  function normalizeAudioBridgePayload(asset, blob) {
     const rawName = String(asset?.name || "audio").trim() || "audio";
     const hasExt = /\.[a-z0-9]{2,8}$/i.test(rawName);
+    const baseMime = String(blob?.type || asset?.mime || "").toLowerCase().trim();
 
-    const ext = trueMime.includes("ogg") || trueMime.includes("opus")
+    const normalizedMime = baseMime.includes("audio/ogg")
+      ? "audio/ogg; codecs=opus"
+      : baseMime || "audio/mpeg";
+
+    const ext = normalizedMime.includes("ogg") || normalizedMime.includes("opus")
       ? "ogg"
-      : trueMime.includes("wav")
+      : normalizedMime.includes("wav")
         ? "wav"
-        : trueMime.includes("aac") || trueMime.includes("m4a") || trueMime.includes("mp4")
+        : normalizedMime.includes("aac") || normalizedMime.includes("m4a")
           ? "m4a"
           : "mp3";
 
     return {
-      mime: trueMime,
+      mime: normalizedMime,
       fileName: hasExt ? rawName : `${rawName}.${ext}`,
     };
   }
@@ -345,29 +350,9 @@
   async function detectMimeFromBlobSignature(blob) {
     try {
       const head = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
-
-      if (head.length >= 4 && head[0] === 0x4F && head[1] === 0x67 && head[2] === 0x67 && head[3] === 0x53) {
-        return "audio/ogg; codecs=opus";
-      }
-
-      if (head.length >= 3 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) return "audio/mpeg";
-      if (head.length >= 2 && head[0] === 0xFF && (head[1] & 0xE0) === 0xE0) return "audio/mpeg";
-
-      if (head.length >= 12) {
-        const riff = String.fromCharCode(head[0], head[1], head[2], head[3]);
-        const wave = String.fromCharCode(head[8], head[9], head[10], head[11]);
-        const webp = String.fromCharCode(head[8], head[9], head[10], head[11]);
-        if (riff === "RIFF" && wave === "WAVE") return "audio/wav";
-        if (riff === "RIFF" && webp === "WEBP") return "image/webp";
-      }
-
       if (head.length >= 12) {
         const boxType = String.fromCharCode(head[4], head[5], head[6], head[7]);
-        if (boxType === "ftyp") {
-          const brand = String.fromCharCode(head[8], head[9], head[10], head[11]);
-          if (brand === "M4A " || brand === "M4B " || brand === "M4P ") return "audio/mp4";
-          return "video/mp4";
-        }
+        if (boxType === "ftyp") return "video/mp4";
       }
       if (head.length >= 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) {
         return "video/webm";
@@ -377,6 +362,11 @@
       if (head.length >= 6) {
         const sig = String.fromCharCode(...head.slice(0, 6));
         if (sig === "GIF87a" || sig === "GIF89a") return "image/gif";
+      }
+      if (head.length >= 12) {
+        const riff = String.fromCharCode(head[0], head[1], head[2], head[3]);
+        const webp = String.fromCharCode(head[8], head[9], head[10], head[11]);
+        if (riff === "RIFF" && webp === "WEBP") return "image/webp";
       }
       return "";
     } catch {
@@ -1080,13 +1070,10 @@
       return false;
     }
 
-    let trueMime = await detectMimeFromBlobSignature(blob);
-    if (!trueMime) trueMime = blob.type || asset.mime || "audio/mpeg";
-
-    if (trueMime === "audio/ogg") trueMime = "audio/ogg; codecs=opus";
-
-    const audioPayload = normalizeAudioBridgePayload(asset, trueMime);
-    const bridgeBlob = new Blob([blob], { type: trueMime });
+    const audioPayload = normalizeAudioBridgePayload(asset, blob);
+    const bridgeBlob = String(blob?.type || "").toLowerCase() === String(audioPayload.mime || "").toLowerCase()
+      ? blob
+      : new Blob([blob], { type: audioPayload.mime || "audio/mpeg" });
 
     let dataUrl;
     try {
@@ -1275,48 +1262,62 @@
     return sendFileViaAttachMenu(asset);
   }
 
-  // ─── Send Text via Bridge ───────────────────────────────
+  // ─── Send Text via DOM (paste) ────────────────────────
 
-  async function sendTextViaBridge(text) {
-    if (!isBridgeReady()) {
-      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
-      return false;
-    }
-
-    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-
-    return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        window.removeEventListener("risezap:result", handler);
-        console.error("[RiseZap] Text bridge timeout after 30s");
-        resolve(false);
-      }, 30000);
-
-      async function handler(evt) {
-        const detail = evt.detail || {};
-        if (detail.requestId !== requestId) return;
-
-        window.removeEventListener("risezap:result", handler);
-        clearTimeout(timeoutId);
-
-        if (detail.success === true) {
-          resolve(true);
-        } else {
-          console.error("[RiseZap] Text bridge failed:", detail);
-          showToast(`Falha ao enviar texto (${detail.errorCode || "erro"})`, true);
-          resolve(false);
-        }
+  async function sendTextViaDom(text) {
+    try {
+      const input =
+        document.querySelector('#main div[contenteditable="true"][data-tab="10"]') ||
+        document.querySelector('#main div[contenteditable="true"][role="textbox"]') ||
+        document.querySelector('#main footer div[contenteditable="true"]') ||
+        document.querySelector('footer div[contenteditable="true"]');
+      if (!input) {
+        showToast("Abra um chat para enviar", true);
+        return false;
       }
 
-      window.addEventListener("risezap:result", handler);
-      window.dispatchEvent(new CustomEvent("risezap:send", {
-        detail: {
-          requestId,
-          type: "text",
-          content: text
-        }
-      }));
-    });
+      input.focus();
+      await sleep(100);
+      input.textContent = '';
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await sleep(100);
+
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", text);
+      const pasteEvent = new ClipboardEvent("paste", {
+        clipboardData: dataTransfer,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(pasteEvent);
+
+      await sleep(500);
+
+      const beforeSnapshot = snapshotOutgoingState();
+      let sendBtn = findVisibleSendButton(document);
+      if (!sendBtn) {
+        try { sendBtn = await waitForElement('span[data-icon="send"]', 3000); } catch {}
+      }
+      if (!sendBtn) {
+        showToast("Botão de enviar não encontrado", true);
+        return false;
+      }
+
+      const sendBtnEl = sendBtn.closest("button") || sendBtn;
+      sendBtnEl.click();
+
+      const confirmation = await waitForOutgoingCommit(beforeSnapshot, 45000);
+      if (!confirmation.ok) {
+        showToast(`Texto não confirmado pelo WhatsApp (${confirmation.reason})`, true);
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error("[RiseZap] sendTextViaDom error:", err);
+      showToast("Erro ao enviar texto", true);
+      return false;
+    }
   }
 
   // ─── Send Funnel (sequential) ─────────────────────────
@@ -1376,7 +1377,7 @@
 
         let ok = false;
         if (asset.resolvedType === "message") {
-          ok = await sendTextViaBridge(asset.content || asset.name);
+          ok = await sendTextViaDom(asset.content || asset.name);
         } else {
           ok = await sendFile(asset);
         }
@@ -1526,7 +1527,7 @@
       const btn = makeBtn("💬", m.name, "rz-message");
       btn.addEventListener("click", () => {
         showPreview("Enviar Mensagem", m.content || m.name, () =>
-          sendTextViaBridge(m.content || m.name)
+          sendTextViaDom(m.content || m.name)
         );
       });
       bar.appendChild(btn);
