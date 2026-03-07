@@ -1,50 +1,32 @@
 
 
-## Diagnóstico
+## Plan: Redesign Extension Login — Black & Blue Theme
 
-**Dados no banco**: 2 áudios, 2 mídias, 2 documentos — todos existem e estão vinculados ao user_id correto.
+The current popup uses a WhatsApp-green color scheme (#00a884, #111b21). The user wants it shifted to a **black and blue** palette, aligned with the RiseZap SaaS brand (primary blue from the dashboard: `hsl(220, 80%, 40%)` ≈ `#1447b3`).
 
-**Causa raiz**: Nas funções `fetchDocuments`, `fetchAudios` e `fetchMedias`, o código mapeia `storage_path` para `fileName` mas nunca gera uma URL assinada (signed URL) do Supabase Storage para popular `fileUrl`. Resultado: o detalhe sempre mostra "Nenhum arquivo" após recarregar a página.
+### Color Palette
 
-**Por que só funcionava antes**: O `fileUrl` era preenchido apenas via `URL.createObjectURL(uploadFile)` no momento do upload. Essa URL é efêmera e se perde ao navegar ou recarregar.
+| Element | Current | New |
+|---------|---------|-----|
+| Background | `#111b21` (dark green-gray) | `#0a0e17` (near-black blue) |
+| Input bg | `#1f2c34` | `#111827` (dark navy) |
+| Input border | `#2a3942` | `#1e3a5f` (subtle blue) |
+| Input focus | `#00a884` (green) | `#3b82f6` (bright blue) |
+| Button primary | `#00a884` (green) | `#2563eb` (blue-600) |
+| Button hover | `#00c896` | `#3b82f6` (blue-500) |
+| Logo title | `#00a884` | `#3b82f6` |
+| Subtitle | `#8696a0` | `#64748b` |
+| Labels | `#8696a0` | `#94a3b8` |
+| Success status | `#00a884` | `#3b82f6` |
+| Logged-in email | `#00a884` | `#60a5fa` |
+| Button text | `#111b21` | `#ffffff` |
 
-## Solução
+### Visual Enhancements
+- Subtle blue glow on the card area with a border (`border: 1px solid rgba(59,130,246,0.15)`)
+- Slightly larger popup width (340px) for breathing room
+- Input fields with subtle inner shadow for depth
+- Button with subtle box-shadow glow on hover
 
-Após o fetch de cada tabela, gerar **signed URLs** do Supabase Storage para cada registro que possua `storage_path` preenchido, e popular o campo `fileUrl` do `AssetItem`.
-
-### Arquivos a modificar
-
-1. **`src/pages/DocumentosPage.tsx`** — No `fetchDocuments`, após obter os registros, chamar `supabase.storage.from("assets").createSignedUrl(storage_path, 3600)` para cada registro com `storage_path`, e atribuir o resultado ao `fileUrl`.
-
-2. **`src/pages/AudiosPage.tsx`** — Mesma correção no `fetchAudios`.
-
-3. **`src/pages/MidiasPage.tsx`** — Mesma correção no `fetchMedias`.
-
-### Implementação técnica
-
-Para cada página, o padrão será:
-
-```typescript
-// Dentro do fetch, após mapear os rows:
-const rowsWithUrls = await Promise.all(
-  (data ?? []).map(async (row) => {
-    let fileUrl: string | undefined;
-    if (row.storage_path) {
-      const { data: urlData } = await supabase.storage
-        .from("assets")
-        .createSignedUrl(row.storage_path, 3600); // 1 hora
-      fileUrl = urlData?.signedUrl;
-    }
-    return { ...mappedRow, fileUrl };
-  })
-);
-```
-
-Signed URLs expiram em 1 hora, o que é adequado para a sessão de uso. O bucket `assets` é privado, então signed URLs é a abordagem correta (não public URLs).
-
-### Escopo
-
-- Nenhuma alteração de banco de dados necessária
-- Nenhuma alteração de RLS necessária
-- 3 arquivos modificados, mesmo padrão em todos
+### File Changed
+**`extensao/popup/popup.html`** — Update all CSS color values from green-teal to black-blue palette. No structural HTML changes needed.
 

@@ -83,11 +83,11 @@
     const lookups = type
       ? [{ type, rows: type === "message" ? assets.messages : type === "audio" ? assets.audios : type === "media" ? assets.medias : assets.documents }]
       : [
-        { type: "message", rows: assets.messages },
-        { type: "audio", rows: assets.audios },
-        { type: "media", rows: assets.medias },
-        { type: "document", rows: assets.documents },
-      ];
+          { type: "message", rows: assets.messages },
+          { type: "audio", rows: assets.audios },
+          { type: "media", rows: assets.medias },
+          { type: "document", rows: assets.documents },
+        ];
 
     for (const lookup of lookups) {
       const found = (lookup.rows || []).find((row) => row.id === assetId);
@@ -596,12 +596,452 @@
   }
 
   // ═══════════════════════════════════════════════════════
-  // FILE SENDING (ALL VIA WA-JS BRIDGE)
+  // ATTACH-MENU FILE INJECTION (PRIMARY METHOD)
   // ═══════════════════════════════════════════════════════
-  // All file sends (audio, image, video, document) go
-  // through the wa-js bridge (WPP.chat.sendFileMessage)
-  // for maximum reliability. No DOM manipulation needed.
+  //
+  // Root-cause fix:
+  // Synthetic drag-and-drop is unreliable on WA Web in embedded/browser
+  // contexts. We now use the same stable path users use manually:
+  //   [+] Attach menu -> existing file input -> inject File -> Send
+  //
+  // IMPORTANT:
+  // - Never use input.click() (forbidden)
+  // - We click only the Attach button/menu and inject files silently
   // ═══════════════════════════════════════════════════════
+
+  function findAttachButton() {
+    const candidates = [
+      'button[title="Attach"]',
+      'button[aria-label="Attach"]',
+      'button[aria-label="Anexar"]',
+      'span[data-icon="plus-rounded"]',
+      'span[data-icon="clip"]',
+    ];
+
+    for (const selector of candidates) {
+      const anchor = document.querySelector(selector);
+      if (!anchor) continue;
+      const btn = anchor.closest("button") || anchor;
+      if (isElementVisible(btn)) return btn;
+    }
+
+    return null;
+  }
+
+  async function openAttachMenu() {
+    const attachBtn = findAttachButton();
+    if (!attachBtn) return false;
+    attachBtn.click();
+    await sleep(180);
+    return true;
+  }
+
+  function getAttachmentInputContext(input) {
+    if (!(input instanceof HTMLInputElement)) return "";
+
+    const tokens = [];
+    const pushToken = (value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      tokens.push(raw.toLowerCase());
+    };
+
+    const collectFromElement = (el) => {
+      if (!(el instanceof Element)) return;
+      pushToken(el.getAttribute("aria-label"));
+      pushToken(el.getAttribute("title"));
+      pushToken(el.getAttribute("data-testid"));
+      pushToken(el.getAttribute("data-icon"));
+      pushToken(el.id);
+      pushToken(el.className);
+      pushToken((el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180));
+    };
+
+    collectFromElement(input);
+
+    const ancestors = [
+      input.closest("label"),
+      input.closest("button"),
+      input.closest('[role="button"]'),
+      input.closest("li"),
+      input.closest("[data-testid]"),
+      input.parentElement,
+      input.parentElement?.parentElement,
+    ];
+
+    for (const node of ancestors) collectFromElement(node);
+
+    return tokens.join(" | ");
+  }
+
+  function isStickerAttachmentInput(input) {
+    if (!(input instanceof HTMLInputElement)) return false;
+
+    const accept = String(input.accept || "").toLowerCase();
+    const localContext = [
+      input.getAttribute("aria-label"),
+      input.getAttribute("title"),
+      input.getAttribute("data-testid"),
+      input.getAttribute("data-icon"),
+      input.id,
+      input.className,
+    ]
+      .map((value) => String(value || "").toLowerCase())
+      .join(" | ");
+
+    const hasStickerKeyword = /(figurinha|sticker)/i.test(localContext);
+    const looksLikeStickerMime =
+      accept.includes("image/webp") &&
+      !accept.includes("video") &&
+      !accept.includes("application");
+
+    return hasStickerKeyword || looksLikeStickerMime;
+  }
+
+  function isPrimaryMediaAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    const context = getAttachmentInputContext(input);
+
+    if (accept.includes("image") && accept.includes("video")) return true;
+    if (/(fotos?\s*e\s*videos?|photos?\s*&?\s*videos?)/i.test(context)) return true;
+    if (/media upload/.test(context)) return true;
+
+    return false;
+  }
+
+  function scoreAttachmentInput(input, targetKind) {
+    const accept = String(input.accept || "").toLowerCase();
+    const capture = String(input.getAttribute("capture") || "").toLowerCase();
+    let score = 0;
+
+    const stickerInput = isStickerAttachmentInput(input);
+
+    if (targetKind === "media") {
+      if (isPrimaryMediaAttachmentInput(input)) score += 260;
+      if (accept.includes("video")) score += 120;
+      if (accept.includes("image")) score += 60;
+      if (accept.includes("application")) score -= 120;
+      if (accept.includes("audio")) score -= 80;
+      if (!accept || accept === "*/*") score -= 40;
+      if (capture) score -= 20;
+      if (stickerInput) score -= 1000;
+    } else if (targetKind === "document") {
+      if (accept.includes("application")) score += 120;
+      if (accept.includes("text")) score += 60;
+      if (!accept || accept === "*/*") score += 40;
+      if (accept.includes("video") || accept.includes("image")) score -= 40;
+      if (stickerInput) score -= 120;
+    } else if (targetKind === "audio") {
+      if (accept.includes("audio")) score += 120;
+      if (accept.includes("application")) score += 20;
+      if (!accept || accept === "*/*") score += 10;
+      if (accept.includes("video") || accept.includes("image")) score -= 30;
+      if (stickerInput) score -= 100;
+    }
+
+    if (input.multiple) score += 5;
+    return score;
+  }
+
+  function listEnabledAttachmentInputs() {
+    return Array.from(document.querySelectorAll('input[type="file"]')).filter(
+      (el) => el instanceof HTMLInputElement && !el.disabled
+    );
+  }
+
+  function uniqueAttachmentInputs(inputs) {
+    const seen = new Set();
+    const list = [];
+
+    for (const input of inputs) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      if (seen.has(input)) continue;
+      seen.add(input);
+      list.push(input);
+    }
+
+    return list;
+  }
+
+  function isMediaAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    return /(image|video)/i.test(accept);
+  }
+
+  function isDocumentAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    if (!accept || accept === "*/*") return true;
+    return /(application|audio|text|document)/i.test(accept);
+  }
+
+  function isDocumentOnlyAttachmentInput(input) {
+    const accept = String(input?.accept || "").toLowerCase();
+    if (!accept || accept === "*/*") return false;
+    return /(application|audio|text|document)/i.test(accept) && !/(image|video)/i.test(accept);
+  }
+
+  async function waitForAttachmentInputs({
+    timeoutMs = 4000,
+    baselineInputs = [],
+    preferredKind = "default",
+  } = {}) {
+    const startedAt = Date.now();
+    const baselineSet = new Set(baselineInputs || []);
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const allInputs = listEnabledAttachmentInputs();
+      if (!allInputs.length) {
+        await sleep(120);
+        continue;
+      }
+
+      const newlyOpenedInputs = allInputs.filter((input) => !baselineSet.has(input));
+      const pool = uniqueAttachmentInputs([...newlyOpenedInputs, ...allInputs]);
+
+      if (preferredKind === "media") {
+        const mediaInputs = pool.filter((input) => isMediaAttachmentInput(input));
+        if (mediaInputs.length) return mediaInputs;
+        await sleep(120);
+        continue;
+      }
+
+      if (preferredKind === "document") {
+        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input));
+        if (documentInputs.length) return documentInputs;
+      }
+
+      if (preferredKind === "audio") {
+        const audioInputs = pool.filter((input) => /audio/i.test(String(input.accept || "")));
+        if (audioInputs.length) return audioInputs;
+
+        const documentInputs = pool.filter((input) => isDocumentAttachmentInput(input));
+        if (documentInputs.length) return documentInputs;
+      }
+
+      if (!newlyOpenedInputs.length && Date.now() - startedAt < 1200) {
+        await sleep(120);
+        continue;
+      }
+
+      return pool;
+    }
+
+    return [];
+  }
+
+  function pickAttachmentInput(inputs, assetType, mime = "", fileName = "") {
+    const targetKind = assetType === "media" ? "media" : "document";
+
+    const ranked = inputs
+      .map((input) => ({ input, score: scoreAttachmentInput(input, targetKind) }))
+      .sort((a, b) => b.score - a.score);
+
+    const rankedInputs = ranked.map((item) => item.input);
+    const nonStickerInputs = rankedInputs.filter((input) => !isStickerAttachmentInput(input));
+    const fallbackPool = nonStickerInputs.length ? nonStickerInputs : rankedInputs;
+
+    const mediaCandidates = fallbackPool.filter((input) => isMediaAttachmentInput(input));
+    const documentCandidates = fallbackPool.filter((input) => isDocumentAttachmentInput(input));
+
+    if (assetType === "media") {
+      const payloadIsVideoLike = isVideoFileLike(mime, fileName);
+      const payloadIsImageLike = isImageFileLike(mime, fileName);
+
+      if (payloadIsVideoLike) {
+        const strictVideoInput = mediaCandidates.find((input) => /video/i.test(String(input.accept || "")));
+        if (strictVideoInput) return strictVideoInput;
+      }
+
+      if (payloadIsImageLike) {
+        const strictPhotoVideoInput = mediaCandidates.find(isPrimaryMediaAttachmentInput);
+        if (strictPhotoVideoInput) return strictPhotoVideoInput;
+
+        const strictImageInput = mediaCandidates.find((input) => /image/i.test(String(input.accept || "")));
+        if (strictImageInput) return strictImageInput;
+      }
+
+      if (mediaCandidates.length) return mediaCandidates[0];
+      return null;
+    }
+
+    if (assetType === "document" || assetType === "audio") {
+      const strictDocumentInput = fallbackPool.find((input) => isDocumentOnlyAttachmentInput(input));
+      if (strictDocumentInput) return strictDocumentInput;
+      return documentCandidates[0] || fallbackPool[0] || rankedInputs[0] || null;
+    }
+
+    return fallbackPool[0] || rankedInputs[0] || null;
+  }
+
+  function injectFileIntoInput(input, file) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    try {
+      input.files = dataTransfer.files;
+    } catch {
+      Object.defineProperty(input, "files", {
+        value: dataTransfer.files,
+        configurable: true,
+      });
+    }
+
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  async function waitForComposerSendButton(preferredRoot, timeoutMs = 10000) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (preferredRoot) {
+        const localBtn = findVisibleSendButton(preferredRoot);
+        if (localBtn) return localBtn;
+      }
+
+      const globalBtn = findVisibleSendButton(document);
+      if (globalBtn) return globalBtn;
+
+      await sleep(180);
+    }
+
+    return null;
+  }
+
+  async function sendFileViaAttachMenu(asset) {
+    if (!asset?.storage_path) {
+      showToast("Ativo sem arquivo associado", true);
+      return false;
+    }
+
+    console.log("[RiseZap] sendFileViaAttachMenu start:", {
+      assetId: asset.id,
+      assetName: asset.name,
+      resolvedType: asset.resolvedType,
+      mime: asset.mime,
+    });
+
+    const signedUrl = await getSignedUrl(asset.storage_path);
+    if (!signedUrl) {
+      showToast("Erro ao gerar URL do arquivo", true);
+      return false;
+    }
+
+    let blob;
+    try {
+      blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
+    } catch (err) {
+      showToast(`Erro ao baixar arquivo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    let prepared;
+    try {
+      prepared = await prepareAssetFileForWhatsapp(asset, blob);
+    } catch (err) {
+      showToast(`Erro ao preparar arquivo: ${err?.message || "desconhecido"}`, true);
+      return false;
+    }
+
+    const { file, fileName, fileMime, isVideo, normalizedWebp } = prepared;
+    const beforeSnapshot = snapshotOutgoingState();
+    const baselineInputs = listEnabledAttachmentInputs();
+
+    const attachOpened = await openAttachMenu();
+    if (!attachOpened) {
+      showToast("Botão de anexo não encontrado no WhatsApp", true);
+      return false;
+    }
+
+    // Audio doesn't have a dedicated input in WhatsApp's attach menu,
+    // so we route it through the document channel as fallback
+    const preferredKind = asset.resolvedType === "media"
+      ? "media"
+      : asset.resolvedType === "document" || asset.resolvedType === "audio"
+        ? "document"
+        : "default";
+
+    const inputs = await waitForAttachmentInputs({
+      timeoutMs: 5000,
+      baselineInputs,
+      preferredKind,
+    });
+
+    if (!inputs.length) {
+      showToast("Entrada de upload não encontrada no WhatsApp", true);
+      return false;
+    }
+
+    let targetInput = pickAttachmentInput(inputs, asset.resolvedType, fileMime, fileName);
+
+    if (!targetInput) {
+      const emergencyInputs = uniqueAttachmentInputs(listEnabledAttachmentInputs());
+      targetInput = pickAttachmentInput(emergencyInputs, asset.resolvedType, fileMime, fileName);
+    }
+
+    if (!targetInput) {
+      showToast(asset.resolvedType === "media"
+        ? "Não foi possível localizar o canal de foto/vídeo do WhatsApp"
+        : "Canal de upload não disponível no WhatsApp", true);
+      console.error("[RiseZap] pickAttachmentInput returned null", {
+        resolvedType: asset.resolvedType,
+        candidateInputs: inputs.map((input) => ({ accept: input.accept, multiple: input.multiple })),
+        emergencyInputs: listEnabledAttachmentInputs().map((input) => ({ accept: input.accept, multiple: input.multiple })),
+        fileName,
+        fileMime,
+      });
+      return false;
+    }
+
+    injectFileIntoInput(targetInput, file);
+
+    const assetLooksLikeVideo =
+      isVideo || isVideoFileLike(asset?.mime || "", asset?.storage_path || asset?.name || fileName);
+
+    const composerRoot =
+      targetInput.closest('div[role="dialog"]') ||
+      targetInput.closest('[data-animate-modal-popup="true"]') ||
+      document;
+
+    const sendBtnTimeoutMs = assetLooksLikeVideo ? 120000 : 12000;
+    const sendBtn = await waitForComposerSendButton(composerRoot, sendBtnTimeoutMs);
+    if (!sendBtn) {
+      showToast("WhatsApp não abriu a prévia do arquivo", true);
+      console.error("[RiseZap] sendFileViaAttachMenu: composer send button not found", {
+        assetId: asset.id,
+        assetName: asset.name,
+        inputAccept: targetInput.accept,
+        fileName,
+        fileMime,
+        isVideo,
+        assetLooksLikeVideo,
+      });
+      return false;
+    }
+
+    const sendBtnEl = sendBtn.closest("button") || sendBtn;
+    sendBtnEl.click();
+
+    const confirmTimeoutMs = assetLooksLikeVideo ? 720000 : 45000;
+    const confirmation = await waitForOutgoingCommit(beforeSnapshot, confirmTimeoutMs);
+
+    if (!confirmation.ok) {
+      showToast(`WhatsApp não confirmou envio (${confirmation.reason})`, true);
+      return false;
+    }
+
+    console.log("[RiseZap] sendFileViaAttachMenu SUCCESS:", {
+      assetId: asset.id,
+      assetName: asset.name,
+      statusIcon: confirmation.statusIcon,
+      inputAccept: targetInput.accept,
+      fileMime,
+      isVideo,
+      normalizedWebp,
+    });
+
+    return true;
+  }
 
   // ─── Send Audio via Bridge (PTT only) ─────────────────
 
@@ -807,102 +1247,6 @@
     });
   }
 
-  // ─── Send Document via Bridge ─────────────────────────
-
-  async function sendDocumentViaBridge(asset) {
-    if (!asset.storage_path) {
-      showToast("Documento sem arquivo associado", true);
-      return false;
-    }
-
-    if (!isBridgeReady()) {
-      showToast("Bridge WPP não está pronto. Aguarde o WhatsApp Web carregar.", true);
-      return false;
-    }
-
-    const signedUrl = await getSignedUrl(asset.storage_path);
-    if (!signedUrl) {
-      showToast("Erro ao gerar URL do documento", true);
-      return false;
-    }
-
-    let blob;
-    try {
-      blob = await fetchAssetBlob(signedUrl, asset.mime || "application/octet-stream");
-    } catch (err) {
-      showToast(`Erro ao baixar documento: ${err?.message || "desconhecido"}`, true);
-      return false;
-    }
-
-    // Use the original filename from storage_path or asset name
-    const rawPath = asset.storage_path || asset.name || "file";
-    const fileName = rawPath.split("/").pop() || "file";
-    const mime = asset.mime || blob.type || "application/octet-stream";
-
-    let dataUrl;
-    try {
-      const typedBlob = blob.type === mime ? blob : new Blob([blob], { type: mime });
-      dataUrl = await blobToDataUrl(typedBlob);
-    } catch (err) {
-      showToast(`Erro ao converter documento para base64: ${err?.message || "desconhecido"}`, true);
-      return false;
-    }
-
-    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const beforeSnapshot = snapshotOutgoingState();
-
-    const metadata = asset?.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
-
-    const payload = {
-      requestId,
-      type: "document",
-      dataUrl,
-      mime,
-      fileName,
-      caption: typeof metadata?.caption === "string" ? metadata.caption : undefined,
-    };
-
-    console.log("[RiseZap] sendDocumentViaBridge (base64 dataUrl):", {
-      name: asset.name,
-      fileName: payload.fileName,
-      mime: payload.mime,
-      dataUrlLength: dataUrl.length,
-    });
-
-    return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        window.removeEventListener("risezap:result", handler);
-        console.error("[RiseZap] Document bridge timeout after 120s");
-        showToast("Timeout no envio de documento via bridge", true);
-        resolve(false);
-      }, 120000);
-
-      async function handler(evt) {
-        const detail = evt.detail || {};
-        if (detail.requestId !== requestId) return;
-
-        window.removeEventListener("risezap:result", handler);
-        clearTimeout(timeoutId);
-
-        if (detail.success === true) {
-          const confirmation = await waitForOutgoingCommit(beforeSnapshot, 45000);
-          if (!confirmation.ok) {
-            showToast(`WhatsApp não confirmou envio do documento (${confirmation.reason})`, true);
-          }
-          resolve(confirmation.ok);
-          return;
-        }
-
-        console.error("[RiseZap] Document bridge failed:", detail);
-        showToast(`Falha ao enviar documento (${detail.errorCode || "erro"})`, true);
-        resolve(false);
-      }
-
-      window.addEventListener("risezap:result", handler);
-      window.dispatchEvent(new CustomEvent("risezap:send", { detail: payload }));
-    });
-  }
-
   // ─── Unified Send Dispatch ────────────────────────────
 
   async function sendFile(asset) {
@@ -911,11 +1255,11 @@
     }
 
     if (asset.resolvedType === "media") {
-      return sendMediaViaBridge(asset);
+      return sendFileViaAttachMenu(asset);
     }
 
-    // Documento via bridge wa-js
-    return sendDocumentViaBridge(asset);
+    // Documento permanece no caminho de anexo manual
+    return sendFileViaAttachMenu(asset);
   }
 
   // ─── Send Text via DOM (paste) ────────────────────────
@@ -952,7 +1296,7 @@
       const beforeSnapshot = snapshotOutgoingState();
       let sendBtn = findVisibleSendButton(document);
       if (!sendBtn) {
-        try { sendBtn = await waitForElement('span[data-icon="send"]', 3000); } catch { }
+        try { sendBtn = await waitForElement('span[data-icon="send"]', 3000); } catch {}
       }
       if (!sendBtn) {
         showToast("Botão de enviar não encontrado", true);
@@ -1189,7 +1533,7 @@
       bar.appendChild(btn);
     });
 
-    // Áudios (bridge PTT)
+    // Áudios (bridge PTT + drag-drop fallback)
     assets.audios.forEach((a) => {
       const btn = makeBtn("🎙", a.name, "rz-audio");
       btn.addEventListener("click", () => {
@@ -1201,7 +1545,7 @@
       bar.appendChild(btn);
     });
 
-    // Mídias (bridge wa-js)
+    // Mídias (drag-and-drop)
     assets.medias.forEach((m) => {
       const btn = makeBtn("🖼", m.name, "rz-media");
       btn.addEventListener("click", () => {
@@ -1214,7 +1558,7 @@
       bar.appendChild(btn);
     });
 
-    // Documentos (bridge wa-js)
+    // Documentos (drag-and-drop)
     assets.documents.forEach((d) => {
       const btn = makeBtn("📄", d.name, "rz-document");
       btn.addEventListener("click", () => {
@@ -1303,7 +1647,7 @@
 
   async function init() {
     await loadAuth();
-    injectBridge();      // Needed for all file sends (audio, image, video, document)
+    injectBridge();      // Still needed for audio PTT
     setupStorageBridge();
     if (token) {
       await loadAssets();
