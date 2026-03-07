@@ -46,12 +46,24 @@ export default function MidiasPage() {
       return;
     }
 
-    const rows: AssetItem[] = (data ?? []).map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
-      fileType: row.mime || undefined,
-    }));
+    const rows: AssetItem[] = await Promise.all(
+      (data ?? []).map(async (row: any) => {
+        let fileUrl: string | undefined;
+        if (row.storage_path) {
+          const { data: urlData } = await supabase.storage
+            .from("assets")
+            .createSignedUrl(row.storage_path, 3600);
+          fileUrl = urlData?.signedUrl;
+        }
+        return {
+          id: row.id,
+          name: row.name,
+          fileName: typeof row.storage_path === "string" ? row.storage_path.split("/").pop() : undefined,
+          fileType: row.mime || undefined,
+          fileUrl,
+        };
+      })
+    );
 
     setMidias(rows);
     setSelected((prev) => {
